@@ -1,0 +1,71 @@
+name: first-flight
+
+# Build (and, on a version tag, publish) the first-flight component.
+#
+# A push of tag `first-flight-v<x.y.z>` publishes:
+#   ghcr.io/cosmonic-labs/first-flight:<x.y.z>   (+ :latest)
+# Pull requests that touch the component only build it, so a broken component
+# can never merge. `workflow_dispatch` allows an ad-hoc publish of any tag.
+#
+# This is the template for components in this repo: build with `wash build`,
+# publish with `wash oci push` to an explicit `ghcr.io/cosmonic-labs/<name>`
+# reference — no per-component signing keys, no registry indirection.
+
+on:
+  push:
+    tags:
+      - "first-flight-v*"
+  pull_request:
+    paths:
+      - "first-flight/**"
+      - ".github/workflows/first-flight.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/cosmonic-labs/first-flight
+  WORKDIR: first-flight
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up wash
+        uses: wasmcloud/setup-wash-action@v1.0.0-rc.3
+
+      - name: Add wasm32-wasip2 target
+        run: rustup target add wasm32-wasip2
+
+      - name: Build component
+        working-directory: ${{ env.WORKDIR }}
+        run: wash build
+
+      # Publish only on a version tag or a manual dispatch — PRs stop at build.
+      - name: Resolve version
+        id: v
+        if: startsWith(github.ref, 'refs/tags/first-flight-v') || github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME#first-flight-v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to GHCR
+        if: steps.v.outputs.tag != ''
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          WASM="target/wasm32-wasip2/release/first_flight.wasm"
+          wash oci push "${IMAGE}:${{ steps.v.outputs.tag }}" "$WASM" \
+            -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"
+          wash oci push "${IMAGE}:latest" "$WASM" \
+            -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"

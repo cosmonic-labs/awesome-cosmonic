@@ -1,0 +1,5 @@
+package wasmcloud:firstflight;
+
+world firstflight {
+   export wasi:http/incoming-handler@0.2.2;
+}

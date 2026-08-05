@@ -1,0 +1,7 @@
+# For the 'http-trigger' helm chart
+components:
+  - name: first-flight
+    image: ghcr.io/cosmonic-labs/first-flight:0.1.0
+
+ingress:
+  host: "first-flight.localhost.cosmonic.sh"
