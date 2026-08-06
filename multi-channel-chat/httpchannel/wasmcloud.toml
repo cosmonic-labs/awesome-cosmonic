@@ -1,8 +1,0 @@
-name = "httpchannel"
-language = "rust"
-type = "actor"
-version = "0.1.0"
-
-[actor]
-claims = ["wasmcloud:httpserver", "wasmcloud:builtin:numbergen", "wasmcloud:builtin:logging"]
-call_alias = "mcchat/http"

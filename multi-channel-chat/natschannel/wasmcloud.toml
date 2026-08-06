@@ -1,8 +1,0 @@
-name = "natschannel"
-language = "rust"
-type = "actor"
-version = "0.1.0"
-
-[actor]
-claims = ["wasmcloud:messaging", "wasmcloud:builtin:numbergen"]
-call_alias = "mcchat/nats"

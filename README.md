@@ -1,43 +1,101 @@
+<div align="center">
+
+<a href="https://cosmonic.com">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".assets/cosmonic-logo-white.svg">
+    <img alt="Cosmonic" src=".assets/cosmonic-logo-color.svg" width="320">
+  </picture>
+</a>
+
 # Awesome Cosmonic
 
-Awesome projects and source code for the [Things To Build](https://cosmonic.com/docs/category/things-to-build) section on Cosmonic.
+**Community-maintained components, host plugins, workload examples, and tools for [Cosmonic Control](https://cosmonic.com/docs/).**
 
-| Deployment                 | Link                                                                                                                                                                                                                                      | Topology                                                                                                                                                                                                                  |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Event Sourced Bank Account | [<img src="https://cosmonic.com/badge/deploy.svg" alt="Deploy on Cosmonic" width="400">](https://new.cosmonic.app/?yaml=https://raw.githubusercontent.com/cosmonic/awesome-cosmonic/main/bank-account/bank-account.wadm.yaml)              | This example will deploy the Bank Account Aggregate, Process Manager and Projector alongside the Concordance provider and Event Catalog UI Actor.                                                                         |
-| Hello World on Cosmonic    | [<img src="https://cosmonic.com/badge/deploy.svg" alt="Deploy on Cosmonic" width="400">](https://new.cosmonic.app/?yaml=https://raw.githubusercontent.com/cosmonic/awesome-cosmonic/main/hello-world/hello-cosmonic.wadm.yaml)            | This example will deploy Hello World actor and HTTP Server Provider all on Cosmonic.                                                                                                                                      |
-| Hello World on Stargate    | [<img src="https://cosmonic.com/badge/deploy.svg" alt="Deploy on Cosmonic" width="400">](https://new.cosmonic.app/?yaml=https://raw.githubusercontent.com/cosmonic/awesome-cosmonic/main/hello-world/hello-stargate.wadm.yaml)            | This example will deploy Hello World on a remote stargate node, and the HTTP Server Provider on Cosmonic. In order for this manifest to work you will need at least one stargate host deployed.                           |
-| XKCD Generator on Cosmonic | [<img src="https://cosmonic.com/badge/deploy.svg" alt="Deploy on Cosmonic" width="400">](https://new.cosmonic.app/?yaml=https://raw.githubusercontent.com/cosmonic/awesome-cosmonic/main/xkcdgenerator/xkcd-generator-cosmonic.wadm.yaml) | This example will deploy the XKCD actor, HTTP Client Provider, and HTTP Server Provider all on Cosmonic.                                                                                                                  |
-| XKCD Generator on Stargate | [<img src="https://cosmonic.com/badge/deploy.svg" alt="Deploy on Cosmonic" width="400">](https://new.cosmonic.app/?yaml=https://raw.githubusercontent.com/cosmonic/awesome-cosmonic/main/xkcdgenerator/xkcd-generator-stargate.wadm.yaml) | This example will deploy the XKCD actor & HTTP Client Provider on a remote stargate node, and the HTTP Server Provider on Cosmonic. In order for this manifest to work you will need at least one stargate host deployed. |
+[![License](https://img.shields.io/badge/license-Apache--2.0-655dc6.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-cosmonic.com-655dc6.svg)](https://cosmonic.com/docs/)
+[![Slack](https://img.shields.io/badge/slack-community-655dc6.svg)](https://slack.wasmcloud.com)
 
-# How does it work?
+</div>
 
-One of the powerful things about Cosmonic is that your basic application architecture can be deployed to dramatically different application topologies all without changing or modifying your architecture. In the simple examples below we use [Open Application Manifest WADM Manifests](https://github.com/wasmCloud/wadm) to automatically deploy applications to Cosmonic.
+---
 
-Some manifests require multiple Cosmonic hosts connected to your Constellation. Please follow the [Cosmonic Getting Started Guide](https://cosmonic.com/docs/user_guide/cli/getting_started) to deploy a host or simply:
+[Cosmonic Control](https://cosmonic.com/docs/) is a Kubernetes-native control plane for running microservices, agentic workflows, MCP servers, and other sensitive or untrusted code inside WebAssembly component sandboxes. Workloads are built with [`wash`](https://wasmcloud.com/docs/wash/developer-guide/) and wired to capabilities at runtime rather than at build time. This repository collects what the community has built on top of it.
 
-`bash -c "$(curl -fsSL https://cosmonic.sh/install.sh)"`
+**Source may be hosted here or linked.** A project can live in this repository as a directory with its own README, license, and build instructions, or stay in its own repository and be listed here with a link. Entries are tagged `(hosted)` or `(linked)` so you know which you are getting. See [CONTRIBUTING.md](CONTRIBUTING.md) to add yours.
 
-## Host Labels
+For a project hosted here, clone and build it directly:
 
-Just like Kubernetes, Cosmonic can leverage labels as a mechanism for defining and configuring application topology and deployments. There are a handful of labels that are automatically defined by default for you depending on where the host is executing:
+```console
+git clone https://github.com/cosmonic-labs/awesome-cosmonic.git
+cd awesome-cosmonic/workload-examples/<project>
+wash build
+```
 
-| Label                    | Hosts       | Definition                                                                  |
-| ------------------------ | ----------- | --------------------------------------------------------------------------- |
-| `hostcore.arch=aarch64`  | ALL         | CPU Architecture                                                            |
-| `hostcore.os=linux`      | ALL         | Host OS                                                                     |
-| `hostcore.osfamily=unix` | ALL         | Host OS Family                                                              |
-| `cosmonic_managed=true`  | Cosmonic    | Hosts managed by Cosmonic                                                   |
-| `stargate=true`          | Remote Only | A label automatically applied to hosts remotely attached to a Constellation |
+## Contents
 
-You can define your own labels and leverage them to _manage_ your application. You can schedule an application to run on specific nodes and on specific node types. Component providers for things like databases can be scheduled to run near their provider or you can achieve higher reliability, availability, or performance simply by updating your application manifest. Constellations are self-forming, self-healing, and allow for the automatic discovery of capabilities.
+- [Components](#components)
+  - [MCP Servers](#mcp-servers)
+- [Host Plugins](#host-plugins)
+  - [Native Host Plugins](#native-host-plugins)
+  - [Component Host Plugins](#component-host-plugins)
+- [Workload Examples](#workload-examples)
+- [Tools](#tools)
+- [Contributing](#contributing)
 
-## Application Version Control
+## Components
 
-Using the above manifests you can deploy multiple versions of your application and easily switch between different deployment topologies. Many of the applications have the same name, such as `xkcd` and different `versions`. On Cosmonic, find the controls under Applications --> App --> Versions:
+Reusable WebAssembly components that implement a WIT interface. Hosted projects live in [`components/`](components/).
 
-![Cosmonic Applications Version Control Screen Shot](./.assets/cosmonic-applications-versions.png)
+_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
-If you inspect two different versions of an application manifest you can see how the different tags change the application topology. In the above example for the `xkcd` Application you can see two different versions: [v1-cosmonic](./xkcdgenerator/xkcd-generator-cosmonic.wadm) and [v1-stargate](./xkcdgenerator/xkcd-generator-stargate.wadm). As you can see below, the two key differences are the `version:` tag and then the tags under a components `requirements:`. You can see we direct WADM to deploy the components to the stargate hosts using the `stargate: 'true'` tag; it is commented out but I could further direct this component by using a tag such as `hostcore.os: macos`.
+### MCP Servers
 
-![Cosmonic Applications Version Control Screen Shot](./.assets/wadm-diff-xkcd-cosmonic-and-stargate.png)
+[Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).
+
+- [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
+
+## Host Plugins
+
+Cosmonic Control schedules workloads onto [wasmCloud](https://github.com/wasmCloud/wasmCloud) hosts. [Host plugins](https://wasmcloud.com/docs/overview/hosts/plugins) extend a host with an implementation of a WIT world, which is linked to workloads at runtime. They come in two flavors, and a workload cannot tell which one is serving a capability it imports.
+
+### Native Host Plugins
+
+Rust implementations of the [`HostPlugin` trait](https://wasmcloud.com/docs/runtime/creating-host-plugins), linked into the host binary. The right choice when a capability needs direct host resources (filesystem, network, hardware) or has to run with the host's privileges. Hosted projects live in [`host-plugins/native/`](host-plugins/native/).
+
+_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
+
+### Component Host Plugins
+
+Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-component-host-plugins) and deployed into a host at runtime as trigger services with a capability ingress, so you ship, version, and sandbox them like any other component. Currently opt-in via the `host-component-plugins` feature, so check the docs for the state of play before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
+
+_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
+
+## Workload Examples
+
+End-to-end applications demonstrating how components compose into a running system. Hosted projects live in [`workload-examples/`](workload-examples/).
+
+For starting points maintained by Cosmonic rather than the community, see the [Template Catalog](https://cosmonic.com/docs/template-catalog/).
+
+- [control-demos](https://github.com/cosmonic-labs/control-demos) (linked): Reference components and demos for Cosmonic Control on Kubernetes, spanning Rust, Go, and TypeScript: a NATS-backed blobstore fileserver, HTTP servers, a Hono and Swagger UI API explorer, and an Argo CD GitOps integration. Ships Helm charts and a `kind` config for running the whole set locally.
+
+## Tools
+
+CLIs, libraries, editor integrations, and developer tooling. Hosted projects live in [`tools/`](tools/).
+
+_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first for the two contribution routes, licensing rules, and what a project needs to be accepted.
+
+Projects here are contributed by the community and maintained by their authors. Inclusion is not an endorsement, security review, or statement of production readiness. Read the code before running it.
+
+## Community
+
+- [Cosmonic documentation](https://cosmonic.com/docs/) and the [glossary](https://cosmonic.com/docs/glossary/) if the terminology is new.
+- [Community Slack](https://slack.wasmcloud.com) for questions about building and running workloads.
+- [cosmonic-labs on GitHub](https://github.com/cosmonic-labs) for the projects behind the platform.
+
+## License
+
+The repository is [Apache-2.0](LICENSE). Projects hosted here carry their own `LICENSE` file in their directory, which governs that project.
