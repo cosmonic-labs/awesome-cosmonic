@@ -21,7 +21,7 @@
 
 [Cosmonic Control](https://cosmonic.com/docs/) is a Kubernetes-native control plane for running microservices, agentic workflows, MCP servers, and other sensitive or untrusted code inside WebAssembly component sandboxes. Workloads are built with [`wash`](https://wasmcloud.com/docs/wash/developer-guide/) and wired to capabilities at runtime rather than at build time. This repository collects what the community has built on top of it.
 
-**Source may be hosted here or linked.** A project can live in this repository as a directory with its own README, license, and build instructions, or stay in its own repository and be listed here with a link. Entries are tagged `(hosted)` or `(linked)` so you know which you are getting. See [CONTRIBUTING.md](CONTRIBUTING.md) to add yours.
+**Source may be hosted here or linked.** A project can live in this repository as a directory with its own README and build instructions, covered by this repository's license, or stay in its own repository and be listed here with a link. Entries are tagged `(hosted)` or `(linked)` so you know which you are getting. See [CONTRIBUTING.md](CONTRIBUTING.md) to add yours.
 
 For a project hosted here, clone and build it directly:
 
@@ -99,4 +99,4 @@ Projects here are contributed by the community and maintained by their authors. 
 
 ## License
 
-The repository is [Apache-2.0](LICENSE). Projects hosted here carry their own `LICENSE` file in their directory, which governs that project.
+The repository is [Apache-2.0](LICENSE), and that license covers everything in the tree, including every hosted project. Linked projects are governed by whatever license their own repository carries.

@@ -4,7 +4,7 @@ Thanks for helping build this out. There are two ways to contribute a project, a
 
 ## Two ways to contribute
 
-**Host your source here.** Your project becomes a directory in this repository with its own README, license, and build instructions. People can clone the repo and build it directly. Best for self-contained examples and reference implementations you want maximally easy to run.
+**Host your source here.** Your project becomes a directory in this repository with its own README and build instructions, under the repository's Apache-2.0 license. People can clone the repo and build it directly. Best for self-contained examples and reference implementations you want maximally easy to run.
 
 **Link to your own repository.** Your project stays where it is and gets a one-line entry pointing at it. Best when you want to keep your own release cadence, issue tracker, and CI, or when the project is too large to vendor sensibly.
 
@@ -35,12 +35,14 @@ Use a short, lowercase, hyphenated directory name matching your project. Linked 
 
 ## Licensing
 
-**If you host source here, licensing is not optional.** Your code is copied into this repository and redistributed by it:
+**Everything in this repository is covered by the repository's [Apache-2.0 license](LICENSE).** One license governs the whole tree, hosted project directories included. There are no per-project `LICENSE` files.
 
-- **You must own the code, or have the right to contribute it.** Signing off your commits (below) is how you certify this.
-- **Your project directory must contain a `LICENSE` file.** A directory with no license is all-rights-reserved by default, meaning nobody, including this project, can legally use, build, or redistribute it.
-- **Use Apache-2.0 or a compatible permissive license** (MIT, BSD-2/3-Clause). This repository is Apache-2.0. Copyleft licenses create obligations we cannot take on for the repository as a whole, so they cannot be accepted.
-- **Third-party code you vendor into your project** keeps its own license and attribution. Do not strip license headers.
+If you host source here:
+
+- **You must own the code, or have the right to contribute it under Apache-2.0.** Signing off your commits (below) is how you certify this.
+- **Do not add a `LICENSE` file to your project directory.** A second license file inside the tree only creates ambiguity about which terms apply.
+- **Code you cannot release under Apache-2.0 cannot be hosted here.** If your project is copyleft, or you want to keep different terms, link to it instead. That route has no licensing requirement, because we are not redistributing your code.
+- **Third-party code you vendor into your project** keeps its own license and attribution. Do not strip license headers, and say what you vendored in your README.
 
 **If you link instead, a license is strongly encouraged but not required.** We are not redistributing your code, so this is your call. Be aware that an unlicensed repository is all-rights-reserved by default, so nobody who finds it here can legally use or fork it. Adding Apache-2.0 or MIT is the cheapest thing you can do to make your project usable.
 
@@ -109,7 +111,7 @@ git commit --amend -s --no-edit
 git push --force-with-lease
 ```
 
-Signing off certifies that you wrote the code or otherwise have the right to submit it under the project's license. If you are hosting source here, please take that seriously.
+Signing off certifies that you wrote the code or otherwise have the right to submit it under this repository's Apache-2.0 license.
 
 ## Removing or updating a project
 
