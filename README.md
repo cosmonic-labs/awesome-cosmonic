@@ -76,6 +76,7 @@ End-to-end applications demonstrating how components compose into a running syst
 
 For starting points maintained by Cosmonic rather than the community, see the [Template Catalog](https://cosmonic.com/docs/template-catalog/).
 
+- [clickhouse-kafka-ingest](workload-examples/clickhouse-kafka-ingest/) (hosted): Streaming analytics pipeline where the ingestion tier is SQL: two Rust wasip3 components exporting `wasi:http/handler@0.3.0` produce clickstream events to Kafka over the HTTP Proxy and serve a live dashboard, while ClickHouse's Kafka engine and materialized views handle the transform, per-minute rollup, and dead-lettering with no consumer service in between. Includes a Docker Compose stack with Redpanda and ClickHouse plus Cosmonic Control manifests.
 - [control-demos](https://github.com/cosmonic-labs/control-demos) (linked): Reference components and demos for Cosmonic Control on Kubernetes, spanning Rust, Go, and TypeScript: a NATS-backed blobstore fileserver, HTTP servers, a Hono and Swagger UI API explorer, and an Argo CD GitOps integration. Ships Helm charts and a `kind` config for running the whole set locally.
 
 ## Tools

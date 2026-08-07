@@ -1,0 +1,25 @@
+version: 2.0.0
+
+# A wasip3 component still builds for the wasm32-wasip2 *target*: std and libc
+# remain p2 while the component's own world is p3 (wasi:http/handler@0.3.0).
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/insights_api.wasm
+
+dev:
+  address: 0.0.0.0:8001
+
+workload:
+  config:
+    CLICKHOUSE_URL: http://localhost:8123
+    CLICKHOUSE_DATABASE: analytics
+    CLICKHOUSE_USER: analytics
+    # Local default only, and it matches infra/docker-compose.yaml. In a
+    # cluster this moves to `environment.secretFrom` and the component code
+    # does not change - it reads the same wasi:config key either way.
+    CLICKHOUSE_PASSWORD: analytics
+    REQUEST_TIMEOUT_MS: "10000"
+    # Origin the dashboard's "generate traffic" button posts to.
+    GATEWAY_URL: http://localhost:8000
+  allowedHosts:
+    - localhost

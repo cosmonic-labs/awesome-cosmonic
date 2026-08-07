@@ -1,0 +1,17 @@
+package awesome:event-gateway;
+
+// A wasip3 component. The HTTP entrypoint is the async
+// `wasi:http/handler@0.3.0`, and producing to Kafka goes out through
+// `wasi:http/client@0.3.0` - both native component-model async, with bodies
+// as `stream<u8>` rather than `wasi:io` pollables.
+//
+// The remaining imports are still 0.2. That mixture is the expected state
+// during the p2 -> p3 transition: a component takes p3 for the interfaces
+// that have it and keeps p2 for the rest.
+world event-gateway {
+    export wasi:http/handler@0.3.0;
+    import wasi:http/client@0.3.0;
+
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:random/random@0.2.0;
+}

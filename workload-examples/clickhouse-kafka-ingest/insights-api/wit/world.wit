@@ -1,0 +1,16 @@
+package awesome:insights-api;
+
+// A wasip3 component. The dashboard is served through the async
+// `wasi:http/handler@0.3.0`, and ClickHouse is queried over
+// `wasi:http/client@0.3.0` - so there is no database driver and no
+// `wasi:io` anywhere in this component.
+//
+// `wasi:config` has no 0.3.0 release yet, so credentials still arrive over the
+// 0.2 interface. Mixed-version imports are the expected state during the
+// p2 -> p3 transition.
+world insights-api {
+    export wasi:http/handler@0.3.0;
+    import wasi:http/client@0.3.0;
+
+    import wasi:config/store@0.2.0-rc.1;
+}

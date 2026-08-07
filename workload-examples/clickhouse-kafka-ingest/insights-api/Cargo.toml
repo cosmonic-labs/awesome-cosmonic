@@ -1,0 +1,23 @@
+[package]
+name = "insights-api"
+edition = "2024"
+version = "0.1.0"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# wasip3 async bindings. `async-spawn` provides `spawn_local` for writing
+# request and response bodies concurrently; `inter-task-wakeup` is needed
+# because the ClickHouse call and the body writer are separate tasks.
+wit-bindgen = { version = "0.60.0", features = ["async-spawn", "inter-task-wakeup"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
