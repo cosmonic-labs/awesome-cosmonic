@@ -5,7 +5,7 @@ text**, built as a WebAssembly component for Cosmonic Desktop. It is
 **pure-compute and zero-egress**: the single `redact` tool does all its work
 on-device, and the workload's outbound `allowedHosts` list is **empty
 (deny-all)**. The sandbox holds no network at all, so the text the tool sees
-physically cannot be exfiltrated — that empty allowlist is the whole security
+physically cannot be exfiltrated. That empty allowlist is the whole security
 story.
 
 No authentication and no configuration are required.
@@ -33,8 +33,8 @@ Each category has a distinct placeholder:
 | Category name | Detects | Placeholder |
 |---|---|---|
 | `email` | Email addresses | `[REDACTED_EMAIL]` |
-| `us_ssn` | US Social Security numbers — `123-45-6789`, or a bare `123456789` next to an "SSN"/"social security" context word | `[REDACTED_SSN]` |
-| `phone` | NANP phone numbers — `(555) 123-4567`, `555-123-4567`, `555.123.4567`, `+1 555 123 4567` | `[REDACTED_PHONE]` |
+| `us_ssn` | US Social Security numbers in 3-2-4 form (`123-45-6789`, `123.45.6789`, or `123 45 6789`), or a bare `123456789` next to an "SSN"/"social security" context word | `[REDACTED_SSN]` |
+| `phone` | NANP phone numbers: `(555) 123-4567`, `555-123-4567`, `555.123.4567`, `+1 555 123 4567` | `[REDACTED_PHONE]` |
 | `credit_card` | 13–19 digit card numbers, space/dash separated, **validated with the Luhn checksum** | `[REDACTED_CC]` |
 | `ipv4` | Dotted-quad IPv4 addresses, each octet 0–255 | `[REDACTED_IP]` |
 | `aws_access_key_id` | `AKIA`/`ASIA` + 16 uppercase alphanumerics | `[REDACTED_AWS_KEY]` |
@@ -62,7 +62,7 @@ Every call returns structured JSON, for example:
 }
 ```
 
-## `allowedHosts` — zero egress by design
+## `allowedHosts`: zero egress by design
 
 Unlike an MCP server that reaches an upstream API, this tool reaches **nothing**.
 Its work is pure compute, so the workload's outbound allowlist is empty:

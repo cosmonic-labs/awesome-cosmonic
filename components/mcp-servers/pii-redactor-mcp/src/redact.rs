@@ -21,7 +21,8 @@
 //! - **credit_card** candidates (13–19 digit runs) are accepted only if they
 //!   pass the [Luhn] checksum, which cuts most false positives.
 //! - bare 9-digit **us_ssn** is accepted only next to an "SSN" / "social
-//!   security" context word; the dashed `123-45-6789` form is always accepted.
+//!   security" context word; the separated 3-2-4 form (`123-45-6789`,
+//!   `123.45.6789`, or `123 45 6789`) is always accepted.
 //!
 //! [Luhn]: https://en.wikipedia.org/wiki/Luhn_algorithm
 
@@ -124,11 +125,14 @@ fn patterns() -> &'static [Pattern] {
                 group: 0,
                 luhn: true,
             },
-            // US SSN, dashed form `123-45-6789` — distinctive, always accepted.
+            // US SSN, separated form `123-45-6789`, `123.45.6789`, or
+            // `123 45 6789`. The 3-2-4 grouping is distinctive (phone is 3-3-4),
+            // so it is always accepted. A dash, dot, or single space separator is
+            // allowed between groups.
             Pattern {
                 category: "us_ssn",
                 precedence: 3,
-                re: Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap(),
+                re: Regex::new(r"\b\d{3}[-. ]\d{2}[-. ]\d{4}\b").unwrap(),
                 group: 0,
                 luhn: false,
             },
@@ -353,6 +357,37 @@ mod tests {
         assert_eq!(all("SSN 123456789").counts["us_ssn"], 1);
         // Bare 9 digits without context are left alone.
         assert_eq!(all("order 123456789 shipped").counts["us_ssn"], 0);
+    }
+
+    #[test]
+    fn ssn_dot_and_space_separators() {
+        // The 3-2-4 grouping is now caught with dot or single-space separators,
+        // not only dashes.
+        let space = all("123 45 6789");
+        assert_eq!(space.counts["us_ssn"], 1);
+        assert_eq!(space.redacted, "[REDACTED_SSN]");
+
+        let dot = all("123.45.6789");
+        assert_eq!(dot.counts["us_ssn"], 1);
+        assert_eq!(dot.redacted, "[REDACTED_SSN]");
+    }
+
+    #[test]
+    fn phone_is_not_mishit_as_ssn() {
+        // A 3-3-4 phone number stays a phone, never an SSN (phone is 3-3-4,
+        // SSN is 3-2-4).
+        let r = all("(555) 123-4567");
+        assert_eq!(r.counts["phone"], 1);
+        assert_eq!(r.counts["us_ssn"], 0);
+        assert_eq!(r.redacted, "[REDACTED_PHONE]");
+    }
+
+    #[test]
+    fn ordinary_runs_are_not_mishit_as_ssn() {
+        // An ISO date (4-2-2) and a plain dotted version string do not match the
+        // 3-2-4 SSN shape.
+        assert_eq!(all("shipped on 2026-08-14").counts["us_ssn"], 0);
+        assert_eq!(all("upgraded to 1.2.3 today").counts["us_ssn"], 0);
     }
 
     #[test]
