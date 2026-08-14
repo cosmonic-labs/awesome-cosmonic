@@ -1,0 +1,55 @@
+# Cosmonic Desktop deployment manifest for the published md-html-sanitizer-mcp
+# image. Local iteration uses the project's .wash/config.yaml workload settings
+# (Desktop's built-in registry); this manifest deploys the released image. Docs:
+# https://cosmonic.com/docs/desktop
+#
+# This is a PURE-COMPUTE, ZERO-EGRESS tool. It makes no outbound requests, so
+# there is no secretFrom block and the outbound allowlist is EMPTY (deny-all).
+# The empty allowedHosts is the whole point: the HTML/markdown this server
+# sanitizes can never leave the sandbox because the sandbox holds no network at
+# all.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "md-html-sanitizer-mcp"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "md-html-sanitizer-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "sanitize"
+    "mcp.ai/function-type": tools
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "md-html-sanitizer-mcp.localhost.cosmonic.sh"
+  components:
+    - name: "md-html-sanitizer-mcp"
+      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # promoted build instead, use the digest-pinned
+      # oci-registry.localhost:8200 reference that promote returns.
+      image: "ghcr.io/cosmonic-labs/components/md-html-sanitizer-mcp:0.1.0@sha256:388ba7a070301c677c5d793ad9d826a803745819ee17b2d82f88080a5532f29f"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host(s) above.
+            MCP_ALLOWED_HOSTS: "md-html-sanitizer-mcp.localhost.cosmonic.sh,md-html-sanitizer-mcp.localhost"
+        # Outbound allow-list — THE EGRESS BOUNDARY. Empty = deny-all
+        # (fail-closed). This tool is pure compute and reaches NOTHING; the
+        # HTML/markdown it sees cannot be exfiltrated. That is the entire
+        # security story.
+        allowedHosts: []
