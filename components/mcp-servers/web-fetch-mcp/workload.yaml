@@ -1,0 +1,55 @@
+# Cosmonic Desktop / wasmCloud v2 Workload manifest for this MCP server.
+#
+# Replace `image` with the digest-pinned reference returned by promote
+# (`cosmonic_promote` or the Cosmonic Desktop UI), then apply with
+# `cosmonic_apply_workload` or POST /v1/workloads.
+#
+# The wasi:http hostInterface routes ingress traffic to this workload by HTTP
+# Host header. Note `interfaces: ["handler"]` — the WASI p3 (wasi:http@0.3.0)
+# handler export, not the p2 `incoming-handler`.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: web-fetch-mcp
+  namespace: default
+  # MCP metadata convention used by Cosmonic Desktop to catalog MCP servers.
+  # Update name/version/domain when you fork this template.
+  labels:
+    app.kubernetes.io/name: "web-fetch-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "web-fetch"
+    "mcp.ai/function-type": tools
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces: ["handler"]
+      config:
+        host: web-fetch-mcp.localhost
+  components:
+    - name: mcp
+      image: oci-registry.localhost:8200/web-fetch-mcp:0.1.0
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: hosts the transport accepts in the Host
+            # header (`host` matches any port; `host:port` is exact; `*`
+            # disables the guard). Unset, only localhost/127.0.0.1/::1 are
+            # accepted — Cosmonic routes to this workload by Host header, so
+            # this must match the hostInterface `host` above.
+            MCP_ALLOWED_HOSTS: "web-fetch-mcp.localhost"
+        # Outbound allow-list — THE EGRESS BOUNDARY. The fetch_url tool reaches
+        # ONLY these hosts; empty = deny-all. Widen the list to grant more.
+        allowedHosts:
+          - en.wikipedia.org
+          - raw.githubusercontent.com
+          - httpbin.org
