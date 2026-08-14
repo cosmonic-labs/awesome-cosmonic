@@ -3,7 +3,7 @@
 An MCP server that **searches and reads GitLab** for an agent, built as a
 WebAssembly component for Cosmonic Desktop. Every tool call is an **outbound
 HTTPS request** to the GitLab REST API v4, and the workload's `allowedHosts`
-policy grants exactly **one** host — `gitlab.com`. The tool can reach nothing
+policy grants exactly **one** host, `gitlab.com`. The tool can reach nothing
 else; that allowlist is the egress boundary.
 
 Authentication is **optional**. With no token the server works against public
@@ -29,7 +29,7 @@ Parameters:
 |---|---|---|---|
 | `search_projects` | `query` | string | Search query, matched against project name and path. |
 | | `per_page` | number (optional) | Max results, 1–10 (default 10). |
-| `get_project` | `id` | string | Project ID — numeric (e.g. `278964`) or `namespace/project` path (e.g. `gitlab-org/gitlab`). |
+| `get_project` | `id` | string | Project ID: numeric (e.g. `278964`) or `namespace/project` path (e.g. `gitlab-org/gitlab`). |
 | `list_issues` | `id` | string | Project ID (numeric or `namespace/project`). |
 | | `state` | string (optional) | `"opened"` (default), `"closed"`, or `"all"` (`"open"` accepted as an alias for `"opened"`). |
 | `get_file_contents` | `id` | string | Project ID (numeric or `namespace/project`). |
@@ -57,7 +57,7 @@ that. Every tool returns structured JSON, for example `get_project`:
 }
 ```
 
-## `allowedHosts` — the egress boundary
+## `allowedHosts`: the egress boundary
 
 The tools reach a host only if it is in the workload's outbound `allowedHosts`
 list. GitLab's entire REST API lives under a single host, so the list is exactly
@@ -77,7 +77,7 @@ Unauthenticated is the default and needs no setup. To raise the rate limit or
 read private projects, give the component a GitLab
 [personal access token](https://gitlab.com/-/user_settings/personal_access_tokens)
 through the `GITLAB_TOKEN` environment variable. Never inline the token in a
-manifest — register it as a **Cosmonic secret** and flatten it into that env
+manifest. Register it as a **Cosmonic secret** and flatten it into that env
 var.
 
 1. Register the token as a secret with the `cosmonic_set_secret` MCP tool (the
@@ -85,9 +85,9 @@ var.
 
    | Field | Value |
    |---|---|
-   | `name` | `gitlab-token` — matches `secretFrom` below |
+   | `name` | `gitlab-token`, matches `secretFrom` below |
    | `uri` | `keychain://cosmonic/gitlab-token` |
-   | `env` | `GITLAB_TOKEN` — the variable injected into the component |
+   | `env` | `GITLAB_TOKEN`, the variable injected into the component |
    | `value` | `<your personal access token>` |
 
 2. Reference the secret from the workload so it is flattened into the
@@ -142,6 +142,6 @@ walk-through.
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
 | `GITLAB_TOKEN` | Optional GitLab token; when set, sent in the `PRIVATE-TOKEN` header to raise the rate limit and reach private projects. Inject it from a Cosmonic secret (above), not inline. |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`gitlab-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`gitlab-mcp.localhost.cosmonic.sh`, `gitlab-mcp.localhost`). |
 | `MCP_OUTBOUND_MAX_BYTES` | Upper bound on the buffered outbound response body (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Per-request outbound deadline (default 30000). |
