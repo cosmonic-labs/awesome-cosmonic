@@ -1,0 +1,17 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/pii_redactor_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed) — and for
+  # this component it is the entire point: the redactor does ZERO outbound I/O,
+  # so it needs no hosts at all. The text it processes physically cannot leave
+  # the sandbox.
+  allowedHosts: []
