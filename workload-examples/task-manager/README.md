@@ -20,8 +20,14 @@ wash build   # -> target/wasm32-wasip2/release/task_manager.wasm
 The world pins `wasi:http/incoming-handler@0.2.9` to match the version the
 Desktop host serves.
 
-> **Status:** builds and deploys (reaches Running, key-value store links), but
-> the HTTP trigger is not yet routing on Cosmonic Desktop when built with the
-> current `wash`/`wit-component` toolchain + a `wasi:keyvalue` import — under
-> investigation (a host-side http+keyvalue binding issue). An http-only
-> component of the same shape routes fine.
+> **Status:** the component is complete and correct — it builds, deploys, reaches
+> Running, and the key-value store links. But the HTTP trigger does not route on
+> Cosmonic Desktop today, and the cause is a host/toolchain bug, not this code:
+> a component built with current `wash`/`wit-component` (0.251) that imports
+> **both `wasi:cli/*` and `wasi:keyvalue`** silently loses its HTTP binding on
+> the 2.7.0 host. Controls: a `wasi:cli`-only component binds; a
+> `wasi:keyvalue`-only component binds; the older-toolchain `keyvalue-counter`
+> (cli + keyvalue, built with wit-component 0.202) binds. The `wasi:cli` imports
+> here come from `std`/`serde_json`. Fix belongs in the daemon (see the
+> "unbind all plugins" behavior); this entry lands in the Launchpad once that
+> ships. Image: `ghcr.io/cosmonic-labs/components/task-manager:0.1.3`.

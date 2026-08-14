@@ -17,7 +17,7 @@ use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
-use bindings::wasi::keyvalue::{atomics, store};
+use bindings::wasi::keyvalue::store;
 use serde::{Deserialize, Serialize};
 
 struct Component;
@@ -48,6 +48,24 @@ fn save_tasks(tasks: &[Task]) -> Result<(), String> {
     let bucket = store::open("").map_err(kv_err)?;
     let bytes = serde_json::to_vec(tasks).map_err(|e| e.to_string())?;
     bucket.set(TASKS_KEY, &bytes).map_err(kv_err)
+}
+
+// A monotonic id, kept in the store as a little-endian u64. We use plain
+// get/set rather than wasi:keyvalue/atomics on purpose: importing the atomics
+// interface stops the host from routing the HTTP trigger, and a single-writer
+// to-do list doesn't need an atomic increment.
+fn next_id() -> Result<u64, String> {
+    let bucket = store::open("").map_err(kv_err)?;
+    let current = match bucket.get(ID_KEY).map_err(kv_err)? {
+        Some(bytes) => {
+            let arr: [u8; 8] = bytes.as_slice().try_into().unwrap_or([0; 8]);
+            u64::from_le_bytes(arr)
+        }
+        None => 0,
+    };
+    let next = current + 1;
+    bucket.set(ID_KEY, &next.to_le_bytes()).map_err(kv_err)?;
+    Ok(next)
 }
 
 fn tasks_json(tasks: &[Task]) -> String {
@@ -92,8 +110,7 @@ fn handle_api(is_get: bool, path: &str, query: &str) -> Result<Vec<Task>, String
             if title.is_empty() {
                 return load_tasks();
             }
-            let bucket = store::open("").map_err(kv_err)?;
-            let id = atomics::increment(&bucket, &ID_KEY.to_string(), 1).map_err(kv_err)?;
+            let id = next_id()?;
             let mut tasks = load_tasks()?;
             tasks.push(Task {
                 id,
