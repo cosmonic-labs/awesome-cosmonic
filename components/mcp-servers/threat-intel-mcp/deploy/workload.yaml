@@ -1,0 +1,52 @@
+# Cosmonic Desktop deployment manifest for the published threat-intel-mcp image.
+# Local iteration uses the project's .wash/config.yaml workload settings
+# (Desktop's built-in registry); this manifest deploys the released image. Docs:
+# https://cosmonic.com/docs/desktop
+#
+# No authentication is required — the OSV API is public and needs no API key, so
+# there is no secretFrom block. The only configuration is the outbound egress
+# allowlist (api.osv.dev) and the DNS-rebinding guard.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "threat-intel-mcp"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "threat-intel-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "threat-intel"
+    "mcp.ai/function-type": tools
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "threat-intel-mcp.localhost.cosmonic.sh"
+  components:
+    - name: "threat-intel-mcp"
+      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # promoted build instead, use the digest-pinned
+      # oci-registry.localhost:8200 reference that promote returns.
+      image: "ghcr.io/cosmonic-labs/components/threat-intel-mcp:0.1.0@sha256:3fd0714f54f627b6cbacf3b0297bd528eaebab35df79ad9faa50200320019b7a"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host(s) above.
+            MCP_ALLOWED_HOSTS: "threat-intel-mcp.localhost.cosmonic.sh,threat-intel-mcp.localhost"
+        # Outbound allow-list — THE EGRESS BOUNDARY. The tools reach ONLY this
+        # host; empty = deny-all. The entire OSV API is under this host.
+        allowedHosts:
+          - api.osv.dev
