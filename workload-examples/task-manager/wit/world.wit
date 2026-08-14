@@ -1,0 +1,10 @@
+package cosmonic:task-manager;
+
+// Export the exact wasi:http version the Cosmonic Desktop host serves (0.2.9,
+// wasmtime in runtime 2.7.0). A mismatched version (0.2.2 / 0.2.12) builds fine
+// but the ingress won't route to it.
+world task-manager {
+  import wasi:keyvalue/store@0.2.0-draft;
+  import wasi:keyvalue/atomics@0.2.0-draft;
+  export wasi:http/incoming-handler@0.2.9;
+}
