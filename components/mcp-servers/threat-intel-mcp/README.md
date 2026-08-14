@@ -4,10 +4,10 @@ An MCP server that **looks up known vulnerabilities for open-source software**
 from the [OSV](https://osv.dev) (Open Source Vulnerabilities) database, built as
 a WebAssembly component for Cosmonic Desktop. Every tool call is an **outbound
 HTTPS request** to the OSV API, and the workload's `allowedHosts` policy grants
-exactly **one** host — `api.osv.dev`. The tool can reach nothing else; that
+exactly **one** host, `api.osv.dev`. The tool can reach nothing else; that
 allowlist is the egress boundary.
 
-No authentication is required — the OSV API is public and needs no API key.
+No authentication is required. The OSV API is public and needs no API key.
 
 Built with [mcp-server-template-rs](https://github.com/cosmonic-labs/mcp-server-template-rs):
 rmcp 3.x, MCP spec 2026-07-28, exports `wasi:http/handler@0.3.0`.
@@ -23,14 +23,14 @@ Parameters:
 
 | Tool | Param | Type | Purpose |
 |---|---|---|---|
-| `lookup_package_vulnerabilities` | `ecosystem` | string | OSV ecosystem name — `npm`, `PyPI`, `crates.io`, `Go`, `Maven`, `RubyGems`, `NuGet`, … (case-sensitive, OSV's spelling). |
+| `lookup_package_vulnerabilities` | `ecosystem` | string | OSV ecosystem name: `npm`, `PyPI`, `crates.io`, `Go`, `Maven`, `RubyGems`, `NuGet`, … (case-sensitive, OSV's spelling). |
 | | `package` | string | Package name within that ecosystem (e.g. `jinja2`, `log4j-core`). |
 | | `version` | string (optional) | Exact version to filter to (e.g. `2.4.1`). Omit for every known advisory. |
 | `get_vulnerability` | `id` | string | OSV id or alias: `GHSA-…`, `CVE-…`, `RUSTSEC-…`, `PYSEC-…`, `GO-…`. |
 
 `lookup_package_vulnerabilities` POSTs to `/v1/query` and returns each matching
 advisory's `id`, `summary`, `aliases` (CVE/GHSA cross-references), CVSS
-`severity`, affected version ranges, and reference URLs — or a clear
+`severity`, affected version ranges, and reference URLs, or a clear
 "no known vulnerabilities" result. `get_vulnerability` GETs `/v1/vulns/{id}` and
 returns the full record trimmed to useful fields (`details` capped at ~4 KB).
 Every tool returns structured JSON, for example a lookup:
@@ -55,7 +55,7 @@ Every tool returns structured JSON, for example a lookup:
 }
 ```
 
-## `allowedHosts` — the egress boundary
+## `allowedHosts`: the egress boundary
 
 The tools reach a host only if it is in the workload's outbound `allowedHosts`
 list. The entire OSV API lives under a single host, so the list is exactly one
@@ -106,6 +106,6 @@ walk-through.
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`threat-intel-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`threat-intel-mcp.localhost.cosmonic.sh`, `threat-intel-mcp.localhost`). |
 | `MCP_OUTBOUND_MAX_BYTES` | Upper bound on the buffered outbound response body (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Per-request outbound deadline (default 30000). |
