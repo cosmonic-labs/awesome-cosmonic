@@ -4,8 +4,8 @@ An MCP server that **turns untrusted markdown or HTML into safe HTML**, built as
 a WebAssembly component for Cosmonic Desktop. It is **pure-compute and
 zero-egress**: both tools do all their work on-device, and the workload's
 outbound `allowedHosts` list is **empty (deny-all)**. The sandbox holds no
-network at all, so the content the tools see physically cannot be exfiltrated —
-that empty allowlist is the whole security story.
+network at all, so the content the tools see physically cannot be exfiltrated.
+That empty allowlist is the whole security story.
 
 No authentication and no configuration are required.
 
@@ -31,7 +31,7 @@ Returns:
 { "sanitized": "<p>Hi</p><a rel=\"noopener noreferrer\">x</a>", "removed": true }
 ```
 
-`removed` is `true` when the output differs from the input — i.e. something was
+`removed` is `true` when the output differs from the input, i.e. something was
 stripped or the markup was rewritten.
 
 ### `render_markdown`
@@ -59,9 +59,9 @@ here.
 `render_markdown` renders with [`pulldown-cmark`](https://docs.rs/pulldown-cmark)
 (a pure-Rust CommonMark renderer) and then passes the rendered HTML **back
 through ammonia**. CommonMark permits raw inline HTML, so this second pass is
-what neutralizes an embedded `<script>` in the markdown — it is the safe path.
+what neutralizes an embedded `<script>` in the markdown. It is the safe path.
 
-## `allowedHosts` — zero egress by design
+## `allowedHosts`: zero egress by design
 
 Unlike an MCP server that reaches an upstream API, this tool reaches **nothing**.
 Its work is pure compute, so the workload's outbound allowlist is empty:
