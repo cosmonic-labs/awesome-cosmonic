@@ -53,6 +53,7 @@ _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 [Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).
 
 - [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
+- [pii-redactor-mcp](components/mcp-servers/pii-redactor-mcp) (hosted): Strip PII from text with a single `redact` tool — emails, US SSNs, NANP phone numbers, Luhn-validated credit cards, IPv4 addresses, and AWS access key ids, each replaced by a distinct `[REDACTED_*]` placeholder, with per-category counts. Pure compute with **zero egress**: the workload's outbound `allowedHosts` is empty (deny-all), so the text it sees can never leave the sandbox. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 
 ## Host Plugins
 
