@@ -1,6 +1,7 @@
 # Cosmonic Desktop deployment manifest for the published gitlab-mcp image.
-# Local iteration uses ../workload.yaml (Desktop's built-in registry); this
-# manifest deploys the released image. Docs: https://cosmonic.com/docs/desktop
+# Local iteration uses the project's .wash/config.yaml workload settings
+# (Desktop's built-in registry); this manifest deploys the released image.
+# Docs: https://cosmonic.com/docs/desktop
 #
 # Runs unauthenticated by default (public GitLab projects). To raise the rate
 # limit and reach private projects, register a GitLab token as a Cosmonic secret
