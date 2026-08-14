@@ -63,6 +63,7 @@ Starting points for Kafka workloads on `cosmonic:kafka@0.5.0`, one per delivery 
 - [iss-mcp](components/mcp-servers/iss-mcp/) (hosted): MCP server in Rust that reports who is currently in space and the International Space Station's live position, calling the Open Notify APIs over `wasi:http`. Exports `wasi:http/handler@0.3.0`, built on the `rmcp` SDK with two no-argument tools.
 - [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
 - [github-mcp](components/mcp-servers/github-mcp) (hosted): Search and read GitHub for an agent — `search_repositories`, `get_repository`, `list_issues`, and `get_file_contents`. Outbound requests are bounded to `api.github.com` by the workload's `allowedHosts`, and an optional GitHub token (injected from a Cosmonic secret) raises the rate limit and enables private repositories. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
+- [web-fetch-mcp](components/mcp-servers/web-fetch-mcp) (hosted): A `fetch_url` tool that retrieves a URL over HTTP or HTTPS and returns its contents as readable text or the raw body. Outbound requests are bounded by the workload's `allowedHosts` egress allowlist, so the tool can reach only the hosts you grant. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 
 ## Host Plugins
 
