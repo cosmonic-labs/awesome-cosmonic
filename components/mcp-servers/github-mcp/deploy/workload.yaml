@@ -1,0 +1,60 @@
+# Cosmonic Desktop deployment manifest for the published github-mcp image.
+# Local iteration uses ../workload.yaml (Desktop's built-in registry); this
+# manifest deploys the released image. Docs: https://cosmonic.com/docs/desktop
+#
+# Runs unauthenticated by default (public GitHub data, 60 requests/hour). To
+# raise the rate limit and reach private repositories, register a GitHub token
+# as a Cosmonic secret and inject it as the GITHUB_TOKEN environment variable —
+# see the README ("Optional: authenticate with a token"). The mechanism is the
+# `secretFrom` block shown (commented) under localResources.environment below.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "github-mcp"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "github-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "github"
+    "mcp.ai/function-type": tools
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "github-mcp.localhost.cosmonic.sh"
+  components:
+    - name: "github-mcp"
+      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # promoted build instead, use the digest-pinned
+      # oci-registry.localhost:8200 reference that promote returns.
+      image: "ghcr.io/cosmonic-labs/components/github-mcp:0.1.0@sha256:f946945216746aea0a83595f6a77f3dd6852d62dc77dadb6070754476ffcbbee"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host(s) above.
+            MCP_ALLOWED_HOSTS: "github-mcp.localhost.cosmonic.sh,github-mcp.localhost"
+          # OPTIONAL authentication. Register a GitHub token as a Cosmonic
+          # secret whose target env var is GITHUB_TOKEN, then uncomment this to
+          # flatten it into the component's environment. Without it the server
+          # runs unauthenticated. See the README for the `cosmonic_set_secret`
+          # fields (name: github-token, env: GITHUB_TOKEN).
+          # secretFrom:
+          #   - name: github-token
+        # Outbound allow-list — THE EGRESS BOUNDARY. The tools reach ONLY this
+        # host; empty = deny-all. GitHub's entire REST API is under this host.
+        allowedHosts:
+          - api.github.com
