@@ -2,7 +2,7 @@
 
 An MCP server that **fetches the contents of a URL** for an agent, built as a
 WebAssembly component for Cosmonic Desktop. Every fetch is an **outbound HTTP
-call** governed by the workload's `allowedHosts` policy — the tool can reach
+call** governed by the workload's `allowedHosts` policy. The tool can reach
 **only** the hosts that allowlist grants, and nothing else. That allowlist is
 the egress boundary.
 
@@ -38,7 +38,7 @@ The tool returns structured JSON:
 }
 ```
 
-## `allowedHosts` — the egress boundary
+## `allowedHosts`: the egress boundary
 
 `fetch_url` reaches a host only if that host is in the workload's outbound
 `allowedHosts` list. Empty is deny-all. The starter set ships three
@@ -51,12 +51,13 @@ allowedHosts:
   - httpbin.org
 ```
 
-Ask for a URL on any other host and the tool returns a friendly error —
+Ask for a URL on any other host and the tool returns a friendly error rather
+than data:
 
 > Couldn't reach `example.org` — it may not be in this workload's egress
 > allowlist (allowedHosts). Add it to the manifest to grant access.
 
-— rather than data. Widen the list in [`workload.yaml`](workload.yaml) /
+Widen the list in [`workload.yaml`](workload.yaml) /
 [`deploy/workload.yaml`](deploy/workload.yaml) to grant more hosts.
 
 ## Build
@@ -95,6 +96,6 @@ allowed-vs-blocked `tools/call` walk-through.
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`web-fetch-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`web-fetch-mcp.localhost.cosmonic.sh`, `web-fetch-mcp.localhost`). |
 | `MCP_OUTBOUND_MAX_BYTES` | Upper bound on the buffered outbound response body before the ~100 KB cap is applied (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Per-fetch outbound deadline (default 30000). |
