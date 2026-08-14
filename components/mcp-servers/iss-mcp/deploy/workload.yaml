@@ -1,0 +1,47 @@
+# Cosmonic Desktop deployment manifest for the published iss-mcp image.
+# Local iteration uses ../workload.yaml (Desktop's built-in registry); this
+# manifest deploys the released image. Docs: https://cosmonic.com/docs/desktop
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "iss-mcp"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "iss-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "iss"
+    "mcp.ai/function-type": tools
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "iss-mcp.localhost.cosmonic.sh"
+  components:
+    - name: "iss-mcp"
+      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # promoted build instead, use the digest-pinned
+      # oci-registry.localhost:8200 reference that promote returns.
+      image: "ghcr.io/cosmonic-labs/components/iss-mcp:0.1.0@sha256:5b8310a2d0f0a16d4ed0cb7212e3751ce96f6c5bf44ba8271d91274f30199af5"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host(s) above.
+            MCP_ALLOWED_HOSTS: "iss-mcp.localhost.cosmonic.sh,iss-mcp.localhost"
+        # Outbound allow-list — the only host Open Notify uses. Open Notify is
+        # HTTP-only (no HTTPS).
+        allowedHosts:
+          - api.open-notify.org
