@@ -38,7 +38,7 @@ spec:
       # Digest-pinned to the published 0.1.0 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
-      image: "ghcr.io/cosmonic-labs/components/pii-redactor-mcp:0.1.0@sha256:8e037ac7c4a2b70d8e04ff5a606b95dca44d812ec5b2b4a64028c3d9515c6c7d"
+      image: "ghcr.io/cosmonic-labs/components/pii-redactor-mcp:0.1.0@sha256:146f5d12f6d5a978872c44ea822d2909157e172f65becd03fd3da738d09a8985"
       poolSize: 1
       maxInvocations: 0
       localResources:
