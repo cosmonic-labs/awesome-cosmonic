@@ -3,7 +3,7 @@
 An MCP server that **searches and reads GitHub** for an agent, built as a
 WebAssembly component for Cosmonic Desktop. Every tool call is an **outbound
 HTTPS request** to the GitHub REST API, and the workload's `allowedHosts` policy
-grants exactly **one** host — `api.github.com`. The tool can reach nothing else;
+grants exactly **one** host, `api.github.com`. The tool can reach nothing else;
 that allowlist is the egress boundary.
 
 Authentication is **optional**. With no token the server works against public
@@ -56,7 +56,7 @@ the list of entries instead. Every tool returns structured JSON, for example
 }
 ```
 
-## `allowedHosts` — the egress boundary
+## `allowedHosts`: the egress boundary
 
 The tools reach a host only if it is in the workload's outbound `allowedHosts`
 list. GitHub's entire REST API lives under a single host, so the list is exactly
@@ -75,8 +75,8 @@ to widen it.
 Unauthenticated is the default and needs no setup. To raise the rate limit
 (5,000 requests/hour) or read private repositories, give the component a GitHub
 [personal access token](https://github.com/settings/tokens) through the
-`GITHUB_TOKEN` environment variable. Never inline the token in a manifest —
-register it as a **Cosmonic secret** and flatten it into that env var, the same
+`GITHUB_TOKEN` environment variable. Never inline the token in a manifest.
+Register it as a **Cosmonic secret** and flatten it into that env var, the same
 mechanism fred-mcp uses for its API key.
 
 1. Register the token as a secret with the `cosmonic_set_secret` MCP tool (the
@@ -84,9 +84,9 @@ mechanism fred-mcp uses for its API key.
 
    | Field | Value |
    |---|---|
-   | `name` | `github-token` — matches `secretFrom` below |
+   | `name` | `github-token`, matches `secretFrom` below |
    | `uri` | `keychain://cosmonic/github-token` |
-   | `env` | `GITHUB_TOKEN` — the variable injected into the component |
+   | `env` | `GITHUB_TOKEN`, the variable injected into the component |
    | `value` | `<your personal access token>` |
 
 2. Reference the secret from the workload so it is flattened into the
@@ -140,6 +140,6 @@ walk-through.
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
 | `GITHUB_TOKEN` | Optional GitHub token; when set, sent as a bearer token to raise the rate limit and reach private repos. Inject it from a Cosmonic secret (above), not inline. |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`github-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`github-mcp.localhost.cosmonic.sh`, `github-mcp.localhost`). |
 | `MCP_OUTBOUND_MAX_BYTES` | Upper bound on the buffered outbound response body (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Per-request outbound deadline (default 30000). |
