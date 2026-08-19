@@ -1,0 +1,596 @@
+package cosmonic:kafka@0.2.0;
+
+/// Types shared by the producer, consumer and admin interfaces.
+@since(version = 0.1.0)
+interface types {
+    /// Milliseconds since the Unix epoch.
+    @since(version = 0.1.0)
+    type timestamp-ms = s64;
+
+    /// A partition index within a topic.
+    ///
+    /// Negative values are not valid partition indexes. Where a partition may
+    /// be left to the client's partitioner, the field is an `option` rather
+    /// than a magic negative value.
+    @since(version = 0.1.0)
+    type partition = s32;
+
+    /// A record's position within a partition.
+    @since(version = 0.1.0)
+    type offset = s64;
+
+    /// A starting position, for seek and assignment.
+    ///
+    /// librdkafka spells these as negative `offset` sentinels; they are a
+    /// variant here so a real offset and a symbolic position cannot be
+    /// confused.
+    @since(version = 0.1.0)
+    variant position {
+        /// The earliest offset still retained.
+        beginning,
+        /// The next offset to be produced.
+        %end,
+        /// The group's committed offset, falling back to `auto.offset.reset`
+        /// when there is none.
+        stored,
+        /// This many records back from the end.
+        tail(u64),
+        /// An exact offset.
+        exact(offset),
+    }
+
+    /// How a record's timestamp was assigned.
+    @since(version = 0.1.0)
+    enum timestamp-type {
+        /// The broker did not report one.
+        not-available,
+        /// Set by the producer.
+        create-time,
+        /// Set by the broker when the record was appended.
+        log-append-time,
+    }
+
+    /// A record header.
+    ///
+    /// Keys may repeat within one record, and a value may be absent — which is
+    /// distinct from an empty value.
+    @since(version = 0.1.0)
+    record header {
+        key: string,
+        value: option<list<u8>>,
+    }
+
+    /// A topic/partition pair, optionally carrying an offset and metadata.
+    ///
+    /// librdkafka's `rd_kafka_topic_partition_t`, and the currency of
+    /// assignment, commit, seek and offset lookup. Which fields carry meaning
+    /// depends on the call — see each function.
+    @since(version = 0.1.0)
+    record topic-partition {
+        topic: string,
+        partition: partition,
+        /// Meaningful for commit, seek and offset queries; ignored by assign.
+        offset: option<offset>,
+        /// Opaque per-partition metadata stored alongside a committed offset.
+        metadata: option<list<u8>>,
+        /// The broker's leader epoch for this position, when known. Carrying
+        /// it through a commit or seek round trip is what makes offset fencing
+        /// work.
+        leader-epoch: option<s32>,
+        /// Per-partition failure from a batch operation. Absent on success.
+        error: option<error-code>,
+    }
+
+    /// The low and high watermarks of a partition.
+    @since(version = 0.1.0)
+    record watermarks {
+        /// Offset of the earliest retained record.
+        low: offset,
+        /// Offset that will be assigned to the next record produced.
+        high: offset,
+    }
+
+    /// A Kafka UUID, as the protocol encodes it.
+    @since(version = 0.1.0)
+    record uuid {
+        most-significant: s64,
+        least-significant: s64,
+    }
+
+    /// A client configuration property.
+    ///
+    /// Free-form key/value rather than an enumerated record: librdkafka accepts
+    /// several hundred properties and adds more each release, so enumerating
+    /// them would pin this interface to one version. An unknown or malformed
+    /// key is reported as `invalid-config` when the client is opened.
+    @since(version = 0.1.0)
+    record config-entry {
+        key: string,
+        value: string,
+    }
+
+    /// A record read from a partition.
+    @since(version = 0.1.0)
+    record consumed-record {
+        topic: string,
+        partition: partition,
+        offset: offset,
+        /// Absent when produced without a key. An empty key is a distinct,
+        /// valid value.
+        key: option<list<u8>>,
+        /// Absent for a tombstone — a null value, meaningful to compacted
+        /// topics. An empty value is distinct from a tombstone.
+        value: option<list<u8>>,
+        headers: list<header>,
+        timestamp: option<timestamp-ms>,
+        timestamp-type: timestamp-type,
+        /// Leader epoch the record was read under, when the broker reported
+        /// one.
+        leader-epoch: option<s32>,
+    }
+
+    /// A record to produce.
+    @since(version = 0.1.0)
+    record produce-record {
+        /// Absent lets the configured partitioner choose.
+        partition: option<partition>,
+        key: option<list<u8>>,
+        /// Absent produces a tombstone.
+        value: option<list<u8>>,
+        headers: list<header>,
+        /// Absent lets the client or broker stamp the time.
+        timestamp: option<timestamp-ms>,
+    }
+
+    /// Where a produced record landed.
+    @since(version = 0.1.0)
+    record produce-ack {
+        partition: partition,
+        offset: offset,
+        timestamp: option<timestamp-ms>,
+    }
+
+    /// An error, with librdkafka's own classification attached.
+    ///
+    /// The three predicates are not derivable from `code`: the same code can be
+    /// retriable in one context and fatal in another, so they are reported per
+    /// occurrence exactly as `rd_kafka_error_t` does. Branch on these, not on
+    /// the code, when deciding whether to retry, abort a transaction, or
+    /// rebuild the client.
+    @since(version = 0.1.0)
+    record error {
+        code: error-code,
+        /// Human-readable detail. Not stable; do not parse it.
+        message: string,
+        /// The client is unusable and must be reopened. Reached mainly by the
+        /// idempotent and transactional producer.
+        fatal: bool,
+        /// The identical operation may be retried as-is.
+        retriable: bool,
+        /// The in-flight transaction must be aborted before any further
+        /// transactional work.
+        txn-requires-abort: bool,
+    }
+
+    /// Every error librdkafka can report.
+    ///
+    /// Generated from `rd_kafka_resp_err_t`. Codes below zero are raised by the
+    /// client itself; the rest come from the broker. Two are routinely
+    /// mishandled: `no-error` is a success value that appears in per-partition
+    /// result lists, and `not-leader-for-partition` means "refresh metadata and
+    /// retry", not "give up".
+    @since(version = 0.1.0)
+    enum error-code {
+        /// A code this build does not know, most likely from a newer
+        /// broker. The only case with no `rd_kafka_resp_err_t`
+        /// counterpart; it exists so a forward-compatible caller has
+        /// somewhere to land. Treat as non-retriable.
+        unknown-error-code,
+        /// Received message is incorrect (client-side, code -199)
+        bad-msg,
+        /// Bad/unknown compression (client-side, code -198)
+        bad-compression,
+        /// Broker is going away, together with client instance (client-
+        /// side, code -197)
+        destroy,
+        /// Generic failure (client-side, code -196)
+        fail,
+        /// Broker transport failure (client-side, code -195)
+        transport,
+        /// Critical system resource (client-side, code -194)
+        crit-sys-resource,
+        /// Failed to resolve broker (client-side, code -193)
+        resolve,
+        /// Produced message timed out (client-side, code -192)
+        msg-timed-out,
+        /// client-side, code -191
+        partition-eof,
+        /// Permanent: Partition does not exist in cluster (client-side,
+        /// code -190)
+        unknown-partition,
+        /// File or filesystem error (client-side, code -189)
+        fs,
+        /// Permanent: Topic does not exist in cluster (client-side, code
+        /// -188)
+        unknown-topic,
+        /// All broker connections are down (client-side, code -187)
+        all-brokers-down,
+        /// Invalid argument, or invalid configuration (client-side, code
+        /// -186)
+        invalid-arg,
+        /// Operation timed out (client-side, code -185)
+        timed-out,
+        /// Queue is full (client-side, code -184)
+        queue-full,
+        /// ISR count < required.acks (client-side, code -183)
+        isr-insuff,
+        /// Broker node update (client-side, code -182)
+        node-update,
+        /// SSL error (client-side, code -181)
+        ssl,
+        /// Waiting for coordinator to become available (client-side, code
+        /// -180)
+        wait-coord,
+        /// Unknown client group (client-side, code -179)
+        unknown-group,
+        /// Operation in progress (client-side, code -178)
+        in-progress,
+        /// Previous operation in progress, wait for it to finish (client-
+        /// side, code -177)
+        prev-in-progress,
+        /// This operation would interfere with an existing subscription
+        /// (client-side, code -176)
+        existing-subscription,
+        /// Assigned partitions (rebalance_cb) (client-side, code -175)
+        assign-partitions,
+        /// Revoked partitions (rebalance_cb) (client-side, code -174)
+        revoke-partitions,
+        /// Conflicting use (client-side, code -173)
+        conflict,
+        /// Wrong state (client-side, code -172)
+        state,
+        /// Unknown protocol (client-side, code -171)
+        unknown-protocol,
+        /// Not implemented (client-side, code -170)
+        not-implemented,
+        /// Authentication failure (client-side, code -169)
+        authentication,
+        /// No stored offset (client-side, code -168)
+        no-offset,
+        /// Outdated (client-side, code -167)
+        outdated,
+        /// Timed out in queue (client-side, code -166)
+        timed-out-queue,
+        /// Feature not supported by broker (client-side, code -165)
+        unsupported-feature,
+        /// Awaiting cache update (client-side, code -164)
+        wait-cache,
+        /// Operation interrupted (e.g., due to yield)) (client-side, code
+        /// -163)
+        intr,
+        /// Key serialization error (client-side, code -162)
+        key-serialization,
+        /// Value serialization error (client-side, code -161)
+        value-serialization,
+        /// Key deserialization error (client-side, code -160)
+        key-deserialization,
+        /// Value deserialization error (client-side, code -159)
+        value-deserialization,
+        /// Partial response (client-side, code -158)
+        partial,
+        /// Modification attempted on read-only object (client-side, code
+        /// -157)
+        read-only,
+        /// No such entry / item not found (client-side, code -156)
+        noent,
+        /// Read underflow (client-side, code -155)
+        underflow,
+        /// Invalid type (client-side, code -154)
+        invalid-type,
+        /// Retry operation (client-side, code -153)
+        retry,
+        /// Purged in queue (client-side, code -152)
+        purge-queue,
+        /// Purged in flight (client-side, code -151)
+        purge-inflight,
+        /// Fatal error: see rd_kafka_fatal_error() (client-side, code -150)
+        fatal,
+        /// Inconsistent state (client-side, code -149)
+        inconsistent,
+        /// Gap-less ordering would not be guaranteed if proceeding (client-
+        /// side, code -148)
+        gapless-guarantee,
+        /// Maximum poll interval exceeded (client-side, code -147)
+        max-poll-exceeded,
+        /// Unknown broker (client-side, code -146)
+        unknown-broker,
+        /// Functionality not configured (client-side, code -145)
+        not-configured,
+        /// Instance has been fenced (client-side, code -144)
+        fenced,
+        /// Application generated error (client-side, code -143)
+        application,
+        /// Assignment lost (client-side, code -142)
+        assignment-lost,
+        /// No operation performed (client-side, code -141)
+        noop,
+        /// No offset to automatically reset to (client-side, code -140)
+        auto-offset-reset,
+        /// Partition log truncation detected (client-side, code -139)
+        log-truncation,
+        /// client-side, code -138
+        invalid-different-record,
+        /// Broker is going away but client isn't terminating (client-side,
+        /// code -137)
+        destroy-broker,
+        /// Unknown broker error (client-side, code -1)
+        unknown,
+        /// Success (broker, code 0)
+        no-error,
+        /// Offset out of range (broker, code 1)
+        offset-out-of-range,
+        /// Invalid message (broker, code 2)
+        invalid-msg,
+        /// Unknown topic or partition (broker, code 3)
+        unknown-topic-or-part,
+        /// Invalid message size (broker, code 4)
+        invalid-msg-size,
+        /// Leader not available (broker, code 5)
+        leader-not-available,
+        /// Not leader for partition (broker, code 6)
+        not-leader-for-partition,
+        /// Request timed out (broker, code 7)
+        request-timed-out,
+        /// Broker not available (broker, code 8)
+        broker-not-available,
+        /// Replica not available (broker, code 9)
+        replica-not-available,
+        /// Message size too large (broker, code 10)
+        msg-size-too-large,
+        /// StaleControllerEpochCode (broker, code 11)
+        stale-ctrl-epoch,
+        /// Offset metadata string too large (broker, code 12)
+        offset-metadata-too-large,
+        /// Broker disconnected before response received (broker, code 13)
+        network-exception,
+        /// Coordinator load in progress (broker, code 14)
+        coordinator-load-in-progress,
+        /// Coordinator not available (broker, code 15)
+        coordinator-not-available,
+        /// Not coordinator (broker, code 16)
+        not-coordinator,
+        /// Invalid topic (broker, code 17)
+        topic-exception,
+        /// Message batch larger than configured server segment size
+        /// (broker, code 18)
+        record-list-too-large,
+        /// Not enough in-sync replicas (broker, code 19)
+        not-enough-replicas,
+        /// Message(s) written to insufficient number of in-sync replicas
+        /// (broker, code 20)
+        not-enough-replicas-after-append,
+        /// Invalid required acks value (broker, code 21)
+        invalid-required-acks,
+        /// Specified group generation id is not valid (broker, code 22)
+        illegal-generation,
+        /// Inconsistent group protocol (broker, code 23)
+        inconsistent-group-protocol,
+        /// Invalid group.id (broker, code 24)
+        invalid-group-id,
+        /// Unknown member (broker, code 25)
+        unknown-member-id,
+        /// Invalid session timeout (broker, code 26)
+        invalid-session-timeout,
+        /// Group rebalance in progress (broker, code 27)
+        rebalance-in-progress,
+        /// Commit offset data size is not valid (broker, code 28)
+        invalid-commit-offset-size,
+        /// Topic authorization failed (broker, code 29)
+        topic-authorization-failed,
+        /// Group authorization failed (broker, code 30)
+        group-authorization-failed,
+        /// Cluster authorization failed (broker, code 31)
+        cluster-authorization-failed,
+        /// Invalid timestamp (broker, code 32)
+        invalid-timestamp,
+        /// Unsupported SASL mechanism (broker, code 33)
+        unsupported-sasl-mechanism,
+        /// Illegal SASL state (broker, code 34)
+        illegal-sasl-state,
+        /// Unuspported version (broker, code 35)
+        unsupported-version,
+        /// Topic already exists (broker, code 36)
+        topic-already-exists,
+        /// Invalid number of partitions (broker, code 37)
+        invalid-partitions,
+        /// Invalid replication factor (broker, code 38)
+        invalid-replication-factor,
+        /// Invalid replica assignment (broker, code 39)
+        invalid-replica-assignment,
+        /// Invalid config (broker, code 40)
+        invalid-config,
+        /// Not controller for cluster (broker, code 41)
+        not-controller,
+        /// Invalid request (broker, code 42)
+        invalid-request,
+        /// Message format on broker does not support request (broker, code
+        /// 43)
+        unsupported-for-message-format,
+        /// Policy violation (broker, code 44)
+        policy-violation,
+        /// Broker received an out of order sequence number (broker, code
+        /// 45)
+        out-of-order-sequence-number,
+        /// Broker received a duplicate sequence number (broker, code 46)
+        duplicate-sequence-number,
+        /// Producer attempted an operation with an old epoch (broker, code
+        /// 47)
+        invalid-producer-epoch,
+        /// Producer attempted a transactional operation in an invalid state
+        /// (broker, code 48)
+        invalid-txn-state,
+        /// broker, code 49
+        invalid-producer-id-mapping,
+        /// broker, code 50
+        invalid-transaction-timeout,
+        /// broker, code 51
+        concurrent-transactions,
+        /// broker, code 52
+        transaction-coordinator-fenced,
+        /// Transactional Id authorization failed (broker, code 53)
+        transactional-id-authorization-failed,
+        /// Security features are disabled (broker, code 54)
+        security-disabled,
+        /// Operation not attempted (broker, code 55)
+        operation-not-attempted,
+        /// Disk error when trying to access log file on the disk (broker,
+        /// code 56)
+        kafka-storage-error,
+        /// broker, code 57
+        log-dir-not-found,
+        /// SASL Authentication failed (broker, code 58)
+        sasl-authentication-failed,
+        /// Unknown Producer Id (broker, code 59)
+        unknown-producer-id,
+        /// Partition reassignment is in progress (broker, code 60)
+        reassignment-in-progress,
+        /// Delegation Token feature is not enabled (broker, code 61)
+        delegation-token-auth-disabled,
+        /// Delegation Token is not found on server (broker, code 62)
+        delegation-token-not-found,
+        /// Specified Principal is not valid Owner/Renewer (broker, code 63)
+        delegation-token-owner-mismatch,
+        /// Delegation Token requests are not allowed on this connection
+        /// (broker, code 64)
+        delegation-token-request-not-allowed,
+        /// Delegation Token authorization failed (broker, code 65)
+        delegation-token-authorization-failed,
+        /// Delegation Token is expired (broker, code 66)
+        delegation-token-expired,
+        /// Supplied principalType is not supported (broker, code 67)
+        invalid-principal-type,
+        /// The group is not empty (broker, code 68)
+        non-empty-group,
+        /// The group id does not exist (broker, code 69)
+        group-id-not-found,
+        /// The fetch session ID was not found (broker, code 70)
+        fetch-session-id-not-found,
+        /// The fetch session epoch is invalid (broker, code 71)
+        invalid-fetch-session-epoch,
+        /// No matching listener (broker, code 72)
+        listener-not-found,
+        /// Topic deletion is disabled (broker, code 73)
+        topic-deletion-disabled,
+        /// Leader epoch is older than broker epoch (broker, code 74)
+        fenced-leader-epoch,
+        /// Leader epoch is newer than broker epoch (broker, code 75)
+        unknown-leader-epoch,
+        /// Unsupported compression type (broker, code 76)
+        unsupported-compression-type,
+        /// Broker epoch has changed (broker, code 77)
+        stale-broker-epoch,
+        /// Leader high watermark is not caught up (broker, code 78)
+        offset-not-available,
+        /// Group member needs a valid member ID (broker, code 79)
+        member-id-required,
+        /// Preferred leader was not available (broker, code 80)
+        preferred-leader-not-available,
+        /// Consumer group has reached maximum size (broker, code 81)
+        group-max-size-reached,
+        /// broker, code 82
+        fenced-instance-id,
+        /// Eligible partition leaders are not available (broker, code 83)
+        eligible-leaders-not-available,
+        /// Leader election not needed for topic partition (broker, code 84)
+        election-not-needed,
+        /// No partition reassignment is in progress (broker, code 85)
+        no-reassignment-in-progress,
+        /// broker, code 86
+        group-subscribed-to-topic,
+        /// Broker failed to validate record (broker, code 87)
+        invalid-record,
+        /// There are unstable offsets that need to be cleared (broker, code
+        /// 88)
+        unstable-offset-commit,
+        /// Throttling quota has been exceeded (broker, code 89)
+        throttling-quota-exceeded,
+        /// broker, code 90
+        producer-fenced,
+        /// Request illegally referred to resource that does not exist
+        /// (broker, code 91)
+        resource-not-found,
+        /// Request illegally referred to the same resource twice (broker,
+        /// code 92)
+        duplicate-resource,
+        /// Requested credential would not meet criteria for acceptability
+        /// (broker, code 93)
+        unacceptable-credential,
+        /// broker, code 94
+        inconsistent-voter-set,
+        /// Invalid update version (broker, code 95)
+        invalid-update-version,
+        /// Unable to update finalized features due to server error (broker,
+        /// code 96)
+        feature-update-failed,
+        /// Request principal deserialization failed during forwarding
+        /// (broker, code 97)
+        principal-deserialization-failure,
+        /// Unknown Topic Id (broker, code 100)
+        unknown-topic-id,
+        /// The log's topic ID did not match the topic ID in the request
+        /// (broker, code 103)
+        inconsistent-topic-id,
+        /// The member epoch is fenced by the group coordinator (broker,
+        /// code 110)
+        fenced-member-epoch,
+        /// broker, code 111
+        unreleased-instance-id,
+        /// broker, code 112
+        unsupported-assignor,
+        /// The member epoch is stale (broker, code 113)
+        stale-member-epoch,
+        /// The request was sent to an endpoint of the wrong type (broker,
+        /// code 114)
+        mismatched-endpoint-type,
+        /// This endpoint type is not supported yet (broker, code 115)
+        unsupported-endpoint-type,
+        /// This controller ID is not known (broker, code 116)
+        unknown-controller-id,
+        /// broker, code 117
+        unknown-subscription-id,
+        /// broker, code 118
+        telemetry-too-large,
+        /// broker, code 119
+        invalid-registration,
+        /// broker, code 120
+        transaction-abortable,
+        /// broker, code 121
+        invalid-record-state,
+        /// The share session was not found (broker, code 122)
+        share-session-not-found,
+        /// The share session epoch is invalid (broker, code 123)
+        invalid-share-session-epoch,
+        /// broker, code 124
+        fenced-state-epoch,
+        /// The voter key doesn't match the receiving replica's key (broker,
+        /// code 125)
+        invalid-voter-key,
+        /// The voter is already part of the set of voters (broker, code
+        /// 126)
+        duplicate-voter,
+        /// The voter is not part of the set of voters (broker, code 127)
+        voter-not-found,
+        /// The regular expression is not valid (broker, code 128)
+        invalid-regular-expression,
+        /// broker, code 129
+        rebootstrap-required,
+        /// The supplied topology is invalid (broker, code 130)
+        streams-invalid-topology,
+        /// The supplied topology epoch is invalid (broker, code 131)
+        streams-invalid-topology-epoch,
+        /// The supplied topology epoch is outdated (broker, code 132)
+        streams-topology-fenced,
+        /// The limit of share sessions has been reached (broker, code 133)
+        share-session-limit-reached,
+    }
+}

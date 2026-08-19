@@ -29,6 +29,7 @@ mod group;
 mod meta;
 mod produce;
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Duration;
@@ -39,19 +40,90 @@ use meta::Cluster;
 
 use bindings::cosmonic::kafka::handler;
 use bindings::cosmonic::kafka::types as handler_types;
-use bindings::exports::cosmonic::kafka::consumer::Guest as ConsumerGuest;
+use bindings::exports::cosmonic::kafka::consumer::{
+    Guest as ConsumerGuest, GuestConsumer, RebalanceProtocol,
+};
+use bindings::exports::cosmonic::kafka::producer::{GuestProducer, GuestTransaction};
+use bindings::exports::cosmonic::kafka::types::{
+    ConfigEntry, ConsumedRecord, Error as WitError, ErrorCode, Position,
+    ProduceAck, ProduceRecord, TimestampType, TopicPartition, Watermarks,
+};
 use bindings::exports::cosmonic::kafka::producer::Guest as ProducerGuest;
-use bindings::exports::cosmonic::kafka::types::{KafkaError, KafkaRecord, ProduceAck};
+
 use bindings::exports::wasi::cli::run::Guest as RunGuest;
 use bindings::wasi::clocks::monotonic_clock;
 use bindings::wasi::config::store;
 use bindings::wasi::logging::logging::{log, Level};
 use bindings::wasmcloud::host::workload_call as workload;
 
+/// Translate an engine error into the interface's `error`.
+///
+/// The flags carry the information a caller actually acts on. `retriable` is
+/// the one that matters most: a connection that dropped is worth sending again,
+/// a misconfigured topic is not, and without the distinction every caller is
+/// left string-matching a message.
+fn to_wit(e: PluginError) -> WitError {
+    let (code, message, retriable) = match e {
+        PluginError::Connection(m) => (ErrorCode::Transport, m, true),
+        PluginError::Protocol(m) => (ErrorCode::UnknownProtocol, m, false),
+        PluginError::UnknownTopic(m) => (ErrorCode::UnknownTopicOrPart, m, false),
+        PluginError::TimedOut => (ErrorCode::TimedOut, "the call exceeded its deadline".to_owned(), true),
+        PluginError::NotConfigured(m) => (ErrorCode::InvalidConfig, m, false),
+        PluginError::Unsupported(m) => (ErrorCode::NotImplemented, m, false),
+    };
+    WitError {
+        code,
+        message,
+        // Nothing here poisons the client: every operation reopens what it
+        // needs, so no error is terminal for the resource holding it.
+        fatal: false,
+        retriable,
+        txn_requires_abort: false,
+    }
+}
+
+/// The error for an operation this backend does not implement.
+///
+/// Reported rather than faked. A caller given an empty result cannot tell "no
+/// records" from "not built", which is the failure mode worth avoiding — the
+/// same reason librdkafka's component stubs report failure instead of a
+/// plausible empty answer.
+fn unsupported(what: &str) -> WitError {
+    to_wit(PluginError::Unsupported(format!(
+        "{what} is not implemented by this backend: it speaks the Kafka wire \
+         protocol directly and implements the subset needed to produce, consume, \
+         and commit. The librdkafka-backed provider serves the full interface."
+    )))
+}
+
+/// What the engine raises internally.
+///
+/// Kept as an enum, and kept separate from the interface's `error` record,
+/// because the two answer different questions: this one is what the protocol
+/// code can distinguish, and `cosmonic:kafka` wants a Kafka error code plus the
+/// `retriable` / `fatal` flags a caller decides on. [`to_wit`] is the one place
+/// that translation happens.
+#[derive(Debug)]
+enum PluginError {
+    /// The transport failed: DNS, connect, or a dropped connection.
+    Connection(String),
+    /// The broker answered, but with an error code or an unparseable frame.
+    Protocol(String),
+    /// Topic absent and the cluster will not auto-create it.
+    UnknownTopic(String),
+    /// The call exceeded its deadline.
+    TimedOut,
+    /// No usable configuration for this operation.
+    NotConfigured(String),
+    /// This backend does not implement the operation. Distinct from a failure:
+    /// the request was well-formed and another provider would serve it.
+    Unsupported(String),
+}
+
 /// Comma-separated `host:port` list. Required — there is no sensible default
 /// for someone else's cluster, so a missing value is a configuration error
 /// surfaced on the first call rather than a silent connection to localhost.
-const CFG_BROKERS: &str = "bootstrap-servers";
+const CFG_BROKERS: &str = "bootstrap.servers";
 /// Consumer group the plugin joins. Required whenever `topics` is set.
 ///
 /// Deliberately without a default. A constant would be *shared*: two unrelated
@@ -59,15 +131,15 @@ const CFG_BROKERS: &str = "bootstrap-servers";
 /// partitions between them, each seeing a fraction of the records and unable to
 /// tell. Naming the group is one config key; sharing one by accident is silent
 /// data loss.
-const CFG_GROUP: &str = "consumer-group";
+const CFG_GROUP: &str = "group.id";
 /// Comma-separated topics the consumer subscribes to.
 const CFG_TOPICS: &str = "topics";
 /// How many replicas must have the record before a produce is acknowledged:
 /// `all` (default), `one`, or `none`.
-const CFG_ACKS: &str = "producer-acks";
+const CFG_ACKS: &str = "acks";
 /// Compression applied to produced records: `none` (default), `gzip`, or
 /// `snappy`.
-const CFG_COMPRESSION: &str = "producer-compression";
+const CFG_COMPRESSION: &str = "compression.type";
 /// `on` to run the dispatch loop; anything else leaves the plugin pull-only.
 const CFG_TRIGGER: &str = "trigger";
 /// Records per dispatched batch.
@@ -101,14 +173,14 @@ const DEFAULT_SESSION_TIMEOUT_MS: i32 = 45_000;
 ///
 /// `All` is only as strong as the topic's `min.insync.replicas`; on a
 /// single-broker cluster it is exactly `One`.
-fn required_acks() -> Result<i16, KafkaError> {
+fn required_acks() -> Result<i16, PluginError> {
     match config(CFG_ACKS)?.as_deref().map(str::trim) {
         // -1 is "all in-sync replicas"; 1 is the leader alone; 0 is
         // fire-and-forget, where the broker sends no response at all.
         None | Some("") | Some("all") => Ok(-1),
         Some("one") => Ok(1),
         Some("none") => Ok(0),
-        Some(other) => Err(KafkaError::NotConfigured(format!(
+        Some(other) => Err(PluginError::NotConfigured(format!(
             "config key '{CFG_ACKS}' is '{other}'; expected one of all, one, none"
         ))),
     }
@@ -121,12 +193,12 @@ fn required_acks() -> Result<i16, KafkaError> {
 /// time. Set it for a topic that carries volume — the codecs here are the same
 /// ones the fetch path already decodes, so records this plugin writes are
 /// records it can read back.
-fn compression() -> Result<i16, KafkaError> {
+fn compression() -> Result<i16, PluginError> {
     match config(CFG_COMPRESSION)?.as_deref().map(str::trim) {
         None | Some("") | Some("none") => Ok(0),
         Some("gzip") => Ok(1),
         Some("snappy") => Ok(2),
-        Some(other) => Err(KafkaError::NotConfigured(format!(
+        Some(other) => Err(PluginError::NotConfigured(format!(
             "config key '{CFG_COMPRESSION}' is '{other}'; expected one of none, gzip, snappy"
         ))),
     }
@@ -134,9 +206,9 @@ fn compression() -> Result<i16, KafkaError> {
 
 /// Read one key from the plugin's bind-time config. An absent key is `None`
 /// rather than an error, so each caller decides whether it had a default.
-fn config(key: &str) -> Result<Option<String>, KafkaError> {
+fn config(key: &str) -> Result<Option<String>, PluginError> {
     store::get(key)
-        .map_err(|e| KafkaError::NotConfigured(format!("could not read config key '{key}': {e:?}")))
+        .map_err(|e| PluginError::NotConfigured(format!("could not read config key '{key}': {e:?}")))
 }
 
 /// Broker list, parsed once. Held separately from the clients because both the
@@ -145,14 +217,14 @@ fn config(key: &str) -> Result<Option<String>, KafkaError> {
 /// Not `get_or_init`: a config read can fail, and caching a failure as an empty
 /// broker list would make every later call report a missing key long after the
 /// key was there. Only a usable list is cached.
-fn brokers() -> Result<&'static [String], KafkaError> {
+fn brokers() -> Result<&'static [String], PluginError> {
     static BROKERS: OnceLock<Vec<String>> = OnceLock::new();
     if let Some(hosts) = BROKERS.get() {
         return Ok(hosts);
     }
     let hosts = split_csv(&config(CFG_BROKERS)?.unwrap_or_default());
     if hosts.is_empty() {
-        return Err(KafkaError::NotConfigured(format!(
+        return Err(PluginError::NotConfigured(format!(
             "config key '{CFG_BROKERS}' is unset or empty; set it on the plugin to a \
              comma-separated host:port list"
         )));
@@ -171,8 +243,8 @@ fn split_csv(raw: &str) -> Vec<String> {
 /// A poisoned lock means a previous call trapped mid-operation and the client's
 /// internal state is untrustworthy. Recovering the guard and continuing would
 /// risk sending on a half-written connection, so surface it instead.
-fn poisoned<T>(_: PoisonError<T>) -> KafkaError {
-    KafkaError::Connection(
+fn poisoned<T>(_: PoisonError<T>) -> PluginError {
+    PluginError::Connection(
         "kafka client state was poisoned by an earlier failure; restart the plugin".to_owned(),
     )
 }
@@ -186,14 +258,12 @@ struct Component;
 /// Broker connections used for producing, one per broker address, held across
 /// calls. Separate from the consumer's connections so a slow poll and a produce
 /// do not queue behind each other on one socket.
-static PRODUCER_CONNS: Mutex<Option<HashMap<String, BrokerConn>>> = Mutex::new(None);
 
 /// Metadata client, for partition counts and leader addresses.
 ///
 /// `kafka-rust` still does this correctly against a modern broker — it is only
 /// its `Produce` and `Fetch` that are too old — so the parts that work are
 /// still used.
-static PRODUCER_META: Mutex<Option<Cluster>> = Mutex::new(None);
 
 /// How long the broker may take to satisfy `acks` before it gives up.
 const PRODUCE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -203,10 +273,10 @@ const PRODUCE_TIMEOUT: Duration = Duration::from_secs(5);
 /// A record waiting to be encoded: `(key, value)`.
 type PendingRecord = (Option<Vec<u8>>, Vec<u8>);
 
-fn choose_partition(cluster: &Cluster, topic: &str, key: Option<&[u8]>) -> Result<i32, KafkaError> {
+fn choose_partition(cluster: &Cluster, topic: &str, key: Option<&[u8]>) -> Result<i32, PluginError> {
     let ids = cluster.available_partitions(topic);
     if ids.is_empty() {
-        return Err(KafkaError::UnknownTopic(format!(
+        return Err(PluginError::UnknownTopic(format!(
             "topic '{topic}' has no available partitions"
         )));
     }
@@ -229,81 +299,63 @@ fn choose_partition(cluster: &Cluster, topic: &str, key: Option<&[u8]>) -> Resul
 fn connect<'a>(
     conns: &'a mut HashMap<String, BrokerConn>,
     addr: &str,
-) -> Result<&'a mut BrokerConn, KafkaError> {
+) -> Result<&'a mut BrokerConn, PluginError> {
     if !conns.contains_key(addr) {
         let conn = BrokerConn::connect(addr).map_err(|e| fetch_error(e, addr))?;
         conns.insert(addr.to_owned(), conn);
     }
     conns
         .get_mut(addr)
-        .ok_or_else(|| KafkaError::Connection(format!("connection to {addr} vanished")))
+        .ok_or_else(|| PluginError::Connection(format!("connection to {addr} vanished")))
 }
 
-fn map_produce_error(e: produce::ProduceError, addr: &str) -> KafkaError {
+fn map_produce_error(e: produce::ProduceError, addr: &str) -> PluginError {
     match e {
-        produce::ProduceError::Io(io) => KafkaError::Connection(format!("{addr}: {io}")),
+        produce::ProduceError::Io(io) => PluginError::Connection(format!("{addr}: {io}")),
         produce::ProduceError::Broker(3) => {
-            KafkaError::UnknownTopic("broker reports unknown topic or partition".to_owned())
+            PluginError::UnknownTopic("broker reports unknown topic or partition".to_owned())
         }
-        produce::ProduceError::Broker(7) => KafkaError::TimedOut,
+        produce::ProduceError::Broker(7) => PluginError::TimedOut,
         produce::ProduceError::Broker(code) => {
-            KafkaError::Protocol(format!("broker returned error code {code}"))
+            PluginError::Protocol(format!("broker returned error code {code}"))
         }
-        produce::ProduceError::Protocol(msg) => KafkaError::Protocol(msg),
+        produce::ProduceError::Protocol(msg) => PluginError::Protocol(msg),
     }
 }
 
 /// Publish `records` to one topic, splitting them across partitions the way
 /// their keys dictate and sending one `Produce` request per partition.
 fn send_records(
+    cluster: &mut Cluster,
+    conns: &mut HashMap<String, BrokerConn>,
     topic: &str,
-    records: &[(Option<Vec<u8>>, Vec<u8>)],
-) -> Result<Vec<ProduceAck>, KafkaError> {
-    send_records_with_headers(topic, records, &[])
+    records: Vec<(Option<Vec<u8>>, Vec<u8>)>,
+    acks: i16,
+    codec: i16,
+) -> Result<Vec<ProduceAck>, PluginError> {
+    send_records_with_headers(cluster, conns, topic, &records, &[], acks, codec)
 }
 
 /// As [`send_records`], with headers stamped on every record. Used for
 /// dead-lettering, where the provenance matters as much as the payload.
 fn send_records_with_headers(
+    cluster: &mut Cluster,
+    conns: &mut HashMap<String, BrokerConn>,
     topic: &str,
     records: &[(Option<Vec<u8>>, Vec<u8>)],
     headers: &[(&str, Vec<u8>)],
-) -> Result<Vec<ProduceAck>, KafkaError> {
+    acks: i16,
+    codec: i16,
+) -> Result<Vec<ProduceAck>, PluginError> {
     if records.is_empty() {
         return Ok(Vec::new());
     }
-    let acks = required_acks()?;
-    let codec = compression()?;
     // Via `std` rather than a new world import: on wasm32-wasip2 this lowers to
     // the `wasi:clocks/wall-clock` already in the plugin's base WASI set.
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-
-    let mut conns_guard = PRODUCER_CONNS.lock().map_err(poisoned)?;
-    let conns = conns_guard.get_or_insert_with(HashMap::new);
-    let seed = brokers()?
-        .first()
-        .cloned()
-        .ok_or_else(|| KafkaError::NotConfigured("no brokers configured".to_owned()))?;
-
-    let mut meta_guard = PRODUCER_META.lock().map_err(poisoned)?;
-    if meta_guard.is_none()
-        || !meta_guard
-            .as_ref()
-            .is_some_and(|c| c.topics.contains_key(topic))
-    {
-        // Refreshed when the topic is unknown, which is usually a topic created
-        // since the last look rather than a real absence.
-        let cluster = connect(conns, &seed)?
-            .metadata()
-            .map_err(|e| fetch_error(e, &seed))?;
-        *meta_guard = Some(cluster);
-    }
-    let cluster = meta_guard
-        .as_ref()
-        .ok_or_else(|| KafkaError::Connection("cluster metadata vanished".to_owned()))?;
 
     // Group by partition so each one is a single request, which is also what
     // makes a batch cheaper than N sends.
@@ -321,7 +373,7 @@ fn send_records_with_headers(
         let addr = cluster
             .leader_addr(topic, partition)
             .ok_or_else(|| {
-                KafkaError::Connection(format!("no leader known for {topic}/{partition}"))
+                PluginError::Connection(format!("no leader known for {topic}/{partition}"))
             })?
             .to_owned();
         let conn = connect(conns, &addr)?;
@@ -352,6 +404,7 @@ fn send_records_with_headers(
         // The broker reports the base offset; the rest follow it in order.
         for i in 0..group.len() {
             acks_out.push(ProduceAck {
+                timestamp: Some(now_ms),
                 partition: at.partition,
                 offset: if at.offset < 0 {
                     -1
@@ -365,31 +418,314 @@ fn send_records_with_headers(
 }
 
 impl ProducerGuest for Component {
-    /// `async` because the host installs a plugin's capabilities on a caller's
-    /// linker as concurrent host functions — not because anything here yields.
-    /// The body is a blocking client call, so this future completes on its
-    /// first poll and holds the plugin instance for the round trip.
-    async fn send(
-        topic: String,
-        key: Option<Vec<u8>>,
-        value: Vec<u8>,
-    ) -> Result<ProduceAck, KafkaError> {
-        send_records(&topic, &[(key, value)])?
-            .into_iter()
-            .next()
-            .ok_or_else(|| KafkaError::Protocol("broker acknowledged no partitions".to_owned()))
+    type Producer = ProducerState;
+    type Transaction = TransactionState;
+}
+
+impl ConsumerGuest for Component {
+    type Consumer = ConsumerState;
+}
+
+/// One workload's producer.
+///
+/// Per-resource rather than one shared client, which is the model the interface
+/// implies with `open(config)` and the right one regardless: Kafka authorises
+/// per principal, so a client shared between workloads would hand them all the
+/// same ACLs. Each resource holds its own brokers, its own connections, and its
+/// own view of cluster metadata.
+struct ProducerState {
+    brokers: Vec<String>,
+    acks: i16,
+    codec: i16,
+    /// Cluster snapshot and live connections, reused across sends — the
+    /// per-request cost this plugin exists to absorb.
+    cluster: RefCell<Option<Cluster>>,
+    conns: RefCell<HashMap<String, BrokerConn>>,
+}
+
+impl ProducerState {
+    /// Re-fetch metadata from a bootstrap broker.
+    fn load_cluster(&self) -> Result<(), PluginError> {
+        let seed = self
+            .brokers
+            .first()
+            .ok_or_else(|| PluginError::NotConfigured("no brokers configured".to_owned()))?;
+        let mut conns = self.conns.borrow_mut();
+        let conn = connect(&mut conns, seed)?;
+        let cluster = conn.metadata().map_err(|e| fetch_error(e, seed))?;
+        *self.cluster.borrow_mut() = Some(cluster);
+        Ok(())
     }
 
-    /// One request per partition rather than per record, which is the whole
-    /// point of a batch: a keyed batch spanning three partitions costs three
-    /// round trips, not one per record.
-    async fn send_batch(
-        topic: String,
+    /// As [`Self::produce`], with headers stamped on every record. Used for
+    /// dead-lettering, where the provenance matters as much as the payload.
+    fn produce_with_headers(
+        &self,
+        topic: &str,
+        records: &[(Option<Vec<u8>>, Vec<u8>)],
+        headers: &[(&str, Vec<u8>)],
+    ) -> Result<Vec<ProduceAck>, PluginError> {
+        if self.cluster.borrow().is_none() {
+            self.load_cluster()?;
+        }
+        let mut cluster = self.cluster.borrow_mut();
+        let cluster = cluster
+            .as_mut()
+            .ok_or_else(|| PluginError::Connection("cluster metadata vanished".to_owned()))?;
+        let mut conns = self.conns.borrow_mut();
+        send_records_with_headers(cluster, &mut conns, topic, records, headers, self.acks, self.codec)
+    }
+
+    /// Send one partition's worth of records, refreshing metadata if the topic
+    /// is unknown to this snapshot — which is the ordinary case for a topic
+    /// created after the producer was opened.
+    fn produce(
+        &self,
+        topic: &str,
         records: Vec<(Option<Vec<u8>>, Vec<u8>)>,
-    ) -> Result<Vec<ProduceAck>, KafkaError> {
-        send_records(&topic, &records)
+    ) -> Result<Vec<ProduceAck>, PluginError> {
+        if self.cluster.borrow().is_none() {
+            self.load_cluster()?;
+        }
+        let known = self
+            .cluster
+            .borrow()
+            .as_ref()
+            .map(|c| !c.available_partitions(topic).is_empty())
+            .unwrap_or(false);
+        if !known {
+            self.load_cluster()?;
+        }
+
+        let mut cluster = self.cluster.borrow_mut();
+        let cluster = cluster
+            .as_mut()
+            .ok_or_else(|| PluginError::Connection("cluster metadata vanished".to_owned()))?;
+        let mut conns = self.conns.borrow_mut();
+        send_records(cluster, &mut conns, topic, records, self.acks, self.codec)
     }
 }
+
+/// Layer the plugin's own config over a workload's.
+///
+/// The operator's keys win, which is what keeps a broker address or a
+/// credential out of a workload's reach even though `open` lets it pass one.
+/// The native provider does the same with its bind-time layer; this plugin's
+/// layer is its `config:` block, since it serves every bound workload rather
+/// than being provisioned per workload.
+fn effective_config(mut guest: Vec<ConfigEntry>) -> Result<Vec<ConfigEntry>, PluginError> {
+    for key in [CFG_BROKERS, CFG_GROUP, CFG_ACKS, CFG_COMPRESSION] {
+        let Some(value) = config(key)? else { continue };
+        guest.retain(|e| e.key != key);
+        guest.push(ConfigEntry {
+            key: key.to_owned(),
+            value,
+        });
+    }
+    Ok(guest)
+}
+
+/// Read a librdkafka-style property, which is what this interface's `config`
+/// carries: `bootstrap.servers`, `acks`, `compression.type`.
+fn property<'a>(config: &'a [ConfigEntry], key: &str) -> Option<&'a str> {
+    config
+        .iter()
+        .find(|e| e.key == key)
+        .map(|e| e.value.as_str())
+}
+
+fn required_property<'a>(config: &'a [ConfigEntry], key: &str) -> Result<&'a str, WitError> {
+    property(config, key).filter(|v| !v.trim().is_empty()).ok_or_else(|| {
+        to_wit(PluginError::NotConfigured(format!(
+            "'{key}' is required"
+        )))
+    })
+}
+
+impl GuestProducer for ProducerState {
+    async fn open(config: Vec<ConfigEntry>) -> Result<bindings::exports::cosmonic::kafka::producer::Producer, WitError> {
+        let config = effective_config(config).map_err(to_wit)?;
+        let brokers = split_csv(required_property(&config, CFG_BROKERS)?);
+        if brokers.is_empty() {
+            return Err(to_wit(PluginError::NotConfigured(
+                "'bootstrap.servers' names no broker".to_owned(),
+            )));
+        }
+        // librdkafka's spelling, since every key here is passed as it would be
+        // to librdkafka: `all`/`-1`, `1`, `0`.
+        let acks = match property(&config, CFG_ACKS).unwrap_or("all").trim() {
+            "all" | "-1" => -1i16,
+            "1" => 1,
+            "0" => 0,
+            other => {
+                return Err(to_wit(PluginError::NotConfigured(format!(
+                    "'acks' is '{other}'; expected 'all', '1', or '0'"
+                ))))
+            }
+        };
+        let codec = match property(&config, CFG_COMPRESSION).unwrap_or("none").trim() {
+            "none" => 0i16,
+            "gzip" => 1,
+            "snappy" => 2,
+            other => {
+                return Err(to_wit(PluginError::NotConfigured(format!(
+                    "'compression.type' is '{other}'; this backend encodes 'none', 'gzip', or \
+                     'snappy' (it decodes lz4 and zstd, but does not produce them)"
+                ))))
+            }
+        };
+
+        Ok(bindings::exports::cosmonic::kafka::producer::Producer::new(
+            ProducerState {
+                brokers,
+                acks,
+                codec,
+                cluster: RefCell::new(None),
+                conns: RefCell::new(HashMap::new()),
+            },
+        ))
+    }
+
+    async fn send(&self, topic: String, record: ProduceRecord) -> Result<ProduceAck, WitError> {
+        let acks = self
+            .produce(&topic, vec![(record.key, record.value.unwrap_or_default())])
+            .map_err(to_wit)?;
+        acks.into_iter().next().ok_or_else(|| {
+            to_wit(PluginError::Protocol(
+                "broker acknowledged no records".to_owned(),
+            ))
+        })
+    }
+
+    async fn send_batch(
+        &self,
+        topic: String,
+        records: Vec<ProduceRecord>,
+    ) -> Result<Vec<Result<ProduceAck, WitError>>, WitError> {
+        let pending: Vec<(Option<Vec<u8>>, Vec<u8>)> = records
+            .into_iter()
+            .map(|r| (r.key, r.value.unwrap_or_default()))
+            .collect();
+        let count = pending.len();
+        match self.produce(&topic, pending) {
+            // One ack per record, in order — the batch either lands or it does
+            // not, so a per-record error only appears when the whole call fails.
+            Ok(acks) => Ok(acks.into_iter().map(Ok).collect()),
+            Err(e) => {
+                let e = to_wit(e);
+                Ok((0..count).map(|_| Err(e.clone())).collect())
+            }
+        }
+    }
+
+    /// Returns a future that resolves to the unsupported error: the writer is
+    /// dropped immediately, which delivers the default.
+    async fn send_stream(
+        &self,
+        _topic: String,
+        _records: wit_bindgen::StreamReader<ProduceRecord>,
+    ) -> wit_bindgen::FutureReader<Result<(), WitError>> {
+        let (writer, reader) = bindings::wit_future::new(|| Err(unsupported("producer.send-stream")));
+        drop(writer);
+        reader
+    }
+
+    /// Nothing is buffered: `send` returns when the broker has acknowledged
+    /// under `acks`, so there is never anything in flight to flush.
+    async fn flush(&self) -> Result<(), WitError> {
+        Ok(())
+    }
+
+    async fn purge(&self, _in_flight: bool) -> Result<(), WitError> {
+        Ok(())
+    }
+
+    async fn in_flight_count(&self) -> u32 {
+        0
+    }
+
+    async fn partition_count(&self, topic: String) -> Result<u32, WitError> {
+        self.load_cluster().map_err(to_wit)?;
+        let cluster = self.cluster.borrow();
+        let count = cluster
+            .as_ref()
+            .map(|c| c.available_partitions(&topic).len())
+            .unwrap_or(0);
+        if count == 0 {
+            return Err(to_wit(PluginError::UnknownTopic(format!(
+                "broker knows no topic '{topic}', or none of its partitions have a leader"
+            ))));
+        }
+        Ok(count as u32)
+    }
+
+    async fn watermark_offsets(
+        &self,
+        topic: String,
+        partition: i32,
+    ) -> Result<Watermarks, WitError> {
+        if self.cluster.borrow().is_none() {
+            self.load_cluster().map_err(to_wit)?;
+        }
+        let addr = {
+            let cluster = self.cluster.borrow();
+            cluster
+                .as_ref()
+                .and_then(|c| c.leader_addr(&topic, partition))
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    to_wit(PluginError::UnknownTopic(format!(
+                        "no leader known for {topic}/{partition}"
+                    )))
+                })?
+        };
+        let mut conns = self.conns.borrow_mut();
+        let conn = connect(&mut conns, &addr).map_err(to_wit)?;
+        let low = conn
+            .list_offset(&topic, partition, -2)
+            .map_err(|e| to_wit(fetch_error(e, &addr)))?;
+        let high = conn
+            .list_offset(&topic, partition, -1)
+            .map_err(|e| to_wit(fetch_error(e, &addr)))?;
+        Ok(Watermarks { low, high })
+    }
+
+    /// Never fatal here: each operation reopens what it needs, so there is no
+    /// state a previous failure could have poisoned.
+    async fn fatal_error(&self) -> Option<WitError> {
+        None
+    }
+}
+
+/// Transactions need the idempotent producer, `InitProducerId`, `AddPartitions`
+/// and `EndTxn` — none of which this backend implements.
+struct TransactionState;
+
+impl GuestTransaction for TransactionState {
+    async fn begin(
+        _producer: bindings::exports::cosmonic::kafka::producer::ProducerBorrow<'_>,
+    ) -> Result<bindings::exports::cosmonic::kafka::producer::Transaction, WitError> {
+        Err(unsupported("transactions"))
+    }
+
+    async fn send_offsets(
+        &self,
+        _offsets: Vec<TopicPartition>,
+        _group_id: String,
+    ) -> Result<(), WitError> {
+        Err(unsupported("transactions"))
+    }
+
+    async fn commit(&self) -> Result<(), WitError> {
+        Err(unsupported("transactions"))
+    }
+
+    async fn abort(&self) -> Result<(), WitError> {
+        Err(unsupported("transactions"))
+    }
+}
+
+
 
 // ---------------------------------------------------------------------------
 // Consumer
@@ -398,7 +734,6 @@ impl ProducerGuest for Component {
 /// Longest a `poll` may hold the plugin instance waiting for a first record.
 /// The client blocks, so an unbounded wait would park the plugin — and it is a
 /// singleton serving every workload — on one caller's empty topic.
-const MAX_POLL_WAIT: Duration = Duration::from_secs(10);
 
 /// Per-partition response cap. Large enough that a poll is one round trip for a
 /// normal batch, small enough that one call cannot buffer a whole partition.
@@ -420,6 +755,8 @@ struct KafkaConsumer {
     /// call is exactly the per-request cost this plugin exists to absorb.
     conns: HashMap<String, BrokerConn>,
     group: String,
+    /// Bootstrap brokers, kept for metadata reloads and coordinator lookup.
+    brokers: Vec<String>,
     /// Subscribed topics, kept for rejoining: a rebalance re-sends them.
     topics: Vec<String>,
     /// Group membership, or `None` under static assignment. Holds the
@@ -451,50 +788,29 @@ struct KafkaConsumer {
 static CONSUMER: Mutex<Option<KafkaConsumer>> = Mutex::new(None);
 
 impl KafkaConsumer {
-    fn create() -> Result<Self, KafkaError> {
-        let topics = split_csv(&config(CFG_TOPICS)?.unwrap_or_default());
-        if topics.is_empty() {
-            return Err(KafkaError::NotConfigured(format!(
-                "config key '{CFG_TOPICS}' is unset or empty; set it on the plugin to a \
-                 comma-separated topic list"
-            )));
-        }
-        let group = config(CFG_GROUP)?
-            .map(|g| g.trim().to_owned())
-            .filter(|g| !g.is_empty())
-            .ok_or_else(|| {
-                KafkaError::NotConfigured(format!(
-                    "config key '{CFG_GROUP}' is required when '{CFG_TOPICS}' is set: it names \
-                     the consumer group whose offsets this plugin commits, and two deployments \
-                     sharing one silently split its partitions between them"
-                ))
-            })?;
-
-        let seed = brokers()?
+    /// Build a consumer for a set of brokers and a group, subscribing to
+    /// nothing yet.
+    ///
+    /// Brokers and group arrive as arguments rather than being read from config
+    /// here, because this engine now backs two callers: a workload's `consumer`
+    /// resource, which supplies its own, and the trigger loop, which supplies
+    /// the plugin's.
+    fn create(brokers: Vec<String>, group: String) -> Result<Self, PluginError> {
+        let seed = brokers
             .first()
             .cloned()
-            .ok_or_else(|| KafkaError::NotConfigured("no brokers configured".to_owned()))?;
+            .ok_or_else(|| PluginError::NotConfigured("no brokers configured".to_owned()))?;
         let mut conns: HashMap<String, BrokerConn> = HashMap::new();
         let cluster = connect(&mut conns, &seed)?
             .metadata()
             .map_err(|e| fetch_error(e, &seed))?;
 
-        // Every subscribed topic must exist before anything is assigned:
-        // "the group gave me no partitions" and "the topic is misspelled" are
-        // indistinguishable otherwise.
-        for topic in &topics {
-            if cluster.available_partitions(topic).is_empty() {
-                return Err(KafkaError::UnknownTopic(format!(
-                    "broker knows no topic '{topic}', or none of its partitions have a leader"
-                )));
-            }
-        }
-
-        let mut consumer = Self {
+        Ok(Self {
             cluster,
             conns,
+            brokers,
             group,
-            topics: topics.clone(),
+            topics: Vec::new(),
             membership: None,
             session_timeout_ms: session_timeout_ms()?,
             last_heartbeat: 0,
@@ -504,16 +820,94 @@ impl KafkaConsumer {
             pending: BTreeMap::new(),
             attempts: BTreeMap::new(),
             coordinator: None,
-        };
-
-        if group_membership_enabled()? {
-            consumer.join()?;
-        } else {
-            consumer.assign_every_partition();
-            consumer.load_positions()?;
-        }
-        Ok(consumer)
+        })
     }
+
+    /// Replace the subscription, joining the group (or taking every partition)
+    /// for the new topic set.
+    fn subscribe(&mut self, topics: Vec<String>) -> Result<(), PluginError> {
+        for topic in &topics {
+            if self.cluster.available_partitions(topic).is_empty() {
+                self.reload_metadata()?;
+                if self.cluster.available_partitions(topic).is_empty() {
+                    return Err(PluginError::UnknownTopic(format!(
+                        "broker knows no topic '{topic}', or none of its partitions have a leader"
+                    )));
+                }
+            }
+        }
+        self.topics = topics;
+        if self.topics.is_empty() {
+            self.leave();
+            self.assignment.clear();
+            self.positions.clear();
+            self.pending.clear();
+            return Ok(());
+        }
+        if group_membership_enabled()? {
+            self.join()
+        } else {
+            self.assign_every_partition();
+            self.load_positions()
+        }
+    }
+
+    /// The group's committed offset for one partition, from the coordinator.
+    fn committed_offset(&mut self, topic: &str, partition: i32) -> Result<i64, PluginError> {
+        let addr = self.leader_for(topic, partition)?;
+        let group = self.group.clone();
+        let conn = self.conn_for(&addr)?;
+        let committed = conn
+            .offset_fetch(&group, topic, &[partition])
+            .map_err(|e| fetch_error(e, &addr))?;
+        Ok(committed.first().map(|(_, o)| *o).unwrap_or(-1))
+    }
+
+    /// Commit an explicit offset, rather than whatever this consumer has read.
+    fn commit_at(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), PluginError> {
+        self.commit_one(topic, partition, offset)
+    }
+
+    /// Move a partition's read position.
+    fn seek(&mut self, topic: &str, partition: i32, to: &Position) -> Result<(), PluginError> {
+        let offset = match to {
+            Position::Beginning => self.offset_at(topic, partition, -2)?,
+            Position::End => self.offset_at(topic, partition, -1)?,
+            Position::Stored => {
+                let committed = self.committed_offset(topic, partition)?;
+                if committed >= 0 {
+                    committed
+                } else {
+                    self.offset_at(topic, partition, -2)?
+                }
+            }
+            // `tail(n)` is n records back from the end, floored at the start of
+            // what is retained.
+            Position::Tail(n) => {
+                let end = self.offset_at(topic, partition, -1)?;
+                let earliest = self.offset_at(topic, partition, -2)?;
+                end.saturating_sub(*n as i64).max(earliest)
+            }
+            Position::Exact(o) => *o,
+        };
+        self.positions.insert((topic.to_owned(), partition), offset);
+        self.pending.remove(&(topic.to_owned(), partition));
+        Ok(())
+    }
+
+    /// `ListOffsets` for a timestamp sentinel: -2 earliest, -1 latest.
+    fn offset_at(
+        &mut self,
+        topic: &str,
+        partition: i32,
+        timestamp: i64,
+    ) -> Result<i64, PluginError> {
+        let addr = self.leader_for(topic, partition)?;
+        let conn = self.conn_for(&addr)?;
+        conn.list_offset(topic, partition, timestamp)
+            .map_err(|e| fetch_error(e, &addr))
+    }
+
 
     /// Take every partition of every subscribed topic.
     ///
@@ -544,7 +938,7 @@ impl KafkaConsumer {
     /// this member no longer owns must not be committed for, and ones it has
     /// just been given start from the group's committed offset, not from
     /// whatever this member last read.
-    fn join(&mut self) -> Result<(), KafkaError> {
+    fn join(&mut self) -> Result<(), PluginError> {
         let addr = self.coordinator_addr()?;
         let group = self.group.clone();
         let topics = self.topics.clone();
@@ -620,7 +1014,7 @@ impl KafkaConsumer {
     /// occupies the plugin for longer than the session timeout will be evicted
     /// and its partitions reassigned, which is the trade for not having a
     /// background thread to heartbeat from.
-    fn heartbeat_if_due(&mut self) -> Result<(), KafkaError> {
+    fn heartbeat_if_due(&mut self) -> Result<(), PluginError> {
         let Some(membership) = self.membership.as_ref() else {
             return Ok(());
         };
@@ -657,14 +1051,15 @@ impl KafkaConsumer {
     ///
     /// In general a different broker from any partition leader, and both the
     /// group APIs and offset commits must go to it.
-    fn coordinator_addr(&mut self) -> Result<String, KafkaError> {
+    fn coordinator_addr(&mut self) -> Result<String, PluginError> {
         if let Some(addr) = &self.coordinator {
             return Ok(addr.clone());
         }
-        let seed = brokers()?
+        let seed = self
+            .brokers
             .first()
             .cloned()
-            .ok_or_else(|| KafkaError::NotConfigured("no brokers configured".to_owned()))?;
+            .ok_or_else(|| PluginError::NotConfigured("no brokers configured".to_owned()))?;
         let group = self.group.clone();
         let found = {
             let conn = self.conn_for(&seed)?;
@@ -695,7 +1090,7 @@ impl KafkaConsumer {
     /// Start each partition where the group left off, falling back to the
     /// earliest retained offset. A committed offset is the *next* one to read,
     /// which is what `positions` holds, so the two need no conversion.
-    fn load_positions(&mut self) -> Result<(), KafkaError> {
+    fn load_positions(&mut self) -> Result<(), PluginError> {
         // Grouped by topic because `OffsetFetch` takes one topic and a list of
         // partitions, and the assignment is a flat list of pairs.
         let mut by_topic: BTreeMap<String, Vec<i32>> = BTreeMap::new();
@@ -730,7 +1125,7 @@ impl KafkaConsumer {
     }
 
     /// The oldest offset still retained in a partition.
-    fn earliest_offset(&mut self, topic: &str, partition: i32) -> Result<i64, KafkaError> {
+    fn earliest_offset(&mut self, topic: &str, partition: i32) -> Result<i64, PluginError> {
         let addr = self.leader_for(topic, partition)?;
         let conn = self.conn_for(&addr)?;
         conn.list_offset(topic, partition, -2)
@@ -750,7 +1145,7 @@ impl KafkaConsumer {
     /// partition briefly without a leader is normal cluster behaviour, and
     /// answering it by leaving the group would turn a local election into a
     /// group-wide rebalance.
-    fn leader_for(&mut self, topic: &str, partition: i32) -> Result<String, KafkaError> {
+    fn leader_for(&mut self, topic: &str, partition: i32) -> Result<String, PluginError> {
         if let Some(addr) = self.cluster.leader_addr(topic, partition) {
             return Ok(addr.to_owned());
         }
@@ -759,18 +1154,19 @@ impl KafkaConsumer {
             .leader_addr(topic, partition)
             .map(str::to_owned)
             .ok_or_else(|| {
-                KafkaError::Protocol(format!(
+                PluginError::Protocol(format!(
                     "no leader for {topic}/{partition}: the partition is mid-election or offline"
                 ))
             })
     }
 
     /// Re-fetch the cluster snapshot from a bootstrap broker.
-    fn reload_metadata(&mut self) -> Result<(), KafkaError> {
-        let seed = brokers()?
+    fn reload_metadata(&mut self) -> Result<(), PluginError> {
+        let seed = self
+            .brokers
             .first()
             .cloned()
-            .ok_or_else(|| KafkaError::NotConfigured("no brokers configured".to_owned()))?;
+            .ok_or_else(|| PluginError::NotConfigured("no brokers configured".to_owned()))?;
         self.cluster = {
             let conn = connect(&mut self.conns, &seed)?;
             conn.metadata().map_err(|e| fetch_error(e, &seed))?
@@ -778,15 +1174,21 @@ impl KafkaConsumer {
         Ok(())
     }
 
-    fn conn_for(&mut self, addr: &str) -> Result<&mut BrokerConn, KafkaError> {
+    fn conn_for(&mut self, addr: &str) -> Result<&mut BrokerConn, PluginError> {
         connect(&mut self.conns, addr)
     }
 
+    /// Merge a poll across every assigned partition into one list.
+    ///
+    /// Unused until `consumer.records()` is implemented: that stream is what
+    /// will drain it. Kept rather than deleted because it is the body of that
+    /// implementation, not a leftover.
+    #[allow(dead_code)]
     fn poll(
         &mut self,
         max_records: usize,
         timeout: Duration,
-    ) -> Result<Vec<KafkaRecord>, KafkaError> {
+    ) -> Result<Vec<ConsumedRecord>, PluginError> {
         // Before reading, not after: a heartbeat that discovers a rebalance
         // replaces the assignment this poll would otherwise have read from.
         self.heartbeat_if_due()?;
@@ -823,13 +1225,16 @@ impl KafkaConsumer {
                 // never has an offset committed for something it did not see.
                 self.positions.insert(key.clone(), rec.offset + 1);
                 self.pending.insert(key.clone(), rec.offset + 1);
-                out.push(KafkaRecord {
+                out.push(ConsumedRecord {
                     topic: topic.clone(),
                     partition: rec.partition,
                     offset: rec.offset,
                     key: rec.key,
-                    value: rec.value,
-                    timestamp_ms: Some(rec.timestamp_ms),
+                    value: Some(rec.value),
+                    timestamp: Some(rec.timestamp_ms),
+                    headers: Vec::new(),
+                    timestamp_type: TimestampType::CreateTime,
+                    leader_epoch: None,
                 });
             }
         }
@@ -852,7 +1257,7 @@ impl KafkaConsumer {
         &mut self,
         per_partition: usize,
         timeout: Duration,
-    ) -> Vec<(String, i32, Vec<KafkaRecord>)> {
+    ) -> Vec<(String, i32, Vec<ConsumedRecord>)> {
         let mut batches = Vec::new();
         if per_partition == 0 {
             return batches;
@@ -893,13 +1298,16 @@ impl KafkaConsumer {
             for rec in fetched.into_iter().take(per_partition) {
                 self.positions.insert(key.clone(), rec.offset + 1);
                 self.pending.insert(key.clone(), rec.offset + 1);
-                records.push(KafkaRecord {
+                records.push(ConsumedRecord {
                     topic: topic.clone(),
                     partition: rec.partition,
                     offset: rec.offset,
                     key: rec.key,
-                    value: rec.value,
-                    timestamp_ms: Some(rec.timestamp_ms),
+                    value: Some(rec.value),
+                    timestamp: Some(rec.timestamp_ms),
+                    headers: Vec::new(),
+                    timestamp_type: TimestampType::CreateTime,
+                    leader_epoch: None,
                 });
             }
             batches.push((topic, partition, records));
@@ -913,7 +1321,7 @@ impl KafkaConsumer {
     /// offset advances only when that partition's batch was handled, so a
     /// failure in one cannot carry another's records past the point they were
     /// actually processed.
-    fn commit_partition(&mut self, topic: &str, partition: i32) -> Result<Option<i64>, KafkaError> {
+    fn commit_partition(&mut self, topic: &str, partition: i32) -> Result<Option<i64>, PluginError> {
         let key = (topic.to_owned(), partition);
         let Some(offset) = self.pending.remove(&key) else {
             return Ok(None);
@@ -932,7 +1340,7 @@ impl KafkaConsumer {
     /// *their* offset past records they never saw. That rejection is a rejoin
     /// signal, not a failure: the records stay uncommitted and are redelivered
     /// to whoever owns the partition now.
-    fn commit_one(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), KafkaError> {
+    fn commit_one(&mut self, topic: &str, partition: i32, offset: i64) -> Result<(), PluginError> {
         let addr = self.coordinator_addr()?;
         let group = self.group.clone();
         let (generation, member_id) = match &self.membership {
@@ -958,7 +1366,7 @@ impl KafkaConsumer {
                     ),
                 );
                 self.join()?;
-                Err(KafkaError::Protocol(format!(
+                Err(PluginError::Protocol(format!(
                     "commit fenced by a rebalance (code {code})"
                 )))
             }
@@ -1008,7 +1416,7 @@ impl KafkaConsumer {
         topic: &str,
         partition: i32,
         wait: Duration,
-    ) -> Result<Vec<FetchedRecord>, KafkaError> {
+    ) -> Result<Vec<FetchedRecord>, PluginError> {
         for attempt in 0..2 {
             let offset = *self
                 .positions
@@ -1050,7 +1458,7 @@ impl KafkaConsumer {
         Ok(Vec::new())
     }
 
-    fn commit(&mut self) -> Result<(), KafkaError> {
+    fn commit(&mut self) -> Result<(), PluginError> {
         // Take the pending set first: a failed commit leaves it taken, and the
         // records replay from the last committed offset, which is the
         // at-least-once behaviour a caller can reason about.
@@ -1065,18 +1473,63 @@ impl KafkaConsumer {
 /// Map a fetch-layer failure onto the interface's error variants, keeping the
 /// distinction a caller acts on: unreachable broker, unknown topic, or a
 /// protocol problem it can only report.
-fn fetch_error(e: FetchError, addr: &str) -> KafkaError {
+fn fetch_error(e: FetchError, addr: &str) -> PluginError {
     match e {
-        FetchError::Io(io) => KafkaError::Connection(format!("{addr}: {io}")),
+        FetchError::Io(io) => PluginError::Connection(format!("{addr}: {io}")),
         FetchError::Broker(code) => match code {
             ERR_OFFSET_OUT_OF_RANGE => {
-                KafkaError::Protocol("fetch offset is outside the partition's range".to_owned())
+                PluginError::Protocol("fetch offset is outside the partition's range".to_owned())
             }
-            3 => KafkaError::UnknownTopic("broker reports unknown topic or partition".to_owned()),
-            other => KafkaError::Protocol(format!("broker returned error code {other}")),
+            3 => PluginError::UnknownTopic("broker reports unknown topic or partition".to_owned()),
+            other => PluginError::Protocol(format!("broker returned error code {other}")),
         },
-        FetchError::Protocol(msg) => KafkaError::Protocol(msg),
+        FetchError::Protocol(msg) => PluginError::Protocol(msg),
     }
+}
+
+/// Build the trigger's own consumer from the plugin's config block.
+///
+/// The plugin's config, not a workload's: a workload that wants its own
+/// consumer opens the resource and passes its own brokers. This one exists so
+/// the trigger has something to poll.
+fn plugin_consumer() -> Result<KafkaConsumer, PluginError> {
+    let topics = split_csv(&config(CFG_TOPICS)?.unwrap_or_default());
+    if topics.is_empty() {
+        return Err(PluginError::NotConfigured(format!(
+            "config key '{CFG_TOPICS}' is unset or empty; set it on the plugin to a \
+             comma-separated topic list"
+        )));
+    }
+    let group = config(CFG_GROUP)?
+        .map(|g| g.trim().to_owned())
+        .filter(|g| !g.is_empty())
+        .ok_or_else(|| {
+            PluginError::NotConfigured(format!(
+                "config key '{CFG_GROUP}' is required when '{CFG_TOPICS}' is set: it names the \
+                 consumer group whose offsets this plugin commits, and two deployments sharing \
+                 one silently split its partitions between them"
+            ))
+        })?;
+
+    let mut consumer = KafkaConsumer::create(brokers()?.to_vec(), group)?;
+    consumer.subscribe(topics)?;
+    Ok(consumer)
+}
+
+/// A producer built from the plugin's own config, for the trigger's
+/// dead-letter writes.
+///
+/// Built per call rather than held: dead-lettering is the exceptional path, so
+/// a connection opened for it is cheaper than another piece of long-lived
+/// global state to keep coherent.
+fn plugin_producer() -> Result<ProducerState, PluginError> {
+    Ok(ProducerState {
+        brokers: brokers()?.to_vec(),
+        acks: required_acks()?,
+        codec: compression()?,
+        cluster: RefCell::new(None),
+        conns: RefCell::new(HashMap::new()),
+    })
 }
 
 /// Run `f` against the shared consumer, building it on first use.
@@ -1088,18 +1541,18 @@ fn fetch_error(e: FetchError, addr: &str) -> KafkaError {
 /// turns the reconnect into an immediate rebalance instead of one that waits
 /// out the session timeout with this member's partitions unread.
 fn with_consumer<T>(
-    f: impl FnOnce(&mut KafkaConsumer) -> Result<T, KafkaError>,
-) -> Result<T, KafkaError> {
+    f: impl FnOnce(&mut KafkaConsumer) -> Result<T, PluginError>,
+) -> Result<T, PluginError> {
     let mut guard = CONSUMER.lock().map_err(poisoned)?;
     if guard.is_none() {
-        *guard = Some(KafkaConsumer::create()?);
+        *guard = Some(plugin_consumer()?);
     }
     let consumer = guard.as_mut().ok_or_else(|| {
-        KafkaError::Connection("consumer disappeared after initialization".to_owned())
+        PluginError::Connection("consumer disappeared after initialization".to_owned())
     })?;
 
     let result = f(consumer);
-    if let Err(KafkaError::Connection(reason)) = &result {
+    if let Err(PluginError::Connection(reason)) = &result {
         log(
             Level::Warn,
             LOG_CONTEXT,
@@ -1111,44 +1564,229 @@ fn with_consumer<T>(
     result
 }
 
-impl ConsumerGuest for Component {
-    async fn poll(max_records: u32, timeout_ms: u32) -> Result<Vec<KafkaRecord>, KafkaError> {
-        refuse_if_triggered("poll")?;
-        let timeout = Duration::from_millis(u64::from(timeout_ms)).min(MAX_POLL_WAIT);
-        with_consumer(|consumer| consumer.poll(max_records as usize, timeout))
+/// One workload's consumer, wrapping the engine.
+///
+/// The engine ([`KafkaConsumer`]) already holds group membership, positions and
+/// per-partition commits; this is the boundary that presents it as the
+/// interface's resource. `RefCell` rather than `Mutex` because a plugin store is
+/// single-threaded — the lock would only ever be uncontended ceremony.
+struct ConsumerState {
+    engine: RefCell<KafkaConsumer>,
+}
+
+impl GuestConsumer for ConsumerState {
+    async fn open(
+        config: Vec<ConfigEntry>,
+    ) -> Result<bindings::exports::cosmonic::kafka::consumer::Consumer, WitError> {
+        let config = effective_config(config).map_err(to_wit)?;
+        let brokers = split_csv(required_property(&config, CFG_BROKERS)?);
+        // `group.id`, librdkafka's name for it. Required for the same reason it
+        // is there: a default would be a *shared* default, and two unrelated
+        // consumers that both took it would split one group's partitions
+        // between them, each seeing a fraction and unable to tell.
+        let group = required_property(&config, CFG_GROUP)?.to_owned();
+
+        let engine = KafkaConsumer::create(brokers, group).map_err(to_wit)?;
+        Ok(bindings::exports::cosmonic::kafka::consumer::Consumer::new(
+            ConsumerState {
+                engine: RefCell::new(engine),
+            },
+        ))
     }
 
-    async fn commit() -> Result<(), KafkaError> {
-        // Guarded for the same reason as `poll`, and more sharply: a commit
-        // from a puller would move the offsets of partitions the trigger is
-        // mid-batch on, past records no handler has seen.
-        refuse_if_triggered("commit")?;
-        with_consumer(KafkaConsumer::commit)
+    async fn subscribe(&self, topics: Vec<String>) -> Result<(), WitError> {
+        self.engine.borrow_mut().subscribe(topics).map_err(to_wit)
+    }
+
+    async fn unsubscribe(&self) -> Result<(), WitError> {
+        self.engine.borrow_mut().subscribe(Vec::new()).map_err(to_wit)
+    }
+
+    async fn subscription(&self) -> Result<Vec<String>, WitError> {
+        Ok(self.engine.borrow().topics.clone())
+    }
+
+    async fn assignment(&self) -> Result<Vec<TopicPartition>, WitError> {
+        let engine = self.engine.borrow();
+        Ok(engine
+            .assignment
+            .iter()
+            .map(|(topic, partition)| TopicPartition {
+                topic: topic.clone(),
+                partition: *partition,
+                offset: engine.positions.get(&(topic.clone(), *partition)).copied(),
+                metadata: None,
+                leader_epoch: None,
+                error: None,
+            })
+            .collect())
+    }
+
+    /// The group's committed offsets, read from the coordinator rather than
+    /// from memory — which is the point of asking.
+    async fn committed(
+        &self,
+        partitions: Vec<TopicPartition>,
+    ) -> Result<Vec<TopicPartition>, WitError> {
+        let mut engine = self.engine.borrow_mut();
+        let mut out = Vec::with_capacity(partitions.len());
+        for tp in partitions {
+            let offset = engine
+                .committed_offset(&tp.topic, tp.partition)
+                .map_err(to_wit)?;
+            out.push(TopicPartition {
+                offset: Some(offset),
+                ..tp
+            });
+        }
+        Ok(out)
+    }
+
+    /// Where this consumer will read next — memory, not the coordinator.
+    async fn position(
+        &self,
+        partitions: Vec<TopicPartition>,
+    ) -> Result<Vec<TopicPartition>, WitError> {
+        let engine = self.engine.borrow();
+        Ok(partitions
+            .into_iter()
+            .map(|tp| TopicPartition {
+                offset: engine
+                    .positions
+                    .get(&(tp.topic.clone(), tp.partition))
+                    .copied(),
+                ..tp
+            })
+            .collect())
+    }
+
+    async fn commit(
+        &self,
+        offsets: Vec<TopicPartition>,
+    ) -> Result<Vec<TopicPartition>, WitError> {
+        let mut engine = self.engine.borrow_mut();
+        if offsets.is_empty() {
+            // An empty list means "everything read so far", as it does in
+            // librdkafka.
+            engine.commit().map_err(to_wit)?;
+            return Ok(Vec::new());
+        }
+        for tp in &offsets {
+            let Some(offset) = tp.offset else {
+                return Err(to_wit(PluginError::NotConfigured(format!(
+                    "no offset given for {}/{}", tp.topic, tp.partition
+                ))));
+            };
+            engine
+                .commit_at(&tp.topic, tp.partition, offset)
+                .map_err(to_wit)?;
+        }
+        Ok(offsets)
+    }
+
+    async fn seek(&self, partitions: Vec<TopicPartition>, to: Position) -> Result<(), WitError> {
+        let mut engine = self.engine.borrow_mut();
+        for tp in partitions {
+            engine.seek(&tp.topic, tp.partition, &to).map_err(to_wit)?;
+        }
+        Ok(())
+    }
+
+    async fn watermark_offsets(
+        &self,
+        topic: String,
+        partition: i32,
+    ) -> Result<Watermarks, WitError> {
+        let mut engine = self.engine.borrow_mut();
+        let low = engine.offset_at(&topic, partition, -2).map_err(to_wit)?;
+        let high = engine.offset_at(&topic, partition, -1).map_err(to_wit)?;
+        Ok(Watermarks { low, high })
+    }
+
+    async fn close(&self) -> Result<(), WitError> {
+        self.engine.borrow_mut().leave();
+        Ok(())
+    }
+
+    async fn rebalance_protocol(&self) -> RebalanceProtocol {
+        // Stop-the-world: a rejoin drops the whole assignment and reloads
+        // positions. `cooperative` would mean revoking only what moved.
+        if self.engine.borrow().membership.is_some() {
+            RebalanceProtocol::Eager
+        } else {
+            RebalanceProtocol::None
+        }
+    }
+
+    async fn assignment_lost(&self) -> bool {
+        false
+    }
+
+    async fn fatal_error(&self) -> Option<WitError> {
+        None
+    }
+
+    // ---- Not implemented by this backend -------------------------------
+    //
+    // Each needs protocol work this plugin has not done, and each reports
+    // that rather than returning a plausible empty answer: a caller given an
+    // empty list cannot tell "nothing to report" from "not built".
+
+    async fn records(
+        &self,
+    ) -> (
+        wit_bindgen::StreamReader<ConsumedRecord>,
+        wit_bindgen::FutureReader<Result<(), WitError>>,
+    ) {
+        let (_tx, rx) = bindings::wit_stream::new::<ConsumedRecord>();
+        let (tx_done, rx_done) = bindings::wit_future::new(|| Err(unsupported("consumer.records")));
+        drop(tx_done);
+        (rx, rx_done)
+    }
+
+    async fn rebalances(&self) -> wit_bindgen::StreamReader<bindings::exports::cosmonic::kafka::consumer::RebalanceEvent> {
+        let (_tx, rx) = bindings::wit_stream::new();
+        rx
+    }
+
+    async fn assign(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+        Err(unsupported("consumer.assign (manual assignment)"))
+    }
+
+    async fn incremental_assign(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+        Err(unsupported("consumer.incremental-assign"))
+    }
+
+    async fn incremental_unassign(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+        Err(unsupported("consumer.incremental-unassign"))
+    }
+
+    async fn store_offsets(&self, _offsets: Vec<TopicPartition>) -> Result<(), WitError> {
+        Err(unsupported("consumer.store-offsets"))
+    }
+
+    async fn commit_async(&self, _offsets: Vec<TopicPartition>) -> Result<(), WitError> {
+        Err(unsupported("consumer.commit-async"))
+    }
+
+    async fn pause(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+        Err(unsupported("consumer.pause"))
+    }
+
+    async fn resume(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+        Err(unsupported("consumer.resume"))
+    }
+
+    async fn offsets_for_times(
+        &self,
+        _partitions: Vec<TopicPartition>,
+        _time: i64,
+    ) -> Result<Vec<TopicPartition>, WitError> {
+        Err(unsupported("consumer.offsets-for-times"))
     }
 }
 
-/// Refuse a pull-interface call while the trigger owns the consumer.
-///
-/// The plugin holds *one* consumer with one cursor, and both the trigger loop
-/// and this interface read from it. Serving both would hand each record to
-/// whichever asked first: the trigger's handler would see part of the stream,
-/// the caller here would see the rest, and neither would look wrong on its own.
-/// That silence is the reason this is an error rather than a warning — a split
-/// stream is discovered as missing data much later, somewhere else.
-///
-/// Pick one per plugin deployment. Two deployments with different
-/// `consumer-group` values can have both.
-fn refuse_if_triggered(operation: &str) -> Result<(), KafkaError> {
-    if trigger_enabled() {
-        return Err(KafkaError::NotConfigured(format!(
-            "consumer.{operation} is unavailable while '{CFG_TRIGGER}' is on: the trigger loop \
-             and the pull interface are the same consumer, and serving both would split the \
-             stream between them. Export 'cosmonic:kafka/handler' to receive records, or run a \
-             second plugin with its own '{CFG_GROUP}' to poll."
-        )));
-    }
-    Ok(())
-}
+
 
 // ---------------------------------------------------------------------------
 // Trigger
@@ -1282,7 +1920,7 @@ async fn dispatch_pass(
     interface: &str,
     batch_size: u32,
     max_inflight: usize,
-) -> Result<usize, KafkaError> {
+) -> Result<usize, PluginError> {
     let batches = with_consumer(|consumer| {
         Ok(consumer.poll_partitions(
             batch_size as usize,
@@ -1301,7 +1939,7 @@ async fn dispatch_pass(
     // can be routed. `none` is the race `callable` warns about: a snapshot, and
     // the workload can stop between reading it and acting on it.
     let Some(_target) = workload::Target::open(target_id, interface) else {
-        return Err(KafkaError::Connection(format!(
+        return Err(PluginError::Connection(format!(
             "workload '{target_id}' stopped before the batch could be delivered"
         )));
     };
@@ -1323,15 +1961,18 @@ async fn dispatch_pass(
             // The record type is generated twice — once for the interface this
             // plugin exports, once for the one it imports — so the same shape
             // has to be restated to cross from one to the other.
-            let outbound: Vec<handler_types::KafkaRecord> = records
+            let outbound: Vec<handler_types::ConsumedRecord> = records
                 .iter()
-                .map(|r| handler_types::KafkaRecord {
+                .map(|r| handler_types::ConsumedRecord {
                     topic: r.topic.clone(),
                     partition: r.partition,
                     offset: r.offset,
                     key: r.key.clone(),
                     value: r.value.clone(),
-                    timestamp_ms: r.timestamp_ms,
+                    timestamp: r.timestamp,
+                    headers: Vec::new(),
+                    timestamp_type: handler_types::TimestampType::CreateTime,
+                    leader_epoch: None,
                 })
                 .collect();
 
@@ -1365,12 +2006,25 @@ async fn dispatch_pass(
                     committed += count;
                 }
                 Err(e) => {
+                    // `permanent` is the handler saying redelivery is pointless.
+                    // Believing it is the whole reason the variant exists: the
+                    // alternative is burning every attempt to reach the same
+                    // answer while the partition behind it waits.
+                    let (permanent, detail) = match &e {
+                        handler::HandlerError::Permanent(why) => {
+                            (true, why.clone().unwrap_or_default())
+                        }
+                        handler::HandlerError::Transient(why) => {
+                            (false, why.clone().unwrap_or_default())
+                        }
+                    };
+                    let e = detail;
                     let attempts = with_consumer(|consumer| {
                         Ok(consumer.note_failure(&topic, partition, first_offset))
                     })?;
                     let max = trigger_max_attempts();
 
-                    if attempts < max {
+                    if !permanent && attempts < max {
                         log(
                             Level::Warn,
                             LOG_CONTEXT,
@@ -1395,6 +2049,14 @@ async fn dispatch_pass(
                     // holding a partition hostage to one bad batch stops every
                     // record behind it, which is a worse failure than parking
                     // these somewhere durable and going on.
+                    // Why the batch is being dead-lettered, which is the
+                    // difference between "the handler gave up on it" and "we
+                    // gave up retrying".
+                    let reason = if permanent {
+                        "permanent".to_owned()
+                    } else {
+                        format!("{attempts} attempts")
+                    };
                     let dlq = dlq_topic(&topic);
                     match dead_letter(&dlq, &topic, partition, records, &e) {
                         Ok(()) => {
@@ -1403,7 +2065,7 @@ async fn dispatch_pass(
                                 LOG_CONTEXT,
                                 &format!(
                                     "handler rejected {count} records from {topic}/{partition} \
-                                     {max} times; moved to '{dlq}' and advancing past offset \
+                                     ({reason}); moved to '{dlq}' and advancing past offset \
                                      {first_offset}: {e}"
                                 ),
                             );
@@ -1449,12 +2111,12 @@ fn dead_letter(
     dlq: &str,
     source_topic: &str,
     partition: i32,
-    records: &[KafkaRecord],
+    records: &[ConsumedRecord],
     reason: &str,
-) -> Result<(), KafkaError> {
+) -> Result<(), PluginError> {
     let payload: Vec<(Option<Vec<u8>>, Vec<u8>)> = records
         .iter()
-        .map(|r| (r.key.clone(), r.value.clone()))
+        .map(|r| (r.key.clone(), r.value.clone().unwrap_or_default()))
         .collect();
     let headers = vec![
         ("dlq-source-topic", source_topic.as_bytes().to_vec()),
@@ -1469,7 +2131,9 @@ fn dead_letter(
         ),
         ("dlq-reason", reason.as_bytes().to_vec()),
     ];
-    send_records_with_headers(dlq, &payload, &headers).map(|_| ())
+    plugin_producer()?
+        .produce_with_headers(dlq, &payload, &headers)
+        .map(|_| ())
 }
 
 /// The first running workload that exports the handler interface.
@@ -1500,11 +2164,11 @@ fn trigger_enabled() -> bool {
 /// partition. Defaults to joining: static assignment silently double-reads as
 /// soon as a second consumer exists, which is not a safe default even though it
 /// is the simpler one.
-fn group_membership_enabled() -> Result<bool, KafkaError> {
+fn group_membership_enabled() -> Result<bool, PluginError> {
     match config(CFG_ASSIGNMENT)?.as_deref().map(str::trim) {
         None | Some("") | Some("group") => Ok(true),
         Some("static") => Ok(false),
-        Some(other) => Err(KafkaError::NotConfigured(format!(
+        Some(other) => Err(PluginError::NotConfigured(format!(
             "config key '{CFG_ASSIGNMENT}' is '{other}'; expected 'group' or 'static'"
         ))),
     }
@@ -1513,12 +2177,12 @@ fn group_membership_enabled() -> Result<bool, KafkaError> {
 /// How long the coordinator waits before evicting this member. The broker
 /// clamps it to its own configured range and answers `INVALID_SESSION_TIMEOUT`
 /// rather than silently adjusting, so a rejected value is reported as it is.
-fn session_timeout_ms() -> Result<i32, KafkaError> {
+fn session_timeout_ms() -> Result<i32, PluginError> {
     let Some(raw) = config(CFG_SESSION_TIMEOUT)? else {
         return Ok(DEFAULT_SESSION_TIMEOUT_MS);
     };
     raw.trim().parse::<i32>().map_err(|_| {
-        KafkaError::NotConfigured(format!(
+        PluginError::NotConfigured(format!(
             "config key '{CFG_SESSION_TIMEOUT}' is '{raw}'; expected a whole number of \
              milliseconds"
         ))

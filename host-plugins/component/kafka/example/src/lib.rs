@@ -18,9 +18,11 @@ mod bindings {
     wit_bindgen::generate!({ world: "publisher", generate_all });
 }
 
-use bindings::cosmonic::kafka::types::KafkaRecord;
-use bindings::cosmonic::kafka::{consumer, producer};
-use bindings::exports::cosmonic::kafka::handler::Guest as HandlerGuest;
+use bindings::cosmonic::kafka::types::{
+    ConfigEntry, ConsumedRecord, ProduceRecord,
+};
+use bindings::cosmonic::kafka::producer::Producer;
+use bindings::exports::cosmonic::kafka::handler::{Guest as HandlerGuest, HandlerError};
 use bindings::exports::wasi::http::handler::Guest;
 use bindings::wasi::http::types::{ErrorCode, Fields, Request, Response};
 use bindings::wasmcloud::blobstore::blobstore;
@@ -29,6 +31,34 @@ use bindings::wasmcloud::blobstore::blobstore;
 /// record, so a body that keeps growing is a mistake rather than a large
 /// message, and refusing it beats buffering it into the workload's heap.
 const MAX_BODY: usize = 1 << 20;
+
+/// Ask for the batch to be delivered again.
+///
+/// Everything this handler can fail at — an unreachable object store, a broker
+/// that dropped a connection — is worth another attempt.
+fn refuse(message: &str) -> HandlerError {
+    HandlerError::Transient(Some(message.to_owned()))
+}
+
+/// Reject the batch for good, so the provider dead-letters it now instead of
+/// redelivering something that will never succeed.
+fn reject(message: &str) -> HandlerError {
+    HandlerError::Permanent(Some(message.to_owned()))
+}
+
+/// Open a producer.
+///
+/// The config list is empty on purpose: `bootstrap.servers` is an operator
+/// concern, and the plugin layers its own over whatever a workload passes. This
+/// workload therefore names no broker and holds no credential — which is the
+/// property that makes going through the capability worth it rather than
+/// opening a socket here.
+async fn open_producer() -> Result<Producer, String> {
+    let config: Vec<ConfigEntry> = Vec::new();
+    Producer::open(config)
+        .await
+        .map_err(|e| format!("{:?}: {}", e.code, e.message))
+}
 
 const USAGE: &str = "POST /publish?topic=<topic>[&key=<key>]   publish the request body\nGET  /consume?max=<n>[&commit]         pull what has accumulated\nPOST /bigwrite?mode=<m>&mb=<n>         stream n MiB up, m = multipart|chunked\nGET  /bigread?mode=<m>&mb=<n>          stream it back, counting bytes\n";
 
@@ -48,41 +78,16 @@ impl Guest for Component {
         // workload can be torn down and rebuilt between polls without losing
         // its place — which is the point of the capability living there.
         if route == "/consume" {
-            let max = query_get(query, "max")
-                .and_then(|m| m.parse::<u32>().ok())
-                .unwrap_or(10);
-            let records = match consumer::poll(max, 2000).await {
-                Ok(records) => records,
-                Err(e) => return Ok(respond(502, &format!("poll failed: {e:?}\n"))),
-            };
-
-            let mut body = String::new();
-            for r in &records {
-                let key = r
-                    .key
-                    .as_deref()
-                    .map(|k| String::from_utf8_lossy(k).into_owned())
-                    .unwrap_or_else(|| "-".to_string());
-                body.push_str(&format!(
-                    "{}:{} ts={} key={} value={}\n",
-                    r.partition,
-                    r.offset,
-                    r.timestamp_ms.unwrap_or(-1),
-                    key,
-                    String::from_utf8_lossy(&r.value)
-                ));
-            }
-            body.push_str(&format!("({} records)\n", records.len()));
-
-            // Committing is the caller's decision, because it is the caller
-            // that knows whether the records were actually dealt with.
-            if query_get(query, "commit").is_some() {
-                match consumer::commit().await {
-                    Ok(()) => body.push_str("committed\n"),
-                    Err(e) => return Ok(respond(502, &format!("commit failed: {e:?}\n"))),
-                }
-            }
-            return Ok(respond(200, &body));
+            // Pulling means holding a `consumer` resource and reading
+            // `records()`, which this provider does not implement — and which
+            // this workload could not use anyway: it is per-request, and a
+            // stream needs an owner that outlives the request. Records arrive
+            // through the `handler` export below instead.
+            return Ok(respond(
+                501,
+                "this workload is push-shaped: the plugin calls its \
+                 cosmonic:kafka/handler export with each batch. See /publish.\n",
+            ));
         }
 
         // Two events, one per upload strategy, so they can be compared on the
@@ -210,7 +215,18 @@ impl Guest for Component {
         // this component's linker as concurrent host functions — which is also
         // why this handler is `wasi:http/handler@0.3.0` and not p2's
         // `incoming-handler`: a sync-lifted export has nowhere to await from.
-        match producer::send(topic.clone(), key.map(String::into_bytes), body).await {
+        let producer = match open_producer().await {
+            Ok(p) => p,
+            Err(e) => return Ok(respond(502, &format!("open failed: {e}\n"))),
+        };
+        let record = ProduceRecord {
+            partition: None,
+            key: key.map(String::into_bytes),
+            value: Some(body),
+            headers: Vec::new(),
+            timestamp: None,
+        };
+        match producer.send(topic.clone(), record).await {
             Ok(ack) => Ok(respond(
                 200,
                 &format!(
@@ -244,7 +260,7 @@ impl HandlerGuest for Component {
     /// rather than a best-effort loop. A failure here means the whole batch is
     /// redelivered, which is why the transform must be idempotent: writing the
     /// same record to the same output topic twice is the expected worst case.
-    async fn handle(records: Vec<KafkaRecord>) -> Result<(), String> {
+    async fn handle(records: Vec<ConsumedRecord>) -> Result<(), HandlerError> {
         let Some(first) = records.first() else {
             return Ok(());
         };
@@ -252,8 +268,10 @@ impl HandlerGuest for Component {
         // A record whose value starts with `poison` always fails, so the
         // plugin's bounded-retry and dead-letter path can be exercised without
         // waiting for a real bug to produce one.
-        if records.iter().any(|r| r.value.starts_with(b"poison")) {
-            return Err("poison record: this handler will never succeed".to_string());
+        if records
+            .iter()
+            .any(|r| r.value.as_deref().unwrap_or_default().starts_with(b"poison")) {
+            return Err(reject("poison record: this handler will never succeed"));
         }
 
         // One object per batch, keyed by where the batch came from, so a rerun
@@ -275,7 +293,7 @@ impl HandlerGuest for Component {
                         .as_deref()
                         .map(|k| String::from_utf8_lossy(k).into_owned())
                         .unwrap_or_else(|| "-".to_string()),
-                    String::from_utf8_lossy(&r.value)
+                    String::from_utf8_lossy(r.value.as_deref().unwrap_or_default())
                 )
             })
             .collect();
@@ -285,7 +303,7 @@ impl HandlerGuest for Component {
         // endpoint or credential either way.
         let container = blobstore::get_container(ARCHIVE_CONTAINER.to_string())
             .await
-            .map_err(|e| format!("archive container unavailable: {e:?}"))?;
+            .map_err(|e| refuse(&format!("archive container unavailable: {e:?}")))?;
 
         // The body crosses as a `stream<u8>`, which is what makes this
         // interface usable across a plugin boundary at all.
@@ -297,18 +315,29 @@ impl HandlerGuest for Component {
         container
             .write_data(archive_key, rx)
             .await
-            .map_err(|e| format!("archive failed: {e:?}"))?;
+            .map_err(|e| refuse(&format!("archive failed: {e:?}")))?;
 
         for record in records {
             let topic = format!("{}{PROCESSED_SUFFIX}", record.topic);
             let value = format!(
                 "handled offset {}: {}",
                 record.offset,
-                String::from_utf8_lossy(&record.value)
+                String::from_utf8_lossy(record.value.as_deref().unwrap_or_default())
             );
-            producer::send(topic, record.key, value.into_bytes())
+            let producer = open_producer().await.map_err(|e| refuse(&e))?;
+            producer
+                .send(
+                    topic,
+                    ProduceRecord {
+                        partition: None,
+                        key: record.key,
+                        value: Some(value.into_bytes()),
+                        headers: Vec::new(),
+                        timestamp: None,
+                    },
+                )
                 .await
-                .map_err(|e| format!("{e:?}"))?;
+                .map_err(|e| refuse(&format!("{e:?}")))?;
         }
         Ok(())
     }

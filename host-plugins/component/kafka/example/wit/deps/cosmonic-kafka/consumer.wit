@@ -1,0 +1,229 @@
+package cosmonic:kafka@0.2.0;
+
+/// Consuming records, with and without consumer-group coordination.
+/// ## Every function is `async`
+///
+/// Including the ones that only read local state — `assignment`, `position`,
+/// `fatal-error` — which is not how they would be written for a native
+/// implementation. A host *component* plugin's capabilities are installed on a
+/// caller's linker as concurrent host functions, and a sync `func` fails to bind
+/// there with "type mismatch with async". One sync function is therefore enough
+/// to make the whole interface unservable from a component, and this package's
+/// `host-plugin` world describes exactly that deployment. An async lift costs a
+/// native implementation nothing — the body returns without suspending — so this
+/// is the version that both kinds of provider can serve.
+@since(version = 0.1.0)
+interface consumer {
+    @since(version = 0.1.0)
+    use types.{
+        config-entry, error, consumed-record, topic-partition, partition,
+        position, watermarks, timestamp-ms
+    };
+
+    /// How the group negotiates partition movement.
+    @since(version = 0.1.0)
+    enum rebalance-protocol {
+        /// Not in a group, or not yet joined.
+        none,
+        /// Stop-the-world: the whole assignment is revoked, then reassigned.
+        eager,
+        /// Only the partitions that actually move are revoked.
+        cooperative,
+    }
+
+    /// A change to this consumer's assignment.
+    @since(version = 0.1.0)
+    variant rebalance-event {
+        /// Partitions being added. Accept with `assign` under the `eager`
+        /// protocol, or `incremental-assign` under `cooperative`.
+        assign(list<topic-partition>),
+        /// Partitions being taken away. Commit progress on them first — once
+        /// acknowledged, their offsets can no longer be committed.
+        revoke(list<topic-partition>),
+        /// The assignment was lost without a clean revoke, typically after
+        /// falling out of the group. Offsets for these partitions can no
+        /// longer be committed and another member may already own them.
+        lost(list<topic-partition>),
+    }
+
+    /// A consumer client.
+    ///
+    /// Holds group membership and its heartbeat. The heartbeat is driven by the
+    /// record stream, so a consumer whose stream is not being read will
+    /// eventually be evicted from its group and have its partitions reassigned
+    /// — the async equivalent of exceeding `max.poll.interval.ms`.
+    @since(version = 0.1.0)
+    resource consumer {
+        /// Open a consumer.
+        ///
+        /// librdkafka property names verbatim (`bootstrap.servers`,
+        /// `group.id`, `auto.offset.reset`, `enable.auto.commit`,
+        /// `isolation.level`, ...). `group.id` is required for `subscribe`;
+        /// without it only manual `assign` is available.
+        ///
+        /// # Typical errors
+        /// - `invalid-config`: an unknown or malformed property.
+        /// - `invalid-group-id`: `group.id` missing or rejected.
+        @since(version = 0.1.0)
+        open: static async func(config: list<config-entry>)
+            -> result<consumer, error>;
+
+        /// Join a group and let it assign partitions for these topics.
+        ///
+        /// Replaces any previous subscription. A name beginning with `^` is
+        /// treated as a regular expression. Resolving does not mean partitions
+        /// are assigned — that arrives on `rebalances` once the group settles.
+        @since(version = 0.1.0)
+        subscribe: async func(topics: list<string>) -> result<_, error>;
+
+        /// Leave the group and drop the assignment.
+        @since(version = 0.1.0)
+        unsubscribe: async func() -> result<_, error>;
+
+        /// The topics currently subscribed to.
+        @since(version = 0.1.0)
+        subscription: async func() -> result<list<string>, error>;
+
+        /// Replace the assignment outright, bypassing group coordination.
+        ///
+        /// An empty list clears it. Use for manual assignment, or to accept an
+        /// `eager` rebalance.
+        @since(version = 0.1.0)
+        assign: async func(partitions: list<topic-partition>)
+            -> result<_, error>;
+
+        /// Add to the assignment. Only valid under the `cooperative` protocol.
+        @since(version = 0.1.0)
+        incremental-assign: async func(partitions: list<topic-partition>)
+            -> result<_, error>;
+
+        /// Remove from the assignment. Only valid under `cooperative`.
+        @since(version = 0.1.0)
+        incremental-unassign: async func(partitions: list<topic-partition>)
+            -> result<_, error>;
+
+        /// The partitions currently assigned.
+        @since(version = 0.1.0)
+        assignment: async func() -> result<list<topic-partition>, error>;
+
+        /// Whether the assignment was lost without a clean revoke. Offsets for
+        /// a lost assignment can no longer be committed.
+        @since(version = 0.1.0)
+        assignment-lost: async func() -> bool;
+
+        /// Which rebalance protocol the group negotiated.
+        @since(version = 0.1.0)
+        rebalance-protocol: async func() -> rebalance-protocol;
+
+        /// The stream of records from the assigned partitions, plus a future
+        /// carrying the terminal error if the stream ends abnormally.
+        ///
+        /// May be taken once per consumer. Reading it is what drives group
+        /// heartbeats, so it must be read continuously even when the records
+        /// are not needed — a consumer whose stream is parked is a consumer
+        /// about to be evicted.
+        ///
+        /// The stream ends cleanly on `close`. It ends with an error in the
+        /// future on a fatal client error.
+        @since(version = 0.1.0)
+        records: async func()
+            -> tuple<stream<consumed-record>, future<result<_, error>>>;
+
+        /// The stream of assignment changes.
+        ///
+        /// May be taken once per consumer. Rebalances are a stream rather than
+        /// a callback because a WIT import cannot call back into the guest;
+        /// this is the async counterpart of librdkafka's `rebalance_cb`.
+        ///
+        /// Ignoring it is not fatal — the client falls back to its default
+        /// assignment behaviour — but revocations then pass unobserved, which
+        /// is how duplicate processing starts.
+        @since(version = 0.1.0)
+        rebalances: async func() -> stream<rebalance-event>;
+
+        /// Mark offsets consumed locally, for a later commit.
+        ///
+        /// Only meaningful with `enable.auto.offset.store=false`. Store one
+        /// past the last processed record.
+        @since(version = 0.1.0)
+        store-offsets: async func(offsets: list<topic-partition>)
+            -> result<_, error>;
+
+        /// Commit progress to the group coordinator, resolving once the
+        /// coordinator confirms.
+        ///
+        /// An empty `offsets` commits the current stored positions. The result
+        /// reports per-partition outcomes.
+        ///
+        /// # Typical errors
+        /// - `rebalance-in-progress`: the group is moving; re-join and retry.
+        /// - `illegal-generation` / `unknown-member-id`: this member was
+        ///   evicted, and these offsets are no longer this consumer's to
+        ///   commit.
+        @since(version = 0.1.0)
+        commit: async func(offsets: list<topic-partition>)
+            -> result<list<topic-partition>, error>;
+
+        /// Queue a commit without waiting for confirmation.
+        ///
+        /// Resolves once queued. The outcome is not reported — use `commit`
+        /// where the result matters.
+        @since(version = 0.1.0)
+        commit-async: async func(offsets: list<topic-partition>)
+            -> result<_, error>;
+
+        /// The group's committed offsets for these partitions.
+        @since(version = 0.1.0)
+        committed: async func(partitions: list<topic-partition>)
+            -> result<list<topic-partition>, error>;
+
+        /// The current local read position, which may be ahead of what has
+        /// been committed.
+        @since(version = 0.1.0)
+        position: async func(partitions: list<topic-partition>)
+            -> result<list<topic-partition>, error>;
+
+        /// Move the read position. Takes effect on subsequent records.
+        @since(version = 0.1.0)
+        seek: async func(
+            partitions: list<topic-partition>,
+            to: position
+        ) -> result<_, error>;
+
+        /// Stop fetching these partitions while keeping them assigned.
+        @since(version = 0.1.0)
+        pause: async func(partitions: list<topic-partition>) -> result<_, error>;
+
+        /// Resume fetching paused partitions.
+        @since(version = 0.1.0)
+        resume: async func(partitions: list<topic-partition>) -> result<_, error>;
+
+        /// Low and high watermarks, queried from the broker.
+        @since(version = 0.1.0)
+        watermark-offsets: async func(topic: string, partition: partition)
+            -> result<watermarks, error>;
+
+        /// For each partition, the earliest offset whose timestamp is at or
+        /// after the given time.
+        ///
+        /// Partitions with no such record come back with no offset.
+        @since(version = 0.1.0)
+        offsets-for-times: async func(
+            partitions: list<topic-partition>,
+            %time: timestamp-ms
+        ) -> result<list<topic-partition>, error>;
+
+        /// Leave the group cleanly, committing final offsets if auto-commit is
+        /// enabled, and end the record stream.
+        ///
+        /// Worth awaiting rather than just dropping the resource: it triggers
+        /// an immediate rebalance instead of making the group wait out the
+        /// session timeout.
+        @since(version = 0.1.0)
+        close: async func() -> result<_, error>;
+
+        /// The unrecoverable error this client has entered, if any.
+        @since(version = 0.1.0)
+        fatal-error: async func() -> option<error>;
+    }
+}

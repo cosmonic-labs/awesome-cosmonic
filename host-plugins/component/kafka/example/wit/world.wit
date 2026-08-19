@@ -16,15 +16,14 @@ package cosmonic:kafka-publisher@0.1.0;
 /// response channel is gone before the plugin answers.
 world publisher {
     import wasi:http/types@0.3.0;
-    import cosmonic:kafka/types@0.1.0;
-    import cosmonic:kafka/producer@0.1.0;
-    import cosmonic:kafka/consumer@0.1.0;
+    import cosmonic:kafka/types@0.2.0;
+    import cosmonic:kafka/producer@0.2.0;
 
     /// The push direction: the plugin's trigger loop calls this, so the
     /// workload runs when there is work rather than when someone asks. The host
     /// matches it on the export alone: a workload satisfies an interface by
     /// exporting it just as well as by importing it.
-    export cosmonic:kafka/handler@0.1.0;
+    export cosmonic:kafka/handler@0.2.0;
 
     /// Object storage, as the standard interface rather than anything
     /// S3-shaped. Which backend serves it is a deployment question: the S3

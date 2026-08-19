@@ -26,12 +26,12 @@ dev:
         # Kafka client reconnects to whatever the cluster metadata names.
         # Change this: it is one machine's LAN address, and a DHCP lease can
         # move it. `127.0.0.1` will not work — see the comment above.
-        bootstrap-servers: 192.168.86.23:29092
+        bootstrap.servers: 192.168.86.23:29092
         topics: demo
         # Required: no default, because a constant would be shared by every
         # deployment that left it unset, silently splitting one group's
         # partitions between unrelated consumers.
-        consumer-group: kafka-plugin-demo
+        group.id: kafka-plugin-demo
         # Turn the plugin from something you poll into a trigger: its own
         # `wasi:cli/run` polls and pushes each batch into a workload.
         trigger: "on"
