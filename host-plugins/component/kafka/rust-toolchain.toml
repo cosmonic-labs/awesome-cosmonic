@@ -1,0 +1,7 @@
+# Pinned so both crates here build the same way everywhere, and because this box
+# defaults to nightly, where a `wasm32-wasip2` component's `wasi:http` path has
+# come out broken before — the component loads and then hangs on the first
+# request with no error to read. Stable is what the two crates are tested on.
+[toolchain]
+channel = "stable"
+targets = ["wasm32-wasip2"]

@@ -1,0 +1,112 @@
+package cosmonic:kafka@0.1.0;
+
+interface types {
+    /// A single Kafka record. `partition` and `offset` are broker-assigned and
+    /// only meaningful on records that came back from a fetch or a produce ack.
+    record kafka-record {
+        topic: string,
+        partition: s32,
+        offset: s64,
+        key: option<list<u8>>,
+        value: list<u8>,
+        /// Milliseconds since the Unix epoch, as reported by the broker.
+        timestamp-ms: option<s64>,
+    }
+
+    /// Where a produced record landed.
+    record produce-ack {
+        partition: s32,
+        offset: s64,
+    }
+
+    variant kafka-error {
+        /// Could not reach a broker: DNS, TCP connect, or a dropped connection.
+        connection(string),
+        /// The broker answered, but with an error code or an unparseable frame.
+        protocol(string),
+        /// Topic is absent and the cluster will not auto-create it.
+        unknown-topic(string),
+        /// The call exceeded its deadline.
+        timed-out,
+        /// The plugin has no usable configuration for this operation.
+        not-configured(string),
+    }
+}
+
+/// Produce records. Cheap to call per-request: the plugin keeps the broker
+/// connections and metadata warm across every workload that calls it, which is
+/// exactly the state an ephemeral workload cannot own for itself.
+///
+/// Every function is an `async func`, and that is a requirement rather than a
+/// style choice: a host component plugin's capabilities are installed on a
+/// caller's linker as concurrent host functions, so a sync-declared function
+/// fails to bind with "type mismatch with async". Callers are free to lower
+/// these synchronously and block, which is what a `wasi:http/incoming-handler`
+/// workload does.
+interface producer {
+    use types.{produce-ack, kafka-error};
+
+    /// Publish one record and wait for the configured acks.
+    send: async func(
+        topic: string,
+        key: option<list<u8>>,
+        value: list<u8>
+    ) -> result<produce-ack, kafka-error>;
+
+    /// Publish a batch to one topic in a single request. Strictly better than
+    /// looping `send` — one round trip instead of N.
+    send-batch: async func(
+        topic: string,
+        records: list<tuple<option<list<u8>>, list<u8>>>
+    ) -> result<list<produce-ack>, kafka-error>;
+}
+
+/// The push direction: a workload *exports* this and the plugin calls it.
+///
+/// This is what turns the plugin from something you poll into a trigger. Its
+/// own `wasi:cli/run` holds the consumer group, polls, and hands each batch to
+/// a workload that exports `handle` — so the workload runs only when there is
+/// work, and scales with it, rather than having to ask.
+///
+/// `async func` is required, not stylistic: the host serves a workload-exported
+/// import concurrently so that a call out to a workload never holds the
+/// plugin's store — shared by every workload it serves — for the round trip. A
+/// plain `func` is refused when the plugin loads.
+interface handler {
+    use types.{kafka-record};
+
+    /// Handle one batch of records.
+    ///
+    /// Returning an error means the batch was **not** processed: the plugin
+    /// leaves the group's offsets where they were, so the same records are
+    /// delivered again. Returning `ok` is what allows the offsets past them, so
+    /// do not report success for work that was only partly done.
+    ///
+    /// Delivery is at-least-once — a plugin restart between handling and
+    /// committing redelivers — so this must be idempotent.
+    handle: async func(records: list<kafka-record>) -> result<_, string>;
+}
+
+/// Consume records.
+///
+/// This is a PULL interface, and that is a deliberate consequence of what a
+/// component host plugin can do rather than a preference. A native plugin
+/// pushes into workloads through host-side APIs (`call_handle_message`,
+/// `deliver_trigger_service_message`) that reach the workload registry. The
+/// component plugin loader wires no such egress path — a component plugin's
+/// only outbound edges are its own imports. So the plugin holds group
+/// membership and offsets, and workloads ask it for what has accumulated.
+interface consumer {
+    use types.{kafka-record, kafka-error};
+
+    /// Fetch up to `max-records`, waiting at most `timeout-ms` for the first
+    /// one. Returns an empty list rather than an error when nothing arrives in
+    /// time. Offsets are marked consumed but not committed — call `commit`.
+    poll: async func(
+        max-records: u32,
+        timeout-ms: u32
+    ) -> result<list<kafka-record>, kafka-error>;
+
+    /// Commit every offset consumed by `poll` so far for this group.
+    commit: async func() -> result<_, kafka-error>;
+}

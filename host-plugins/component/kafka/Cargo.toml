@@ -1,0 +1,46 @@
+# The example workload is a workspace member rather than its own crate so both
+# build into this one `target/`, which is what lets `dev.host_plugins` in
+# `example/.wash/config.yaml` name the plugin by a stable relative path.
+[workspace]
+members = ["example"]
+
+[package]
+name = "kafka-host-plugin"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Kafka capability for wasmCloud, built as a host component plugin"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# No Kafka client library. Every API this plugin needs is implemented in
+# `src/{produce,fetch,meta,group}.rs`, because the only pure-Rust client that builds
+# for wasm32-wasip2 (`kafka` 0.10) sends four of them at versions current
+# brokers refuse. Once those were written, it was doing two small requests and
+# supplying the crate whose obsolescence caused every protocol bug here.
+# Pure-Rust Kafka client. `default-features = false` is load-bearing: the
+# default `security` feature of the published 0.10.0 pulls `openssl-sys`, whose
+# C build cannot target wasm32-wasip2. See README "TLS" for the path to
+# encrypted transport.
+# Only for `join_all`, to hold one in-flight dispatch per partition. No
+# executor: the futures are polled on the trigger's own task and every await
+# suspends at the host boundary.
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+# Batch decompression. All four are pure Rust — a C-backed codec would not link
+# for wasm32-wasip2, which is the same constraint that rules out `rdkafka`.
+# `flate2` needs its Rust backend explicitly; the default is a C zlib.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+snap = "1"
+lz4_flex = { version = "0.11", default-features = false, features = ["frame"] }
+ruzstd = "0.7"
+# 0.60 is a floor: this world's exports are `async func`, and older releases
+# (0.46) encode those as the extern name `[async]send`, which no current
+# `wit-component` will decode.
+wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true

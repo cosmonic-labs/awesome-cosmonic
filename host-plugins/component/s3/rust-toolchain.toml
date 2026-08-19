@@ -1,0 +1,7 @@
+# Pinned for the same reason as the Kafka plugin next door: a `wasm32-wasip2`
+# component built on nightly has come out with a broken `wasi:http` path, which
+# presents as a hang with no error on the first request. Every request this
+# plugin makes goes through `wasi:http`, so it is the whole surface.
+[toolchain]
+channel = "stable"
+targets = ["wasm32-wasip2"]

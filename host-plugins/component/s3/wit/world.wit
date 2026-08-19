@@ -1,0 +1,48 @@
+package cosmonic:s3-plugin@0.1.0;
+
+/// An S3 backend for `wasmcloud:blobstore`, as a host component plugin.
+///
+/// No interface of its own: `wasmcloud:blobstore` already exists, is fully
+/// `async func`, and carries object bodies as `stream<u8>` rather than the
+/// `incoming-value`/`outgoing-value` resources `wasi:blobstore` wraps them in.
+/// Both properties are load-bearing — a plugin's capabilities are installed on
+/// a caller's linker as concurrent host functions, so a sync interface could not
+/// bind at all, and a `stream<u8>` crosses a plugin/workload store boundary
+/// where an arbitrary resource handle could not.
+///
+/// So a workload written against the standard interface gets S3 by deploying
+/// this plugin, and the host's built-in filesystem or NATS backend by not
+/// deploying it. The workload is identical either way, and never sees a
+/// credential: those live in this plugin's operator-controlled config, bounded
+/// by its `allowedHosts`.
+world s3-plugin {
+    /// Endpoint, region, and credentials, from the plugin's own `config:` block
+    /// in the host manifest. A plugin store is built without an environment, so
+    /// `wasi:cli/environment` is present but always empty — this is the only
+    /// channel these have.
+    import wasi:config/store@0.2.0-rc.1;
+
+    /// The transport. Gated by the plugin's own `allowedHosts`, which is
+    /// stricter than a workload's: an omitted list denies every outbound host
+    /// rather than allowing all, because a plugin is operator-controlled and
+    /// more privileged than the workloads it serves.
+    ///
+    /// p2 rather than p3: a plugin's egress is served by the host's own
+    /// outgoing handler, which is wired to this interface. Importing
+    /// `wasi:http/handler@0.3.0` instead fails the plugin's load with
+    /// "instance export `handle` has the wrong type".
+    import wasi:http/outgoing-handler@0.2.2;
+
+    /// SigV4 signs over a timestamp, and a request signed with the wrong clock
+    /// is rejected as skewed rather than malformed — worth knowing when it
+    /// fails.
+    import wasi:clocks/wall-clock@0.2.2;
+
+    /// So a signing or endpoint failure says so, rather than surfacing only as
+    /// an error the calling workload has to interpret.
+    import wasi:logging/logging@0.1.0-draft;
+
+    export wasmcloud:blobstore/blobstore@0.1.0;
+    export wasmcloud:blobstore/container@0.1.0;
+    export wasmcloud:blobstore/types@0.1.0;
+}

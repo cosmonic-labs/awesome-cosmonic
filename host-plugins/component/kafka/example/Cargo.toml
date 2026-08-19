@@ -1,0 +1,16 @@
+[package]
+name = "kafka-publisher-example"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "HTTP workload that publishes to Kafka through the kafka host component plugin"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# 0.60 is a floor, not a preference. Older releases (0.46) encode an
+# async-lowered import as the extern name `[async]send`, which no current
+# `wit-component` will decode — the build fails at componentization with "not in
+# kebab case", long after the code has compiled.
+wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }

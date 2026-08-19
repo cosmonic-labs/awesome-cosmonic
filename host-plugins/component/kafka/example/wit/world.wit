@@ -1,0 +1,38 @@
+package cosmonic:kafka-publisher@0.1.0;
+
+/// An ordinary ephemeral workload that publishes to Kafka.
+///
+/// It imports `cosmonic:kafka/producer` and nothing else Kafka-shaped: no
+/// client, no broker addresses, no connection to keep warm. The host satisfies
+/// that import with the `kafka-host-plugin` component running in its own
+/// long-lived store, so every request here reuses connections this workload
+/// never opened and could not have kept.
+///
+/// The HTTP export is `wasi:http/handler@0.3.0` rather than p2's
+/// `incoming-handler`, and that is forced rather than chosen: a host component
+/// plugin's capabilities are installed on this component's linker as concurrent
+/// host functions, so calling one means awaiting it, and only an async export
+/// has somewhere to await from. Under a sync-lifted p2 export the request's
+/// response channel is gone before the plugin answers.
+world publisher {
+    import wasi:http/types@0.3.0;
+    import cosmonic:kafka/types@0.1.0;
+    import cosmonic:kafka/producer@0.1.0;
+    import cosmonic:kafka/consumer@0.1.0;
+
+    /// The push direction: the plugin's trigger loop calls this, so the
+    /// workload runs when there is work rather than when someone asks. The host
+    /// matches it on the export alone: a workload satisfies an interface by
+    /// exporting it just as well as by importing it.
+    export cosmonic:kafka/handler@0.1.0;
+
+    /// Object storage, as the standard interface rather than anything
+    /// S3-shaped. Which backend serves it is a deployment question: the S3
+    /// plugin next door, or the host's built-in filesystem or NATS store. This
+    /// component cannot tell, and holds no credential either way.
+    import wasmcloud:blobstore/types@0.1.0;
+    import wasmcloud:blobstore/container@0.1.0;
+    import wasmcloud:blobstore/blobstore@0.1.0;
+
+    export wasi:http/handler@0.3.0;
+}

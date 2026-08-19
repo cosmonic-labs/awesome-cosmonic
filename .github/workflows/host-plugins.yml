@@ -1,0 +1,141 @@
+# Builds and checks the host component plugins under `host-plugins/component/`.
+#
+# These are Wasm components rather than ordinary crates, so the useful gate is
+# not only "does it compile" but "does it still compile *to a component* that
+# exports the interfaces a host binds against". The last two steps of each job
+# are what make this more than a `cargo build`.
+name: host-plugins
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "host-plugins/component/**"
+      - ".github/workflows/host-plugins.yml"
+  pull_request:
+    paths:
+      - "host-plugins/component/**"
+      - ".github/workflows/host-plugins.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes this run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Each project is independent, so one failing should not hide the others.
+      fail-fast: false
+      matrix:
+        include:
+          - name: kafka-plugin
+            dir: host-plugins/component/kafka
+            # The capability the plugin serves, and the trigger loop's export.
+            # Losing either is a deployment failure with an opaque message, so
+            # it is worth catching as a build failure with an obvious one.
+            expect: "export cosmonic:kafka/producer|export wasi:cli/run"
+          - name: kafka-example
+            dir: host-plugins/component/kafka/example
+            # The example is a member of the kafka workspace, not a workspace
+            # of its own: the lockfile and the `target/` it shares both live a
+            # directory up, which is what the cache has to key on.
+            cache_root: host-plugins/component/kafka
+            # The push direction: the plugin dispatches batches into this.
+            expect: "export cosmonic:kafka/handler|export wasi:http/handler"
+          - name: s3-plugin
+            dir: host-plugins/component/s3
+            expect: "export wasmcloud:blobstore/blobstore"
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No toolchain action: each project pins its own channel and target in
+      # `rust-toolchain.toml`, and rustup installs from it. Pinning matters
+      # here — a `wasm32-wasip2` component built on nightly has come out with a
+      # broken `wasi:http` path, which presents as a hang with no error rather
+      # than as a build failure.
+      - name: Install the pinned toolchain
+        run: rustup show
+
+      # `wash-version` defaults to `latest`, resolved from the newest
+      # `wasmCloud/wasmCloud` release. Deliberately not pinned: these plugins
+      # track an evolving host feature, so CI finding out that a new wash no
+      # longer builds them is the point rather than the failure mode.
+      - uses: wasmCloud/setup-wash-action@v2.1.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.cache_root || matrix.dir }}
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # Runs on the host target, not wasm: the protocol encoders, the SigV4
+      # signer, and the partition assignor are all pure functions over bytes,
+      # which is what makes them testable without a broker or an S3 server.
+      - name: Unit tests
+        run: cargo test --all-features
+
+      # `--skip-fetch` because every WIT dependency is vendored under
+      # `wit/deps/`, including ones that are not published at all
+      # (`wasmcloud:wash`), so a fetch would fail rather than find them.
+      #
+      # The JSON output is wash's own answer about where the artifact landed,
+      # which beats reconstructing it: one of these projects builds into a
+      # shared workspace `target/` a directory up.
+      - name: Build the component
+        id: build
+        run: |
+          report="${RUNNER_TEMP}/build-${{ matrix.name }}.json"
+          wash build --skip-fetch --non-interactive --output json > "$report" || {
+            echo "::error::wash build failed"
+            cat "$report"
+            exit 1
+          }
+          artifact=$(jq -er '.data.component_path' "$report") || {
+            echo "::error::wash build produced no component path"
+            cat "$report"
+            exit 1
+          }
+          echo "built $artifact"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      # The two checks that a `cargo build` cannot make: that the output is a
+      # valid component at all, and that it still exports what a host will look
+      # for when it loads it.
+      - name: Validate the component
+        run: |
+          artifact="${{ steps.build.outputs.artifact }}"
+          wasm-tools validate --features all "$artifact"
+          wit=$(wasm-tools component wit "$artifact")
+          echo "$wit"
+          while IFS= read -r want; do
+            echo "$wit" | grep -q -- "$want" || {
+              echo "::error::component no longer has '$want'"
+              exit 1
+            }
+          done < <(echo "${{ matrix.expect }}" | tr '|' '\n')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.build.outputs.artifact }}
+          if-no-files-found: error

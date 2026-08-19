@@ -1,0 +1,7 @@
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/s3_host_plugin.wasm
+
+# No `dev:` block: this project is a host plugin, not a workload. `wash dev`
+# here would deploy the plugin as the component under development, which is not
+# what it is. See the kafka plugin's `example/` for how a dev session loads one.

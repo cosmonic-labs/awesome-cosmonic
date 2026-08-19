@@ -68,7 +68,8 @@ _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
 Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-component-host-plugins) and deployed into a host at runtime as trigger services with a capability ingress, so you ship, version, and sandbox them like any other component. Currently opt-in via the `host-component-plugins` feature, so check the docs for the state of play before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
 
-_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
+- [kafka](host-plugins/component/kafka/) (hosted): Kafka producer, consumer, and push-based trigger speaking the native wire protocol over `wasi:sockets`, exporting `cosmonic:kafka` and shipping an HTTP workload that publishes and consumes through it. It joins its consumer group like any other client — verified by sharing a group with a stock Java consumer — and carries no client library at all: every protocol API is implemented in the plugin, because no published pure-Rust client both targets `wasm32-wasip2` and speaks a current broker's protocol. Verified against Redpanda and Apache Kafka 4.3.1.
+- [s3](host-plugins/component/s3/) (hosted): An S3 backend for `wasmcloud:blobstore`, signing SigV4 requests inside the sandbox so a workload names a container and object and never sees a credential. Deploying it is what makes a workload's object storage S3; the same workload gets the host's filesystem or NATS backend without it. Verified against RustFS running locally.
 
 ## Workload Examples
 

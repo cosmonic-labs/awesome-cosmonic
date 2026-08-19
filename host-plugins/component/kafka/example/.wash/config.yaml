@@ -1,0 +1,71 @@
+build:
+  # Shares the workspace `target/` one level up, which is where the plugin's
+  # wasm lands too — see `dev.host_plugins` below.
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: ../target/wasm32-wasip2/release/kafka_publisher_example.wasm
+
+dev:
+  # No `host_interfaces` block: `wash dev` derives the workload's from the
+  # component itself, and it reads exports as well as imports. The exported
+  # `cosmonic:kafka/handler` lands there next to the imported `producer`,
+  # `consumer`, and `types`, which is the whole entry the plugin binds against.
+  host_plugins:
+    # Build this first: `wash build --skip-fetch` in the parent directory.
+    # `wash dev` loads a plugin from a path, it does not build one.
+    - id: cosmonic-kafka
+      file: ../target/wasm32-wasip2/release/kafka_host_plugin.wasm
+      # The plugin's own bind-time config, delivered over its
+      # `wasi:config/store` import. A plugin store is built without an
+      # environment, so this is the only channel these values have.
+      config:
+        # NOT `127.0.0.1`, however the broker is reachable from your shell. A
+        # component's connect to a loopback address is served by the host's
+        # in-process virtual network, which has no Kafka listening on it, and
+        # fails as `connection("No host reachable")`. Use an address that routes
+        # — and make sure the broker *advertises* that same address, since a
+        # Kafka client reconnects to whatever the cluster metadata names.
+        # Change this: it is one machine's LAN address, and a DHCP lease can
+        # move it. `127.0.0.1` will not work — see the comment above.
+        bootstrap-servers: 192.168.86.23:29092
+        topics: demo
+        # Turn the plugin from something you poll into a trigger: its own
+        # `wasi:cli/run` polls and pushes each batch into a workload.
+        trigger: "on"
+        trigger-batch-size: "8"
+        # Redeliveries before a batch is dead-lettered rather than blocking
+        # its partition forever.
+        trigger-max-attempts: "2"
+        # One batch in flight per partition, capped here. Partitions are the
+        # unit because Kafka orders records within one and commits one offset
+        # per one — so they are what can be handled, and committed, apart.
+        trigger-max-inflight: "6"
+      # Only needed if `bootstrap-servers` names a broker rather than
+      # addressing one: a plugin resolves no DNS name unless it is listed here.
+      # allowedIpNameLookups:
+      #   - broker.internal
+      maxRestarts: 3
+
+    # The S3 backend for `wasmcloud:blobstore`. Deploying it is what decides the
+    # workload's object storage is S3; without it the host's built-in
+    # filesystem or NATS store serves the same imports, and the workload does
+    # not change either way.
+    - id: cosmonic-s3
+      file: ../../s3/target/wasm32-wasip2/release/s3_host_plugin.wasm
+      config:
+        endpoint: http://192.168.86.23:9100
+        access-key: rustfsadmin
+        secret-key: rustfsadmin
+        region: us-east-1
+        # Per-container strategy, so the two events below exercise different
+        # upload paths against the same payload.
+        # Default upload strategy, and a per-container override. `/bigwrite`
+        # writes to `bench-multipart` and `bench-chunked`, so the two routes
+        # exercise different upload paths against the same payload.
+        write-strategy: multipart
+        write-strategy.bench-chunked: chunked
+      # Required, and stricter than a workload's: a plugin with no
+      # `allowedHosts` denies every outbound host rather than allowing all.
+      # It is also what bounds where these credentials can be sent.
+      allowedHosts:
+        - http://192.168.86.23:9100
+      maxRestarts: 3
