@@ -5,9 +5,9 @@
 //! and no outbound network: the component starts with no authority and reaches
 //! only the two things its Workload grants it — the HTTP trigger and the store.
 //!
-//! The HTTP handler is implemented directly against `wasi:http@0.2.2` (rather
-//! than a framework) so the exported interface version matches exactly what the
-//! Desktop ingress binds.
+//! The HTTP handler is implemented directly against `wasi:http` (rather than a
+//! framework) to keep the example dependency-light. The host resolves the
+//! interface semver-compatibly, so any recent `0.2.x` export routes fine.
 
 mod bindings {
     wit_bindgen::generate!({ generate_all });
