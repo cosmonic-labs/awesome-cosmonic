@@ -29,11 +29,12 @@ spec:
         environment:
           config:
             RUST_LOG: info
-            # Well-known demo secret so the example works one-click. Move it to a
-            # Cosmonic secret for real use (cosmonic_set_secret).
-            WEBHOOK_SIGNING_SECRET: cosmonic-demo-secret
             # The single downstream. Its host MUST be in allowedHosts below.
             WEBHOOK_FORWARD_URL: https://postman-echo.com/post
+          # The HMAC signing secret is a Cosmonic secret, never inline. Register it
+          # before launch (targeting WEBHOOK_SIGNING_SECRET); see the README.
+          secretFrom:
+            - name: webhook-signing-secret
         # Outbound allow-list: the ONE host the webhook may forward to. Point
         # WEBHOOK_FORWARD_URL at anything not listed here and the sandbox denies
         # the send. That deny-all-except-one gate is the demo.

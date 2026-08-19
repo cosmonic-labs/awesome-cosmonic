@@ -13,8 +13,30 @@ Read from the workload environment:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WEBHOOK_SIGNING_SECRET` | `cosmonic-demo-secret` | HMAC key. Move it to a Cosmonic secret for real use. |
+| `WEBHOOK_SIGNING_SECRET` | a Cosmonic secret (see below) | HMAC key. Registered as a Cosmonic secret, never inline. Falls back to a built-in dev default under local `wash dev`. |
 | `WEBHOOK_FORWARD_URL` | `https://postman-echo.com/post` | The single downstream. Its host **must** be in the workload's `allowedHosts`. |
+
+## Set the signing secret
+
+The webhook verifies its caller with an HMAC signature, so it needs a signing secret you control. Never inline it in a manifest: register it as a **Cosmonic secret**, flattened into the `WEBHOOK_SIGNING_SECRET` environment variable.
+
+1. Register the secret with the `cosmonic_set_secret` MCP tool (the value goes into your OS keychain, never a manifest):
+
+   | Field | Value |
+   |---|---|
+   | `name` | `webhook-signing-secret`, matches `secretFrom` in the workload |
+   | `uri` | `keychain://cosmonic/webhook-signing-secret` |
+   | `env` | `WEBHOOK_SIGNING_SECRET`, the variable injected into the component |
+   | `value` | `<a strong random secret you generate>` |
+
+2. The workload already references it, under `components[].localResources.environment`:
+
+   ```yaml
+   secretFrom:
+     - name: webhook-signing-secret
+   ```
+
+This is a required step before launch, not a one-click default: a webhook that verifies its callers needs a real secret. (For local `wash dev`, where no secret is injected, the component falls back to a built-in dev default so the example still runs.)
 
 ## Prerequisites
 
