@@ -52,7 +52,13 @@ use bindings::wasmcloud::host::workload_call as workload;
 /// for someone else's cluster, so a missing value is a configuration error
 /// surfaced on the first call rather than a silent connection to localhost.
 const CFG_BROKERS: &str = "bootstrap-servers";
-/// Consumer group the plugin joins on behalf of every workload that polls it.
+/// Consumer group the plugin joins. Required whenever `topics` is set.
+///
+/// Deliberately without a default. A constant would be *shared*: two unrelated
+/// deployments that both left it unset would join one group and split its
+/// partitions between them, each seeing a fraction of the records and unable to
+/// tell. Naming the group is one config key; sharing one by accident is silent
+/// data loss.
 const CFG_GROUP: &str = "consumer-group";
 /// Comma-separated topics the consumer subscribes to.
 const CFG_TOPICS: &str = "topics";
@@ -82,8 +88,6 @@ const CFG_ASSIGNMENT: &str = "partition-assignment";
 const CFG_SESSION_TIMEOUT: &str = "session-timeout-ms";
 /// Java's default, and comfortably above the heartbeat interval derived from it.
 const DEFAULT_SESSION_TIMEOUT_MS: i32 = 45_000;
-
-const DEFAULT_GROUP: &str = "wasmcloud-kafka-plugin";
 
 /// Durability of a produce, as the broker defines it.
 ///
@@ -455,7 +459,16 @@ impl KafkaConsumer {
                  comma-separated topic list"
             )));
         }
-        let group = config(CFG_GROUP)?.unwrap_or_else(|| DEFAULT_GROUP.to_owned());
+        let group = config(CFG_GROUP)?
+            .map(|g| g.trim().to_owned())
+            .filter(|g| !g.is_empty())
+            .ok_or_else(|| {
+                KafkaError::NotConfigured(format!(
+                    "config key '{CFG_GROUP}' is required when '{CFG_TOPICS}' is set: it names \
+                     the consumer group whose offsets this plugin commits, and two deployments \
+                     sharing one silently split its partitions between them"
+                ))
+            })?;
 
         let seed = brokers()?
             .first()
@@ -1100,13 +1113,41 @@ fn with_consumer<T>(
 
 impl ConsumerGuest for Component {
     async fn poll(max_records: u32, timeout_ms: u32) -> Result<Vec<KafkaRecord>, KafkaError> {
+        refuse_if_triggered("poll")?;
         let timeout = Duration::from_millis(u64::from(timeout_ms)).min(MAX_POLL_WAIT);
         with_consumer(|consumer| consumer.poll(max_records as usize, timeout))
     }
 
     async fn commit() -> Result<(), KafkaError> {
+        // Guarded for the same reason as `poll`, and more sharply: a commit
+        // from a puller would move the offsets of partitions the trigger is
+        // mid-batch on, past records no handler has seen.
+        refuse_if_triggered("commit")?;
         with_consumer(KafkaConsumer::commit)
     }
+}
+
+/// Refuse a pull-interface call while the trigger owns the consumer.
+///
+/// The plugin holds *one* consumer with one cursor, and both the trigger loop
+/// and this interface read from it. Serving both would hand each record to
+/// whichever asked first: the trigger's handler would see part of the stream,
+/// the caller here would see the rest, and neither would look wrong on its own.
+/// That silence is the reason this is an error rather than a warning — a split
+/// stream is discovered as missing data much later, somewhere else.
+///
+/// Pick one per plugin deployment. Two deployments with different
+/// `consumer-group` values can have both.
+fn refuse_if_triggered(operation: &str) -> Result<(), KafkaError> {
+    if trigger_enabled() {
+        return Err(KafkaError::NotConfigured(format!(
+            "consumer.{operation} is unavailable while '{CFG_TRIGGER}' is on: the trigger loop \
+             and the pull interface are the same consumer, and serving both would split the \
+             stream between them. Export 'cosmonic:kafka/handler' to receive records, or run a \
+             second plugin with its own '{CFG_GROUP}' to poll."
+        )));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

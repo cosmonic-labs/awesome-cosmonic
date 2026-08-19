@@ -95,7 +95,7 @@ tooling:
 $ curl 'localhost:8000/consume?max=10&commit=1'
 ...
 committed
-$ docker exec kafka-demo rpk group describe wasmcloud-kafka-plugin --brokers $IP:29092
+$ docker exec kafka-demo rpk group describe kafka-plugin-demo --brokers $IP:29092
 TOPIC  PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
 demo   0          12              12              0
 ```

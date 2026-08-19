@@ -102,7 +102,7 @@ without an environment, so `wasi:cli/environment` is present but always empty.
 |---|---|---|
 | `bootstrap-servers` | yes | Comma-separated `host:port` |
 | `topics` | for consuming | Comma-separated topics to subscribe |
-| `consumer-group` | no | Defaults to `wasmcloud-kafka-plugin` |
+| `consumer-group` | for consuming | Group whose offsets this plugin commits. No default — see below |
 | `partition-assignment` | no | `group` (default) joins the consumer group; `static` takes every partition |
 | `session-timeout-ms` | no | Group session timeout, default 45000 |
 | `producer-acks` | no | `all` (default), `one`, or `none` |
@@ -112,6 +112,12 @@ without an environment, so `wasi:cli/environment` is present but always empty.
 | `trigger-max-inflight` | no | Concurrent batches across partitions (default 8) |
 | `trigger-max-attempts` | no | Redeliveries before dead-lettering (default 3) |
 | `trigger-dlq-topic` | no | Defaults to `<topic>.dlq` |
+
+**`consumer-group` has no default on purpose.** A constant would be *shared*:
+two unrelated deployments that both left it unset would join the same group and
+split its partitions between them, each seeing a fraction of the records and
+unable to tell that it had. That is a quieter failure than the double-read it
+would replace, so the name is required rather than guessed.
 
 `producer-acks` defaults to `all`, not the more usual `one`, because `send`
 hands the caller a `produce-ack` — and a caller holding an offset has been told
@@ -175,15 +181,15 @@ implements **`range`**, Java's classic default, byte-compatible with
 only with copies of itself:
 
 ```console
-$ rpk group describe wasmcloud-kafka-plugin
+$ rpk group describe kafka-plugin-demo
 STATE     Stable
 BALANCER  range
 MEMBERS   2
 
 TOPIC  PARTITION  MEMBER-ID
-demo   0          console-consumer-593cb94e-…      <-- stock Java consumer
-demo   1          console-consumer-593cb94e-…
-demo   2          wasmcloud-kafka-plugin-3ba07a65-…
+demo   0          console-consumer-45dc4d20-…      <-- stock Java consumer
+demo   1          console-consumer-45dc4d20-…
+demo   2          wasmcloud-kafka-plugin-b4521116-…
 ```
 
 That group was formed with the plugin as leader: the assignment above is the one
@@ -212,6 +218,7 @@ topics and pushes each batch into a workload that exports
 config:
   bootstrap-servers: 192.168.1.10:9092
   topics: demo
+  consumer-group: kafka-plugin-demo
   trigger: "on"
   trigger-batch-size: "8"
 ```
@@ -235,6 +242,12 @@ Three properties are worth knowing before relying on it:
   independently. More parallelism therefore means more partitions — the same
   answer Kafka gives every other consumer. A failed batch rewinds only its own
   partition; its neighbours still commit.
+- **The pull interface is off while the trigger is on.** `consumer.poll` and
+  `consumer.commit` answer `not-configured`, because they and the trigger are
+  the same consumer with the same cursor: serving both would give each record to
+  whichever asked first and split the stream with nothing logged. Receive
+  records by exporting `handler`, or run a second plugin with its own
+  `consumer-group` to poll.
 - **One handler workload at a time.** A target handle scopes a whole task, so
   batches all go to one workload id; the concurrency is across that workload's
   *instances*, which is what the host spins up per in-flight call.
@@ -305,9 +318,10 @@ the workload as `not-configured`, an unreachable broker as `connection`.
 
 ### Consuming through the plugin, from a workload
 
-`example/`'s `/consume` route, against the records produced above. Offsets
-advance across polls, and the group's committed offset is visible to ordinary
-Kafka tooling:
+`example/`'s `/consume` route, against the records produced above, **with the
+trigger off** — the pull interface and the trigger are one consumer, so the
+plugin refuses to serve both. Offsets advance across polls, and the group's
+committed offset is visible to ordinary Kafka tooling:
 
 ```console
 $ curl 'localhost:8000/consume?max=5'
@@ -321,7 +335,7 @@ $ curl 'localhost:8000/consume?max=10&commit=1'
 (3 records)
 committed
 
-$ rpk group describe wasmcloud-kafka-plugin
+$ rpk group describe kafka-plugin-demo
 TOPIC  PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
 demo   0          12              12              0
 ```
@@ -368,7 +382,7 @@ $ rpk topic consume demo.processed --offset 1 --num 10 --format '%o key=%k value
 ...
 10 key=burst-10 value=handled offset 25: burst event 10
 
-$ rpk group describe wasmcloud-kafka-plugin
+$ rpk group describe kafka-plugin-demo
 TOPIC  PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
 demo   0          26              26              0
 ```
@@ -548,17 +562,11 @@ Cloud, so this is not optional for production use.
   ~12% from six-way fan-out (30,000 records: 17s sequential, 15s concurrent).
   A handler whose work is its own — computation, or imports served elsewhere —
   is what fan-out is for.
-- **The pull interface and the trigger share one cursor.** `consumer.poll` and
-  the trigger loop are the same consumer in the same store, so with
-  `trigger: "on"` a record goes to whichever asks first and each side sees only
-  part of the stream — with nothing logged, because neither is wrong on its own.
-  Use one or the other per plugin deployment.
-- **The default consumer group is a constant** (`wasmcloud-kafka-plugin`), so
-  two unrelated deployments that both leave `consumer-group` unset now join the
-  *same* group and split its partitions between them. That is a worse failure
-  than the double-read it replaced: each sees a fraction of the records and
-  cannot tell. Set `consumer-group` explicitly for anything but a single
-  deployment.
+- **The pull interface and the trigger cannot both run.** They are one consumer
+  with one cursor, so serving both would split the stream between them
+  silently. `consumer.poll` and `consumer.commit` therefore return
+  `not-configured` while `trigger` is on. Two plugin deployments with different
+  `consumer-group` values can have both.
 - Heartbeats ride the poll path rather than a background thread, so a handler
   that occupies the plugin for longer than `session-timeout-ms` is evicted from
   the group mid-batch. See [Consumer groups](#consumer-groups).
