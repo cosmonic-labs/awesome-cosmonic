@@ -548,6 +548,17 @@ Cloud, so this is not optional for production use.
   ~12% from six-way fan-out (30,000 records: 17s sequential, 15s concurrent).
   A handler whose work is its own — computation, or imports served elsewhere —
   is what fan-out is for.
+- **The pull interface and the trigger share one cursor.** `consumer.poll` and
+  the trigger loop are the same consumer in the same store, so with
+  `trigger: "on"` a record goes to whichever asks first and each side sees only
+  part of the stream — with nothing logged, because neither is wrong on its own.
+  Use one or the other per plugin deployment.
+- **The default consumer group is a constant** (`wasmcloud-kafka-plugin`), so
+  two unrelated deployments that both leave `consumer-group` unset now join the
+  *same* group and split its partitions between them. That is a worse failure
+  than the double-read it replaced: each sees a fraction of the records and
+  cannot tell. Set `consumer-group` explicitly for anything but a single
+  deployment.
 - Heartbeats ride the poll path rather than a background thread, so a handler
   that occupies the plugin for longer than `session-timeout-ms` is evicted from
   the group mid-batch. See [Consumer groups](#consumer-groups).
