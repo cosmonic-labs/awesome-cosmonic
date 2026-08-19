@@ -1,0 +1,7 @@
+package cosmonic:sandboxed-webhook;
+
+// wasi:http/incoming-handler is exported (and wasi:http/outgoing-handler
+// imported) via wstd, which carries the full wasi:http/proxy bindings, so the
+// world itself stays empty.
+world sandboxed-webhook {
+}
