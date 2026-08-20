@@ -19,6 +19,7 @@ world publisher {
     import cosmonic:kafka/types@0.2.0;
     import cosmonic:kafka/producer@0.2.0;
 
+
     /// The push direction: the plugin's trigger loop calls this, so the
     /// workload runs when there is work rather than when someone asks. The host
     /// matches it on the export alone: a workload satisfies an interface by

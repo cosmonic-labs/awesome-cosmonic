@@ -78,15 +78,22 @@ impl Guest for Component {
         // workload can be torn down and rebuilt between polls without losing
         // its place — which is the point of the capability living there.
         if route == "/consume" {
-            // Pulling means holding a `consumer` resource and reading
-            // `records()`, which this provider does not implement — and which
-            // this workload could not use anyway: it is per-request, and a
-            // stream needs an owner that outlives the request. Records arrive
-            // through the `handler` export below instead.
+            // The pull shape cannot be served across a plugin store boundary
+            // today, and the limit is the host's, not the plugin's:
+            //
+            //   cross-store bridge: unsupported stream element type Record(..)
+            //
+            // `stream<u8>` crosses (the blobstore plugin moves object bodies
+            // that way); `stream<consumed-record>` does not. The plugin
+            // implements `records()` in full — it polls, writes into the
+            // stream, and backpressures on the reader — so this route works the
+            // moment the bridge carries record streams. Until then records
+            // arrive through the `handler` export below, which needs no stream.
             return Ok(respond(
                 501,
-                "this workload is push-shaped: the plugin calls its \
-                 cosmonic:kafka/handler export with each batch. See /publish.\n",
+                "consumer.records() is implemented by the plugin but cannot cross a plugin \
+                 store boundary yet: the host bridge rejects a stream whose element is a \
+                 record. Use the push path — this workload's cosmonic:kafka/handler export.\n",
             ));
         }
 

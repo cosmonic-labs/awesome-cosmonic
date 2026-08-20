@@ -4,13 +4,16 @@ A Kafka capability for wasmCloud, built as a **host component plugin** — a Was
 component that speaks the native Kafka wire protocol over `wasi:sockets`, so the
 Kafka client runs inside the sandbox rather than in privileged host code.
 
-> **Status: experimental, but working.** Producing, consuming, and consumer-group
-> membership are all verified end to end against a live broker — Redpanda and
-> Apache Kafka 4.3.1 — from a wasm workload, over `wasi:sockets` (see
+> **Status: experimental, but working.** Serves
+> [`cosmonic:kafka@0.2.0`](https://github.com/cosmonic-labs/librdkafka/tree/cosmonic/wit)
+> — the published interface, unmodified — so a workload written against the
+> native provider runs against this one without changing. Producing, consuming,
+> group membership, and push delivery are verified end to end against Redpanda
+> and Apache Kafka 4.3.1 from a wasm workload, over `wasi:sockets` (see
 > [Test results](#test-results)). There is **no Kafka client library**: every
 > protocol API is encoded here, because no published pure-Rust client both
-> builds for `wasm32-wasip2` and speaks a current broker's protocol. See
-> [Client library](#client-library-there-isnt-one). No TLS or SASL yet.
+> builds for `wasm32-wasip2` and speaks a current broker's protocol. No TLS or
+> SASL yet.
 
 ## Why this shape
 
@@ -35,100 +38,117 @@ platform does.
 [`example/`](example/) is a workload that publishes and consumes over HTTP, and
 imports nothing Kafka-shaped but `cosmonic:kafka`.
 
-## Interfaces
+## Interface
 
-**`cosmonic:kafka/producer`** — Kafka-native. Keys, partitions, offsets survive.
+[`cosmonic:kafka@0.2.0`](https://github.com/cosmonic-labs/librdkafka/tree/cosmonic/wit),
+published at `ghcr.io/cosmonic-labs/cosmonic/kafka:0.2.0`. There is no interface
+of this project's own, and that is the point: the same package is served by the
+native `plugin-kafka` inside Cosmonic Control, so the two are one contract with
+two backends — librdkafka behind an FFI boundary there, the wire protocol
+implemented in Rust here. That is what lets this one run inside the sandbox with
+no C in the host process.
 
-```wit
-send: async func(topic: string, key: option<list<u8>>, value: list<u8>)
-    -> result<produce-ack, kafka-error>;
-send-batch: async func(topic: string, records: list<tuple<option<list<u8>>, list<u8>>>)
-    -> result<list<produce-ack>, kafka-error>;
+| Exported | What it is |
+|---|---|
+| `types` | Records, offsets, positions, errors |
+| `producer` | A `producer` resource, opened per workload |
+| `consumer` | A `consumer` resource: subscribe, commit, seek, group membership |
+| `wasi:cli/run` | The trigger loop (below) |
+
+`admin` is deliberately **not** exported. This backend has no topic
+administration, and exporting the interface only to fail every call would be
+worse than letting a workload see it is not served.
+
+Imported: `cosmonic:kafka/handler` and `wasmcloud:host/workload-call` — the push
+path, where the plugin calls a workload rather than being called.
+
+### Per-workload clients
+
+`producer.open(config)` and `consumer.open(config)` take librdkafka property
+names verbatim, and each resource holds **its own** brokers and connections
+rather than sharing one client. Kafka authorises per principal, so a shared
+client would hand every workload the same ACLs.
+
+The plugin then layers its own config over the workload's, and **the operator's
+keys win**. A workload may pass `bootstrap.servers`; it cannot *override* one
+the plugin set. That is how a broker address and a credential stay out of a
+sandbox that is nonetheless allowed to name a topic. The native provider does
+the same with its bind-time layer; this plugin's layer is its `config:` block,
+since it serves every bound workload rather than being provisioned per workload.
+
+### What this backend does not implement
+
+Reported as `not-implemented` rather than faked, because a caller handed an
+empty result cannot tell "nothing to report" from "not built": transactions,
+`assign` and its incremental variants, `pause`/`resume`, `offsets-for-times`.
+
+**`records()` is implemented and cannot cross a store boundary.** The plugin
+polls, writes into the stream, and backpressures on the reader — and the call
+fails in the host:
+
+```
+cross-store bridge: unsupported stream element type Record(..)
 ```
 
-**`cosmonic:kafka/consumer`** — pull-based.
-
-```wit
-poll: async func(max-records: u32, timeout-ms: u32) -> result<list<kafka-record>, kafka-error>;
-commit: async func() -> result<_, kafka-error>;
-```
+`stream<u8>` crosses a plugin/workload boundary — the S3 plugin moves object
+bodies that way — but a stream whose element is a record does not, yet. The
+native provider is unaffected, being in-process. Until the bridge carries record
+streams the pull path is unavailable from *any* component plugin, so use the
+push path, which needs no stream.
 
 ### Everything is `async func`, and it has to be
 
-A host component plugin's capabilities are installed on a calling workload's
-linker as *concurrent* host functions. A plain `func` therefore cannot bind at
-all: the workload fails to deploy with
+A plugin's capabilities are installed on a caller's linker as concurrent host
+functions, so a sync `func` fails to bind with "type mismatch with async" — and
+one sync function makes a whole interface unservable this way. `cosmonic:kafka`
+was shaped by a native implementation and had 16 of them, since sync costs a
+native plugin nothing when it implements host traits. 0.2.0 made every function
+async, which costs the native side nothing either: the body returns without
+suspending.
 
-```
-component imports instance `cosmonic:kafka/producer@0.1.0`, but a matching
-implementation was not found in the linker
-  0: instance export `send` has the wrong type
-  1: type mismatch with async
-```
-
-Two things follow. First, a caller must have somewhere to await from, so a
-workload importing this needs an async export — `wasi:http/handler@0.3.0`, not
-p2's `incoming-handler`. Under a sync-lifted p2 export the request's response
-channel is gone before the plugin answers, and the request fails with no trap to
-read. Second, **there is no `wasmcloud:messaging/consumer` export here.** That
-interface is defined upstream with plain `func`, so a drop-in publish path would
-need it redeclared `async` — which makes it a different package from the one
-already-written workloads import, and so not a drop-in at all.
-
-**`cosmonic:kafka/handler`** — the push direction, exported by a *workload* and
-called by the plugin.
-
-```wit
-handle: async func(records: list<kafka-record>) -> result<_, string>;
-```
-
-This is what makes the plugin a trigger rather than something you poll. Its own
-`wasi:cli/run` holds the consumer group, polls, and hands each batch to a
-workload that exports `handle`, so the workload runs when there is work instead
-of having to ask for it. Returning an error means the batch was not processed:
-the plugin leaves the offsets alone and the records come back. Delivery is
-at-least-once, so `handle` must be idempotent.
-
-Enable it with `trigger: "on"`; without that the plugin is pull-only and the
-loop never starts. See [Trigger](#trigger).
+The same rule is why there is no `wasmcloud:messaging` drop-in. Its 0.2.0
+package declares plain `func`, so redeclaring it async would make it a different
+package from the one already-written workloads import.
 
 ## Configuration
 
 Delivered over the plugin's `wasi:config/store` import from its own `config:`
-block in the host manifest. Not environment variables: a plugin store is built
+block in the host manifest. Keys are **librdkafka property names**, the same
+namespace `open` takes, so the operator layer and a workload's config need no
+translation between them. Not environment variables: a plugin store is built
 without an environment, so `wasi:cli/environment` is present but always empty.
 
 | Key | Required | Meaning |
 |---|---|---|
-| `bootstrap-servers` | yes | Comma-separated `host:port` |
+| `bootstrap.servers` | yes | Comma-separated `host:port` |
 | `topics` | for consuming | Comma-separated topics to subscribe |
-| `consumer-group` | for consuming | Group whose offsets this plugin commits. No default — see below |
+| `group.id` | for consuming | Group whose offsets this plugin commits. No default — see below |
 | `partition-assignment` | no | `group` (default) joins the consumer group; `static` takes every partition |
 | `session-timeout-ms` | no | Group session timeout, default 45000 |
-| `producer-acks` | no | `all` (default), `one`, or `none` |
-| `producer-compression` | no | `none` (default), `gzip`, or `snappy` |
+| `acks` | no | `all` (default), `1`, or `0` |
+| `compression.type` | no | `none` (default), `gzip`, or `snappy` |
 | `trigger` | no | `on` starts the dispatch loop; off by default |
 | `trigger-batch-size` | no | Records per dispatched batch (default 32) |
 | `trigger-max-inflight` | no | Concurrent batches across partitions (default 8) |
 | `trigger-max-attempts` | no | Redeliveries before dead-lettering (default 3) |
 | `trigger-dlq-topic` | no | Defaults to `<topic>.dlq` |
 
-**`consumer-group` has no default on purpose.** A constant would be *shared*:
+**`group.id` has no default on purpose.** A constant would be *shared*:
 two unrelated deployments that both left it unset would join the same group and
 split its partitions between them, each seeing a fraction of the records and
 unable to tell that it had. That is a quieter failure than the double-read it
 would replace, so the name is required rather than guessed.
 
-`producer-acks` defaults to `all`, not the more usual `one`, because `send`
+`acks` defaults to `all`, not the more usual `one`, because `send`
 hands the caller a `produce-ack` — and a caller holding an offset has been told
 its record is safe. Under `one` that is not true: the leader acknowledges before
 its followers have the record, so losing the leader in that window loses a
 record the workload was told had landed. `all` is only as strong as the topic's
 `min.insync.replicas`, and on a single-broker cluster it is exactly `one`. Use
-`none` only for a caller that ignores the ack; no offset is assigned, so `send`
+`0` only for a caller that ignores the ack; no offset is assigned, so `send`
 reports `-1`.
 
-`producer-compression` defaults to `none` because it is the setting that cannot
+`compression.type` defaults to `none` because it is the setting that cannot
 surprise anyone — a consumer too old for the codec fails on read rather than at
 produce time. The codecs offered are the same ones the fetch path decodes, so
 records this plugin writes are records it can read back, and both are pure Rust
@@ -141,7 +161,7 @@ dev:
     - id: cosmonic-kafka
       file: ../target/wasm32-wasip2/release/kafka_host_plugin.wasm
       config:
-        bootstrap-servers: 192.168.1.10:9092
+        bootstrap.servers: 192.168.1.10:9092
 ```
 
 **A broker on `127.0.0.1` is not reachable.** A component's connect to a
@@ -216,9 +236,9 @@ topics and pushes each batch into a workload that exports
 
 ```yaml
 config:
-  bootstrap-servers: 192.168.1.10:9092
+  bootstrap.servers: 192.168.1.10:9092
   topics: demo
-  consumer-group: kafka-plugin-demo
+  group.id: kafka-plugin-demo
   trigger: "on"
   trigger-batch-size: "8"
 ```
@@ -231,6 +251,16 @@ names on its own — no `dev.host_interfaces` block. See
 
 Three properties are worth knowing before relying on it:
 
+- **A handler can report partial progress.** `handle` returns
+  `result<option<offset>, handler-error>`: `none` means the whole batch,
+  `some(offset)` means "handled through here and no further", so a handler that
+  processes seven of ten records keeps the seven instead of being given all ten
+  again. An offset outside the delivered batch is refused rather than believed —
+  committing past records the plugin never delivered would drop them.
+- **A `permanent` rejection is dead-lettered immediately.** `handler-error` is
+  `transient` or `permanent`, and believing the latter is the point: otherwise
+  the plugin burns every retry to reach a conclusion the handler already had,
+  while the partition behind the batch waits.
 - **Offsets move only after `handle` returns `ok`.** An error, a stopped
   workload, or a plugin restart mid-batch all leave the offsets where they were,
   so the records are redelivered. That is at-least-once, and it makes an
@@ -242,12 +272,10 @@ Three properties are worth knowing before relying on it:
   independently. More parallelism therefore means more partitions — the same
   answer Kafka gives every other consumer. A failed batch rewinds only its own
   partition; its neighbours still commit.
-- **The pull interface is off while the trigger is on.** `consumer.poll` and
-  `consumer.commit` answer `not-configured`, because they and the trigger are
-  the same consumer with the same cursor: serving both would give each record to
-  whichever asked first and split the stream with nothing logged. Receive
-  records by exporting `handler`, or run a second plugin with its own
-  `consumer-group` to poll.
+- **A workload's consumer and the trigger are separate group members.** Each
+  `consumer.open` builds its own engine, so the coordinator divides the
+  partitions between them the way it would between any two consumers — visible
+  in `rpk group describe` rather than silently splitting one cursor.
 - **One handler workload at a time.** A target handle scopes a whole task, so
   batches all go to one workload id; the concurrency is across that workload's
   *instances*, which is what the host spins up per in-flight call.
@@ -313,49 +341,28 @@ $ rpk topic consume demo --num 2 --format '%p:%o key=%k value=%v\n'
 ```
 
 Keys, partitions, and broker-assigned offsets all survive the store boundary
-intact, and so do the error variants: a missing `bootstrap-servers` arrives at
-the workload as `not-configured`, an unreachable broker as `connection`.
+intact, and so do the error variants: a missing `bootstrap.servers` arrives at
+the workload as `invalid-config`, an unreachable broker as `connection`.
 
 ### Consuming through the plugin, from a workload
 
-`example/`'s `/consume` route, against the records produced above, **with the
-trigger off** — the pull interface and the trigger are one consumer, so the
-plugin refuses to serve both. Offsets advance across polls, and the group's
-committed offset is visible to ordinary Kafka tooling:
+Not available across a store boundary, and the limit is the host's rather than
+this plugin's. `consumer.records()` is implemented — poll, write, backpressure
+— and the call fails when the stream crosses:
 
 ```console
-$ curl 'localhost:8000/consume?max=5'
-0:0 ts=1786321802345 key=-       value=hello from a wasm workload
-0:1 ts=1786321810527 key=user-1  value=keyed record
-...
-(5 records)
+$ curl 'localhost:8000/consume?max=5&topic=demo'
+501 consumer.records() is implemented by the plugin but cannot cross a plugin
+    store boundary yet: the host bridge rejects a stream whose element is a record.
 
-$ curl 'localhost:8000/consume?max=10&commit=1'
-0:11 ts=1786415420966 key=acks-all value=durable produce
-(3 records)
-committed
-
-$ rpk group describe kafka-plugin-demo
-TOPIC  PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
-demo   0          12              12              0
+# in the host log:
+P3 run_concurrent failed err=cross-store bridge: unsupported stream element
+type Record(Record(Handle { index: TypeRecordIndex(3) }))
 ```
 
-Restarting the host rebuilds the plugin's store from nothing, and the consumer
-resumes where the group left off rather than replaying from zero — because the
-offsets live in Kafka, not in the plugin:
-
-```console
-$ curl 'localhost:8000/consume?max=10'          # after a full restart
-(0 records)
-$ curl -X POST 'localhost:8000/publish?topic=demo&key=post-restart' --data '...'
-published 27 bytes to demo partition 0 offset 13
-$ curl 'localhost:8000/consume?max=10&commit=1'
-0:13 ts=1786417668125 key=post-restart value=published after the restart
-(1 records)
-```
-
-Per-record timestamps survive too, which they could not before: v2 record
-batches carry a base timestamp plus a per-record delta.
+Group membership, offsets and commits all work — they are ordinary calls. It is
+only the record *stream* that cannot cross. Push delivery is unaffected and is
+what the example uses.
 
 ### The trigger pushing into a workload
 
@@ -562,11 +569,10 @@ Cloud, so this is not optional for production use.
   ~12% from six-way fan-out (30,000 records: 17s sequential, 15s concurrent).
   A handler whose work is its own — computation, or imports served elsewhere —
   is what fan-out is for.
-- **The pull interface and the trigger cannot both run.** They are one consumer
-  with one cursor, so serving both would split the stream between them
-  silently. `consumer.poll` and `consumer.commit` therefore return
-  `not-configured` while `trigger` is on. Two plugin deployments with different
-  `consumer-group` values can have both.
+- **The pull path cannot cross a store boundary.** `records()` is implemented,
+  but the host bridge rejects a stream whose element is a record, so only push
+  delivery works from a component plugin today. See
+  [Interface](#what-this-backend-does-not-implement).
 - Heartbeats ride the poll path rather than a background thread, so a handler
   that occupies the plugin for longer than `session-timeout-ms` is evicted from
   the group mid-batch. See [Consumer groups](#consumer-groups).

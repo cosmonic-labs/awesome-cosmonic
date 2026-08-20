@@ -41,7 +41,8 @@ mod group;
 mod meta;
 mod produce;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Duration;
@@ -1181,10 +1182,10 @@ impl KafkaConsumer {
 
     /// Merge a poll across every assigned partition into one list.
     ///
-    /// Unused until `consumer.records()` is implemented: that stream is what
-    /// will drain it. Kept rather than deleted because it is the body of that
-    /// implementation, not a leftover.
-    #[allow(dead_code)]
+    /// What `consumer.records()` drains. Merged rather than per-partition
+    /// because a single stream is one ordered sequence; the trigger uses
+    /// [`Self::poll_partitions`] instead, which keeps them apart so batches can
+    /// be dispatched and committed independently.
     fn poll(
         &mut self,
         max_records: usize,
@@ -1580,7 +1581,63 @@ fn with_consumer<T>(
 /// interface's resource. `RefCell` rather than `Mutex` because a plugin store is
 /// single-threaded — the lock would only ever be uncontended ceremony.
 struct ConsumerState {
-    engine: RefCell<KafkaConsumer>,
+    /// `Rc` because the feeder task spawned by [`GuestConsumer::records`]
+    /// outlives the call that started it and reads from the same engine.
+    ///
+    /// A borrow is never held across an `await`: the feeder takes one to poll,
+    /// drops it, and only then waits on the reader. That is what lets a
+    /// `commit` from the same workload run while records are in flight.
+    engine: Rc<RefCell<KafkaConsumer>>,
+    /// Whether `records()` has already handed out its reader.
+    records_taken: Cell<bool>,
+    /// Cleared by `close`, which is how the feeder learns to stop.
+    open: Rc<Cell<bool>>,
+}
+
+/// Records per read from the engine, and the wait it gives the broker.
+///
+/// Small enough that a slow reader is noticed quickly — the feeder cannot
+/// heartbeat while it is blocked handing records over — and large enough that a
+/// busy partition is not a round trip per record.
+const FEED_BATCH: usize = 64;
+const FEED_WAIT_MS: u64 = 500;
+
+/// Pump records from the engine into the stream until the reader goes away or
+/// the consumer is closed.
+async fn feed_records(
+    engine: Rc<RefCell<KafkaConsumer>>,
+    open: Rc<Cell<bool>>,
+    writer: &mut wit_bindgen::StreamWriter<ConsumedRecord>,
+) -> Result<(), WitError> {
+    while open.get() {
+        // Scoped so the borrow is gone before the await below.
+        let polled = {
+            let mut engine = engine.borrow_mut();
+            engine.poll(FEED_BATCH, Duration::from_millis(FEED_WAIT_MS))
+        };
+
+        match polled {
+            Ok(records) if records.is_empty() => {
+                // Nothing to hand over. Suspend rather than spin: this task
+                // shares the plugin's store with every capability call it
+                // serves.
+                monotonic_clock::wait_for(IDLE_BACKOFF_NS).await;
+            }
+            Ok(records) => {
+                // Resolves when the reader has taken them, which is the
+                // backpressure: a workload that stops reading stops the poll
+                // loop rather than filling a buffer here.
+                let unsent = writer.write_all(records).await;
+                if !unsent.is_empty() {
+                    // The reader is gone. Its records were never handed over,
+                    // so they stay uncommitted and are redelivered.
+                    return Ok(());
+                }
+            }
+            Err(e) => return Err(to_wit(e)),
+        }
+    }
+    Ok(())
 }
 
 impl GuestConsumer for ConsumerState {
@@ -1598,7 +1655,9 @@ impl GuestConsumer for ConsumerState {
         let engine = KafkaConsumer::create(brokers, group).map_err(to_wit)?;
         Ok(bindings::exports::cosmonic::kafka::consumer::Consumer::new(
             ConsumerState {
-                engine: RefCell::new(engine),
+                engine: Rc::new(RefCell::new(engine)),
+                records_taken: Cell::new(false),
+                open: Rc::new(Cell::new(true)),
             },
         ))
     }
@@ -1727,6 +1786,8 @@ impl GuestConsumer for ConsumerState {
     }
 
     async fn close(&self) -> Result<(), WitError> {
+        // Stops the feeder on its next pass, which ends the stream.
+        self.open.set(false);
         self.engine.borrow_mut().leave();
         Ok(())
     }
@@ -1751,9 +1812,11 @@ impl GuestConsumer for ConsumerState {
     // that rather than returning a plausible empty answer: a caller given an
     // empty list cannot tell "nothing to report" from "not built".
 
-    /// Now that this returns a `result`, "not implemented" is something the
-    /// signature can say — where before it had to be smuggled through a future
-    /// that resolved to an error.
+    /// Hand back the record stream, fed by a task that polls this consumer.
+    ///
+    /// Callable once. A second caller would take part of the stream from the
+    /// first and neither could tell, which is the whole reason the signature
+    /// returns a `result`.
     async fn records(
         &self,
     ) -> Result<
@@ -1763,7 +1826,34 @@ impl GuestConsumer for ConsumerState {
         ),
         WitError,
     > {
-        Err(unsupported("consumer.records"))
+        if self.records_taken.replace(true) {
+            return Err(WitError {
+                code: ErrorCode::InvalidArg,
+                message: "consumer.records was already taken: one consumer has one stream, and \
+                          a second reader would receive part of the first's records"
+                    .to_owned(),
+                fatal: false,
+                retriable: false,
+                txn_requires_abort: false,
+            });
+        }
+
+        let (mut writer, reader) = bindings::wit_stream::new::<ConsumedRecord>();
+        // The default is what the reader sees if this task is dropped without
+        // writing an outcome — a clean end rather than an invented failure.
+        let (done_tx, done_rx) = bindings::wit_future::new(|| Ok(()));
+
+        let engine = Rc::clone(&self.engine);
+        let open = Rc::clone(&self.open);
+        wit_bindgen::spawn_local(async move {
+            let outcome = feed_records(engine, open, &mut writer).await;
+            // Dropping the writer is what ends the stream for the reader; the
+            // future then says whether it ended cleanly.
+            drop(writer);
+            let _ = done_tx.write(outcome).await;
+        });
+
+        Ok((reader, done_rx))
     }
 
     async fn rebalances(
