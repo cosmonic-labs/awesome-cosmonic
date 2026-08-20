@@ -260,9 +260,9 @@ impl HandlerGuest for Component {
     /// rather than a best-effort loop. A failure here means the whole batch is
     /// redelivered, which is why the transform must be idempotent: writing the
     /// same record to the same output topic twice is the expected worst case.
-    async fn handle(records: Vec<ConsumedRecord>) -> Result<(), HandlerError> {
+    async fn handle(records: Vec<ConsumedRecord>) -> Result<Option<i64>, HandlerError> {
         let Some(first) = records.first() else {
-            return Ok(());
+            return Ok(None);
         };
 
         // A record whose value starts with `poison` always fails, so the
@@ -339,7 +339,9 @@ impl HandlerGuest for Component {
                 .await
                 .map_err(|e| refuse(&format!("{e:?}")))?;
         }
-        Ok(())
+        // This handler either archives the whole batch or fails it, so there
+        // is no partial progress to report.
+        Ok(None)
     }
 }
 

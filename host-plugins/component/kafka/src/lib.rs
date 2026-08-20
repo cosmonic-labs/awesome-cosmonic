@@ -21,7 +21,19 @@
 
 mod bindings {
     #![allow(unsafe_code)]
-    wit_bindgen::generate!({ world: "kafka-plugin", generate_all });
+    // `with` rather than a plain `generate_all`: this world both exports
+    // `cosmonic:kafka/types` and imports it transitively, through
+    // `handler`'s `use types.{...}`. Generating both copies emits an import-side
+    // module that defines every type *except* `error-code` while still
+    // referencing it, which does not compile. Pointing the import at the
+    // exported module gives one set of types and sidesteps it.
+    wit_bindgen::generate!({
+        world: "kafka-plugin",
+        generate_all,
+        with: {
+            "cosmonic:kafka/types@0.2.0": crate::bindings::exports::cosmonic::kafka::types,
+        },
+    });
 }
 
 mod fetch;
@@ -39,14 +51,17 @@ use group::Membership;
 use meta::Cluster;
 
 use bindings::cosmonic::kafka::handler;
-use bindings::cosmonic::kafka::types as handler_types;
+// One type set now: the `with` mapping above points the import at the
+// exported module, so a record handed to `handler.handle` needs no conversion.
+use bindings::exports::cosmonic::kafka::types as handler_types;
 use bindings::exports::cosmonic::kafka::consumer::{
     Guest as ConsumerGuest, GuestConsumer, RebalanceProtocol,
 };
 use bindings::exports::cosmonic::kafka::producer::{GuestProducer, GuestTransaction};
-use bindings::exports::cosmonic::kafka::types::{
+pub use bindings::exports::cosmonic::kafka::types::{
     ConfigEntry, ConsumedRecord, Error as WitError, ErrorCode, Position,
-    ProduceAck, ProduceRecord, TimestampType, TopicPartition, Watermarks,
+    PartitionOffset, PartitionRef, PartitionResult, ProduceAck, ProduceRecord, TimestampType,
+    Watermarks,
 };
 use bindings::exports::cosmonic::kafka::producer::Guest as ProducerGuest;
 
@@ -636,14 +651,6 @@ impl GuestProducer for ProducerState {
         Ok(())
     }
 
-    async fn purge(&self, _in_flight: bool) -> Result<(), WitError> {
-        Ok(())
-    }
-
-    async fn in_flight_count(&self) -> u32 {
-        0
-    }
-
     async fn partition_count(&self, topic: String) -> Result<u32, WitError> {
         self.load_cluster().map_err(to_wit)?;
         let cluster = self.cluster.borrow();
@@ -689,12 +696,6 @@ impl GuestProducer for ProducerState {
             .map_err(|e| to_wit(fetch_error(e, &addr)))?;
         Ok(Watermarks { low, high })
     }
-
-    /// Never fatal here: each operation reopens what it needs, so there is no
-    /// state a previous failure could have poisoned.
-    async fn fatal_error(&self) -> Option<WitError> {
-        None
-    }
 }
 
 /// Transactions need the idempotent producer, `InitProducerId`, `AddPartitions`
@@ -710,7 +711,7 @@ impl GuestTransaction for TransactionState {
 
     async fn send_offsets(
         &self,
-        _offsets: Vec<TopicPartition>,
+        _offsets: Vec<PartitionOffset>,
         _group_id: String,
     ) -> Result<(), WitError> {
         Err(unsupported("transactions"))
@@ -1402,6 +1403,14 @@ impl KafkaConsumer {
     /// Without the rewind, `positions` would still point past the failed batch
     /// and the next poll would fetch what comes *after* it — losing exactly the
     /// records the failure was meant to protect.
+    /// Set the offset that a commit would send, without reading anything.
+    ///
+    /// Used for a partially handled batch: the commit covers what the handler
+    /// kept, and the cursor is rewound separately to redeliver the rest.
+    fn set_pending(&mut self, topic: &str, partition: i32, offset: i64) {
+        self.pending.insert((topic.to_owned(), partition), offset);
+    }
+
     fn rewind_partition(&mut self, topic: &str, partition: i32, first_offset: i64) {
         let key = (topic.to_owned(), partition);
         self.pending.remove(&key);
@@ -1606,18 +1615,14 @@ impl GuestConsumer for ConsumerState {
         Ok(self.engine.borrow().topics.clone())
     }
 
-    async fn assignment(&self) -> Result<Vec<TopicPartition>, WitError> {
+    async fn assignment(&self) -> Result<Vec<PartitionRef>, WitError> {
         let engine = self.engine.borrow();
         Ok(engine
             .assignment
             .iter()
-            .map(|(topic, partition)| TopicPartition {
+            .map(|(topic, partition)| PartitionRef {
                 topic: topic.clone(),
                 partition: *partition,
-                offset: engine.positions.get(&(topic.clone(), *partition)).copied(),
-                metadata: None,
-                leader_epoch: None,
-                error: None,
             })
             .collect())
     }
@@ -1626,17 +1631,24 @@ impl GuestConsumer for ConsumerState {
     /// from memory — which is the point of asking.
     async fn committed(
         &self,
-        partitions: Vec<TopicPartition>,
-    ) -> Result<Vec<TopicPartition>, WitError> {
+        partitions: Vec<PartitionRef>,
+    ) -> Result<Vec<PartitionResult>, WitError> {
         let mut engine = self.engine.borrow_mut();
         let mut out = Vec::with_capacity(partitions.len());
         for tp in partitions {
-            let offset = engine
-                .committed_offset(&tp.topic, tp.partition)
-                .map_err(to_wit)?;
-            out.push(TopicPartition {
-                offset: Some(offset),
-                ..tp
+            // A partition that fails reports its own error rather than failing
+            // the call: that is what `partition-result` is for.
+            let (offset, error) = match engine.committed_offset(&tp.topic, tp.partition) {
+                Ok(offset) => (Some(offset).filter(|o| *o >= 0), None),
+                Err(e) => (None, Some(to_wit(e).code)),
+            };
+            out.push(PartitionResult {
+                topic: tp.topic,
+                partition: tp.partition,
+                offset,
+                leader_epoch: None,
+                metadata: None,
+                error,
             });
         }
         Ok(out)
@@ -1645,25 +1657,31 @@ impl GuestConsumer for ConsumerState {
     /// Where this consumer will read next — memory, not the coordinator.
     async fn position(
         &self,
-        partitions: Vec<TopicPartition>,
-    ) -> Result<Vec<TopicPartition>, WitError> {
+        partitions: Vec<PartitionRef>,
+    ) -> Result<Vec<PartitionResult>, WitError> {
         let engine = self.engine.borrow();
         Ok(partitions
             .into_iter()
-            .map(|tp| TopicPartition {
+            .map(|tp| PartitionResult {
                 offset: engine
                     .positions
                     .get(&(tp.topic.clone(), tp.partition))
                     .copied(),
-                ..tp
+                topic: tp.topic,
+                partition: tp.partition,
+                leader_epoch: None,
+                metadata: None,
+                error: None,
             })
             .collect())
     }
 
+    /// The offset is required by the type now, so there is nothing to check
+    /// here — the case that used to fail at run time cannot be expressed.
     async fn commit(
         &self,
-        offsets: Vec<TopicPartition>,
-    ) -> Result<Vec<TopicPartition>, WitError> {
+        offsets: Vec<PartitionOffset>,
+    ) -> Result<Vec<PartitionResult>, WitError> {
         let mut engine = self.engine.borrow_mut();
         if offsets.is_empty() {
             // An empty list means "everything read so far", as it does in
@@ -1671,20 +1689,25 @@ impl GuestConsumer for ConsumerState {
             engine.commit().map_err(to_wit)?;
             return Ok(Vec::new());
         }
-        for tp in &offsets {
-            let Some(offset) = tp.offset else {
-                return Err(to_wit(PluginError::NotConfigured(format!(
-                    "no offset given for {}/{}", tp.topic, tp.partition
-                ))));
-            };
-            engine
-                .commit_at(&tp.topic, tp.partition, offset)
-                .map_err(to_wit)?;
+        let mut out = Vec::with_capacity(offsets.len());
+        for tp in offsets {
+            let error = engine
+                .commit_at(&tp.topic, tp.partition, tp.offset)
+                .err()
+                .map(|e| to_wit(e).code);
+            out.push(PartitionResult {
+                topic: tp.topic,
+                partition: tp.partition,
+                offset: Some(tp.offset),
+                leader_epoch: tp.leader_epoch,
+                metadata: tp.metadata,
+                error,
+            });
         }
-        Ok(offsets)
+        Ok(out)
     }
 
-    async fn seek(&self, partitions: Vec<TopicPartition>, to: Position) -> Result<(), WitError> {
+    async fn seek(&self, partitions: Vec<PartitionRef>, to: Position) -> Result<(), WitError> {
         let mut engine = self.engine.borrow_mut();
         for tp in partitions {
             engine.seek(&tp.topic, tp.partition, &to).map_err(to_wit)?;
@@ -1722,66 +1745,63 @@ impl GuestConsumer for ConsumerState {
         false
     }
 
-    async fn fatal_error(&self) -> Option<WitError> {
-        None
-    }
-
     // ---- Not implemented by this backend -------------------------------
     //
     // Each needs protocol work this plugin has not done, and each reports
     // that rather than returning a plausible empty answer: a caller given an
     // empty list cannot tell "nothing to report" from "not built".
 
+    /// Now that this returns a `result`, "not implemented" is something the
+    /// signature can say — where before it had to be smuggled through a future
+    /// that resolved to an error.
     async fn records(
         &self,
-    ) -> (
-        wit_bindgen::StreamReader<ConsumedRecord>,
-        wit_bindgen::FutureReader<Result<(), WitError>>,
-    ) {
-        let (_tx, rx) = bindings::wit_stream::new::<ConsumedRecord>();
-        let (tx_done, rx_done) = bindings::wit_future::new(|| Err(unsupported("consumer.records")));
-        drop(tx_done);
-        (rx, rx_done)
+    ) -> Result<
+        (
+            wit_bindgen::StreamReader<ConsumedRecord>,
+            wit_bindgen::FutureReader<Result<(), WitError>>,
+        ),
+        WitError,
+    > {
+        Err(unsupported("consumer.records"))
     }
 
-    async fn rebalances(&self) -> wit_bindgen::StreamReader<bindings::exports::cosmonic::kafka::consumer::RebalanceEvent> {
-        let (_tx, rx) = bindings::wit_stream::new();
-        rx
+    async fn rebalances(
+        &self,
+    ) -> Result<
+        wit_bindgen::StreamReader<bindings::exports::cosmonic::kafka::consumer::RebalanceEvent>,
+        WitError,
+    > {
+        Err(unsupported("consumer.rebalances"))
     }
 
-    async fn assign(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+    async fn assign(&self, _partitions: Vec<PartitionRef>) -> Result<(), WitError> {
         Err(unsupported("consumer.assign (manual assignment)"))
     }
 
-    async fn incremental_assign(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+    async fn incremental_assign(&self, _partitions: Vec<PartitionRef>) -> Result<(), WitError> {
         Err(unsupported("consumer.incremental-assign"))
     }
 
-    async fn incremental_unassign(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+    async fn incremental_unassign(&self, _partitions: Vec<PartitionRef>) -> Result<(), WitError> {
         Err(unsupported("consumer.incremental-unassign"))
     }
 
-    async fn store_offsets(&self, _offsets: Vec<TopicPartition>) -> Result<(), WitError> {
-        Err(unsupported("consumer.store-offsets"))
-    }
 
-    async fn commit_async(&self, _offsets: Vec<TopicPartition>) -> Result<(), WitError> {
-        Err(unsupported("consumer.commit-async"))
-    }
 
-    async fn pause(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+    async fn pause(&self, _partitions: Vec<PartitionRef>) -> Result<(), WitError> {
         Err(unsupported("consumer.pause"))
     }
 
-    async fn resume(&self, _partitions: Vec<TopicPartition>) -> Result<(), WitError> {
+    async fn resume(&self, _partitions: Vec<PartitionRef>) -> Result<(), WitError> {
         Err(unsupported("consumer.resume"))
     }
 
     async fn offsets_for_times(
         &self,
-        _partitions: Vec<TopicPartition>,
+        _partitions: Vec<PartitionRef>,
         _time: i64,
-    ) -> Result<Vec<TopicPartition>, WitError> {
+    ) -> Result<Vec<PartitionResult>, WitError> {
         Err(unsupported("consumer.offsets-for-times"))
     }
 }
@@ -1993,7 +2013,61 @@ async fn dispatch_pass(
         {
             let (topic, partition) = (topic.clone(), *partition);
             match result {
-                Ok(()) => {
+                // `none` is the whole batch; `some(offset)` is "handled
+                // through here and no further", which lets a handler keep the
+                // work it did instead of being given all of it again.
+                Ok(through) => {
+                    let last = records.last().map_or(0, |r| r.offset);
+                    let first = records.first().map_or(0, |r| r.offset);
+                    if let Some(offset) = through {
+                        if offset < first || offset > last {
+                            // Committing past records that were never delivered
+                            // would drop them, so an out-of-range answer is
+                            // treated as a failure rather than believed.
+                            log(
+                                Level::Error,
+                                LOG_CONTEXT,
+                                &format!(
+                                    "handler reported progress through offset {offset}, outside \
+                                     the batch it was given ({first}..={last}) for \
+                                     {topic}/{partition}; treating the batch as unhandled"
+                                ),
+                            );
+                            with_consumer(|consumer| {
+                                consumer.rewind_partition(&topic, partition, first);
+                                Ok(())
+                            })?;
+                            continue;
+                        }
+                        if offset < last {
+                            // Commit what was handled, and put the cursor back
+                            // to the first record that was not.
+                            with_consumer(|consumer| {
+                                consumer.set_pending(&topic, partition, offset + 1);
+                                Ok(())
+                            })?;
+                            let at = with_consumer(|consumer| {
+                                consumer.commit_partition(&topic, partition)
+                            })?;
+                            with_consumer(|consumer| {
+                                consumer.rewind_partition(&topic, partition, offset + 1);
+                                Ok(())
+                            })?;
+                            let kept = (offset - first + 1) as usize;
+                            log(
+                                Level::Info,
+                                LOG_CONTEXT,
+                                &format!(
+                                    "handler kept {kept} of {count} records from \
+                                     {topic}/{partition}; committed {at:?} and redelivering from \
+                                     offset {}",
+                                    offset + 1
+                                ),
+                            );
+                            committed += kept;
+                            continue;
+                        }
+                    }
                     // Only this partition's offset moves, and only because this
                     // partition's batch was handled.
                     let at =
@@ -2226,6 +2300,9 @@ fn trigger_batch_size() -> u32 {
 
 mod export {
     #![allow(unsafe_code)]
+    // `ErrorCode` unqualified: the exported-resource glue names it that way.
+    #[allow(unused_imports)]
+    use super::ErrorCode;
     use super::{bindings, Component};
     bindings::export!(Component with_types_in bindings);
 }

@@ -3,8 +3,8 @@ package cosmonic:kafka@0.2.0;
 /// Consuming records, with and without consumer-group coordination.
 /// ## Every function is `async`
 ///
-/// Including the ones that only read local state — `assignment`, `position`,
-/// `fatal-error` — which is not how they would be written for a native
+/// Including the ones that only read local state —
+/// `assignment`, `position` — which is not how they would be written for a native
 /// implementation. A host *component* plugin's capabilities are installed on a
 /// caller's linker as concurrent host functions, and a sync `func` fails to bind
 /// there with "type mismatch with async". One sync function is therefore enough
@@ -16,8 +16,8 @@ package cosmonic:kafka@0.2.0;
 interface consumer {
     @since(version = 0.1.0)
     use types.{
-        config-entry, error, consumed-record, topic-partition, partition,
-        position, watermarks, timestamp-ms
+        config-entry, error, consumed-record, partition-ref, partition-offset,
+        partition-result, partition, position, watermarks, timestamp-ms
     };
 
     /// How the group negotiates partition movement.
@@ -36,14 +36,14 @@ interface consumer {
     variant rebalance-event {
         /// Partitions being added. Accept with `assign` under the `eager`
         /// protocol, or `incremental-assign` under `cooperative`.
-        assign(list<topic-partition>),
+        assign(list<partition-ref>),
         /// Partitions being taken away. Commit progress on them first — once
         /// acknowledged, their offsets can no longer be committed.
-        revoke(list<topic-partition>),
+        revoke(list<partition-ref>),
         /// The assignment was lost without a clean revoke, typically after
         /// falling out of the group. Offsets for these partitions can no
         /// longer be committed and another member may already own them.
-        lost(list<topic-partition>),
+        lost(list<partition-ref>),
     }
 
     /// A consumer client.
@@ -89,22 +89,22 @@ interface consumer {
         /// An empty list clears it. Use for manual assignment, or to accept an
         /// `eager` rebalance.
         @since(version = 0.1.0)
-        assign: async func(partitions: list<topic-partition>)
+        assign: async func(partitions: list<partition-ref>)
             -> result<_, error>;
 
         /// Add to the assignment. Only valid under the `cooperative` protocol.
         @since(version = 0.1.0)
-        incremental-assign: async func(partitions: list<topic-partition>)
+        incremental-assign: async func(partitions: list<partition-ref>)
             -> result<_, error>;
 
         /// Remove from the assignment. Only valid under `cooperative`.
         @since(version = 0.1.0)
-        incremental-unassign: async func(partitions: list<topic-partition>)
+        incremental-unassign: async func(partitions: list<partition-ref>)
             -> result<_, error>;
 
         /// The partitions currently assigned.
         @since(version = 0.1.0)
-        assignment: async func() -> result<list<topic-partition>, error>;
+        assignment: async func() -> result<list<partition-ref>, error>;
 
         /// Whether the assignment was lost without a clean revoke. Offsets for
         /// a lost assignment can no longer be committed.
@@ -126,8 +126,11 @@ interface consumer {
         /// The stream ends cleanly on `close`. It ends with an error in the
         /// future on a fatal client error.
         @since(version = 0.1.0)
+        /// **Callable once.** A second call fails with `invalid-arg` rather
+        /// than handing back a second reader: two readers of one consumer would
+        /// each receive part of the stream, and neither could tell that it had.
         records: async func()
-            -> tuple<stream<consumed-record>, future<result<_, error>>>;
+            -> result<tuple<stream<consumed-record>, future<result<_, error>>>, error>;
 
         /// The stream of assignment changes.
         ///
@@ -139,17 +142,15 @@ interface consumer {
         /// assignment behaviour — but revocations then pass unobserved, which
         /// is how duplicate processing starts.
         @since(version = 0.1.0)
-        rebalances: async func() -> stream<rebalance-event>;
+        /// **Callable once**, for the same reason as `records`.
+        rebalances: async func() -> result<stream<rebalance-event>, error>;
 
         /// Mark offsets consumed locally, for a later commit.
         ///
         /// Only meaningful with `enable.auto.offset.store=false`. Store one
         /// past the last processed record.
         @since(version = 0.1.0)
-        store-offsets: async func(offsets: list<topic-partition>)
-            -> result<_, error>;
-
-        /// Commit progress to the group coordinator, resolving once the
+            /// Commit progress to the group coordinator, resolving once the
         /// coordinator confirms.
         ///
         /// An empty `offsets` commits the current stored positions. The result
@@ -160,43 +161,38 @@ interface consumer {
         /// - `illegal-generation` / `unknown-member-id`: this member was
         ///   evicted, and these offsets are no longer this consumer's to
         ///   commit.
-        @since(version = 0.1.0)
-        commit: async func(offsets: list<topic-partition>)
-            -> result<list<topic-partition>, error>;
+        commit: async func(offsets: list<partition-offset>)
+            -> result<list<partition-result>, error>;
 
         /// Queue a commit without waiting for confirmation.
         ///
         /// Resolves once queued. The outcome is not reported — use `commit`
         /// where the result matters.
         @since(version = 0.1.0)
-        commit-async: async func(offsets: list<topic-partition>)
-            -> result<_, error>;
-
-        /// The group's committed offsets for these partitions.
-        @since(version = 0.1.0)
-        committed: async func(partitions: list<topic-partition>)
-            -> result<list<topic-partition>, error>;
+            /// The group's committed offsets for these partitions.
+        committed: async func(partitions: list<partition-ref>)
+            -> result<list<partition-result>, error>;
 
         /// The current local read position, which may be ahead of what has
         /// been committed.
         @since(version = 0.1.0)
-        position: async func(partitions: list<topic-partition>)
-            -> result<list<topic-partition>, error>;
+        position: async func(partitions: list<partition-ref>)
+            -> result<list<partition-result>, error>;
 
         /// Move the read position. Takes effect on subsequent records.
         @since(version = 0.1.0)
         seek: async func(
-            partitions: list<topic-partition>,
+            partitions: list<partition-ref>,
             to: position
         ) -> result<_, error>;
 
         /// Stop fetching these partitions while keeping them assigned.
         @since(version = 0.1.0)
-        pause: async func(partitions: list<topic-partition>) -> result<_, error>;
+        pause: async func(partitions: list<partition-ref>) -> result<_, error>;
 
         /// Resume fetching paused partitions.
         @since(version = 0.1.0)
-        resume: async func(partitions: list<topic-partition>) -> result<_, error>;
+        resume: async func(partitions: list<partition-ref>) -> result<_, error>;
 
         /// Low and high watermarks, queried from the broker.
         @since(version = 0.1.0)
@@ -209,9 +205,9 @@ interface consumer {
         /// Partitions with no such record come back with no offset.
         @since(version = 0.1.0)
         offsets-for-times: async func(
-            partitions: list<topic-partition>,
+            partitions: list<partition-ref>,
             %time: timestamp-ms
-        ) -> result<list<topic-partition>, error>;
+        ) -> result<list<partition-result>, error>;
 
         /// Leave the group cleanly, committing final offsets if auto-commit is
         /// enabled, and end the record stream.
@@ -222,8 +218,5 @@ interface consumer {
         @since(version = 0.1.0)
         close: async func() -> result<_, error>;
 
-        /// The unrecoverable error this client has entered, if any.
-        @since(version = 0.1.0)
-        fatal-error: async func() -> option<error>;
-    }
+        }
 }

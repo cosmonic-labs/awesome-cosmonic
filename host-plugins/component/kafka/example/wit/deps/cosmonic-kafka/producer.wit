@@ -3,8 +3,8 @@ package cosmonic:kafka@0.2.0;
 /// Producing records, including the idempotent and transactional paths.
 /// ## Every function is `async`
 ///
-/// Including the ones that only read local state — `assignment`, `position`,
-/// `fatal-error` — which is not how they would be written for a native
+/// Including the ones that only read local state — which is not how they
+/// would be written for a native
 /// implementation. A host *component* plugin's capabilities are installed on a
 /// caller's linker as concurrent host functions, and a sync `func` fails to bind
 /// there with "type mismatch with async". One sync function is therefore enough
@@ -16,7 +16,7 @@ package cosmonic:kafka@0.2.0;
 interface producer {
     @since(version = 0.1.0)
     use types.{
-        config-entry, error, produce-record, produce-ack, topic-partition,
+        config-entry, error, produce-record, produce-ack, partition-offset,
         partition, watermarks
     };
 
@@ -88,18 +88,6 @@ interface producer {
         @since(version = 0.1.0)
         flush: async func() -> result<_, error>;
 
-        /// Discard queued records without producing them.
-        ///
-        /// `in-flight` also cancels records already handed to a broker, whose
-        /// outcome then becomes unknown — they may still have been written.
-        /// Returns immediately; it does not wait for the queue to drain.
-        @since(version = 0.1.0)
-        purge: async func(in-flight: bool) -> result<_, error>;
-
-        /// Records queued but not yet delivered.
-        @since(version = 0.1.0)
-        in-flight-count: async func() -> u32;
-
         /// Partition count for a topic, from cached metadata or a fresh fetch.
         @since(version = 0.1.0)
         partition-count: async func(topic: string) -> result<u32, error>;
@@ -109,15 +97,7 @@ interface producer {
         watermark-offsets: async func(topic: string, partition: partition)
             -> result<watermarks, error>;
 
-        /// The unrecoverable error this client has entered, if any.
-        ///
-        /// Once set, every operation fails and the client must be dropped and
-        /// reopened. Reached mainly by the idempotent and transactional
-        /// producer, when ordering or exactly-once guarantees can no longer be
-        /// upheld.
-        @since(version = 0.1.0)
-        fatal-error: async func() -> option<error>;
-    }
+        }
 
     /// A transaction on a producer.
     ///
@@ -146,7 +126,7 @@ interface producer {
         /// commit, normally one past the last record processed.
         @since(version = 0.1.0)
         send-offsets: async func(
-            offsets: list<topic-partition>,
+            offsets: list<partition-offset>,
             group-id: string
         ) -> result<_, error>;
 

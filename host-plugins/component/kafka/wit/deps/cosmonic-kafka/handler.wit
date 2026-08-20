@@ -45,7 +45,7 @@ package cosmonic:kafka@0.2.0;
 @since(version = 0.2.0)
 interface handler {
     @since(version = 0.2.0)
-    use types.{consumed-record};
+    use types.{consumed-record, offset};
 
     /// Why a batch was not handled.
     ///
@@ -66,12 +66,26 @@ interface handler {
         permanent(option<string>),
     }
 
-    /// Handle one batch. Returning `ok` is what allows its offsets to be
-    /// committed; returning an error asks for it to be delivered again.
+    /// Handle one batch, which is never empty.
     ///
-    /// `async` because the caller is a provider awaiting the result before it
-    /// commits, and because a handler that does real work needs somewhere to
-    /// await its own imports from.
+    /// Returns **how far the batch was handled**, which is what allows a
+    /// handler to make progress it does not have to repeat:
+    ///
+    /// - `ok(none)` — the whole batch. The provider commits past its last
+    ///   record.
+    /// - `ok(some(offset))` — handled through `offset` inclusive, and no
+    ///   further. The provider commits past that one and redelivers the rest.
+    ///   A handler that processes seven of ten records can keep the seven
+    ///   instead of failing the batch and being given all ten again.
+    /// - `error` — none of it was handled. See `handler-error`.
+    ///
+    /// An offset outside the batch is a caller error and the provider treats it
+    /// as `error`: committing past records it never delivered would drop them.
+    ///
+    /// `async` because the provider awaits the result before committing, and
+    /// because a handler that does real work needs somewhere to await its own
+    /// imports from.
     @since(version = 0.2.0)
-    handle: async func(records: list<consumed-record>) -> result<_, handler-error>;
+    handle: async func(records: list<consumed-record>)
+        -> result<option<offset>, handler-error>;
 }

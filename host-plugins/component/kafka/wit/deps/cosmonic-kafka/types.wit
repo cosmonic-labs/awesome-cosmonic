@@ -60,24 +60,50 @@ interface types {
         value: option<list<u8>>,
     }
 
-    /// A topic/partition pair, optionally carrying an offset and metadata.
+    /// A partition, named.
     ///
-    /// librdkafka's `rd_kafka_topic_partition_t`, and the currency of
-    /// assignment, commit, seek and offset lookup. Which fields carry meaning
-    /// depends on the call — see each function.
+    /// What `assign`, `pause` and the query operations take: they act on a
+    /// partition, and an offset would mean nothing to them.
     @since(version = 0.1.0)
-    record topic-partition {
+    record partition-ref {
         topic: string,
         partition: partition,
-        /// Meaningful for commit, seek and offset queries; ignored by assign.
-        offset: option<offset>,
+    }
+
+    /// A position in a partition.
+    ///
+    /// What `commit` and `seek` take. The offset is **required** here, which is
+    /// the point of the type: under one shared record it was optional, so a
+    /// caller could build a well-typed commit with nothing to commit and only
+    /// find out at run time.
+    @since(version = 0.1.0)
+    record partition-offset {
+        topic: string,
+        partition: partition,
+        offset: offset,
+        /// The broker's leader epoch for this position, when known. Carrying it
+        /// through a commit or seek round trip is what makes offset fencing
+        /// work: a commit from a stale leader is rejected rather than applied.
+        leader-epoch: option<s32>,
         /// Opaque per-partition metadata stored alongside a committed offset.
         metadata: option<list<u8>>,
-        /// The broker's leader epoch for this position, when known. Carrying
-        /// it through a commit or seek round trip is what makes offset fencing
-        /// work.
+    }
+
+    /// One partition's outcome from a batch operation.
+    ///
+    /// Separate from the request types because `error` only means something on
+    /// the way back — a per-partition failure inside a call that otherwise
+    /// succeeded, which is how Kafka reports most of them.
+    @since(version = 0.1.0)
+    record partition-result {
+        topic: string,
+        partition: partition,
+        /// The offset the operation settled on, absent when this partition
+        /// failed or has none.
+        offset: option<offset>,
         leader-epoch: option<s32>,
-        /// Per-partition failure from a batch operation. Absent on success.
+        metadata: option<list<u8>>,
+        /// Absent on success.
         error: option<error-code>,
     }
 
@@ -104,6 +130,20 @@ interface types {
     /// them would pin this interface to one version. An unknown or malformed
     /// key is reported as `invalid-config` when the client is opened.
     @since(version = 0.1.0)
+    /// One configuration property.
+    ///
+    /// Keys are librdkafka property names, passed verbatim, which is what lets
+    /// any mechanism librdkafka supports work without this interface enumerating
+    /// them: `bootstrap.servers`, `acks`, `compression.type`, `group.id`,
+    /// `sasl.mechanism`, `ssl.key.pem`, and so on.
+    ///
+    /// **A provider must reject a property it does not implement** with
+    /// `invalid-config`, rather than ignoring it. Silently dropping
+    /// `acks=all` weakens a durability guarantee the caller thinks it has, and
+    /// silently dropping `sasl.password` sends credentials nowhere while the
+    /// connection proceeds unauthenticated. Both are worse than failing to
+    /// open. A provider implementing a subset is expected; one that pretends to
+    /// implement more than it does is not.
     record config-entry {
         key: string,
         value: string,
@@ -180,12 +220,19 @@ interface types {
     /// result lists, and `not-leader-for-partition` means "refresh metadata and
     /// retry", not "give up".
     @since(version = 0.1.0)
-    enum error-code {
-        /// A code this build does not know, most likely from a newer
-        /// broker. The only case with no `rd_kafka_resp_err_t`
-        /// counterpart; it exists so a forward-compatible caller has
-        /// somewhere to land. Treat as non-retriable.
-        unknown-error-code,
+    variant error-code {
+        /// A code this interface does not name, carrying the broker's own
+        /// number.
+        ///
+        /// A `variant` with this case rather than an `enum`, following
+        /// `wasi:http`'s: Kafka adds error codes and a WIT enum cannot grow
+        /// without a breaking version, so an exhaustive one would turn every
+        /// future broker release into a choice between an unrepresentable
+        /// error and a new major. The payload is what keeps such a code
+        /// actionable — a caller can log it, match on it, and file a bug —
+        /// where a bare `unknown` leaves the detail only in a human-readable
+        /// message. Treat as non-retriable unless the number says otherwise.
+        unknown-error-code(s32),
         /// Received message is incorrect (client-side, code -199)
         bad-msg,
         /// Bad/unknown compression (client-side, code -198)
