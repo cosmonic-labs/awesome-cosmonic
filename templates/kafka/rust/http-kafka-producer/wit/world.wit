@@ -1,0 +1,10 @@
+package cosmonic-templates:http-kafka-producer;
+
+// HTTP-triggered Kafka producer. The host calls `wasi:http/handler` (WASI P3 —
+// this is what makes poolSize/maxConcurrency effective on the ingress) and the
+// component produces through `cosmonic:kafka/producer`.
+world http-kafka-producer {
+    import cosmonic:kafka/types@0.3.0;
+    import cosmonic:kafka/producer@0.3.0;
+    export wasi:http/handler@0.3.0;
+}

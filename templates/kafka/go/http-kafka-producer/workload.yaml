@@ -1,0 +1,35 @@
+# Cosmonic Desktop workload (apply with `cosmonic_apply_workload` or the API).
+# Reach it at http://http-kafka-producer.localhost:8200/
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: http-kafka-producer
+  namespace: default
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # This component exports P3 wasi:http/handler@0.3.0 — bind "handler",
+      # which is also what makes poolSize/maxConcurrency effective.
+      interfaces: [handler]
+      config:
+        host: http-kafka-producer.localhost
+    - namespace: cosmonic
+      package: kafka
+      version: 0.3.0
+      interfaces: [producer, types]
+      config:
+        # The host pins everything set here; the guest cannot override it.
+        bootstrap.servers: 127.0.0.1:9092
+        broker.address.family: v4
+        # Grant: which topics this workload may produce to. Never "*" wider
+        # than needed.
+        topics: "demo.events"
+  components:
+    - name: producer
+      image: ghcr.io/CHANGEME/http-kafka-producer-go:0.1.0
+      poolSize: 4
+      # Leave maxConcurrency at default (1): combining poolSize>1 with
+      # maxConcurrency>1 on a client-per-request producer measured 14x slower.
+      localResources:
+        allowedHosts: []

@@ -1,0 +1,6 @@
+package wasi:cli@0.3.0;
+
+interface run {
+  run: async func() -> result;
+}
+

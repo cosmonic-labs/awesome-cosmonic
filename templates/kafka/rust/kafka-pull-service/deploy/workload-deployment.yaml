@@ -1,0 +1,21 @@
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: kafka-pull-service
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    spec:
+      service:
+        image: ghcr.io/CHANGEME/kafka-pull-service:0.1.0
+        maxRestarts: 100
+      hostInterfaces:
+        - namespace: cosmonic
+          package: kafka
+          version: 0.3.0
+          interfaces: [consumer, producer, types]
+          config:
+            bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
+            broker.address.family: v4
+            topics: "demo.events,demo.enriched,demo.events.dlq"
