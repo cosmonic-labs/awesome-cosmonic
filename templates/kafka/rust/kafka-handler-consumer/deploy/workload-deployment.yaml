@@ -1,0 +1,24 @@
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: kafka-handler-consumer
+  namespace: default
+spec:
+  replicas: 1   # scale-out = more group members sharing the partitions
+  template:
+    spec:
+      components:
+        - name: consumer
+          image: ghcr.io/CHANGEME/kafka-handler-consumer:0.1.0
+      hostInterfaces:
+        - namespace: cosmonic
+          package: kafka
+          version: 0.3.0
+          interfaces: [handler, types]
+          config:
+            bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
+            broker.address.family: v4
+            topics: "demo.events"
+            group.id: "demo-events-handler"
+            auto.offset.reset: earliest
+            dead-letter.topic: "demo.events.dlq"

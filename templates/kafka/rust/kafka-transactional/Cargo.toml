@@ -1,0 +1,12 @@
+[package]
+name = "kafka-transactional"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+form_urlencoded = "1"
+wit-bindgen = { version = "0.58.0", features = ["macros", "async-spawn", "inter-task-wakeup"] }
