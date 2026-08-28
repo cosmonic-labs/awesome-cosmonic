@@ -1,0 +1,18 @@
+<clickhouse>
+    <!-- Consumer settings for every Kafka engine table in this server. The
+         same keys accepted by librdkafka go here; per-table overrides live in
+         a <kafka_TOPIC_NAME> block. -->
+    <kafka>
+        <auto_offset_reset>earliest</auto_offset_reset>
+        <!-- Surfaces consumer group joins, rebalances, and commit failures in
+             the server log. Without this, a stuck consumer is invisible. -->
+        <debug>consumer,cgrp</debug>
+    </kafka>
+
+    <!-- system.kafka_consumers is the first place to look when rows are not
+         arriving. It reports assignment, last poll time, and last exception
+         per consumer. -->
+    <logger>
+        <level>information</level>
+    </logger>
+</clickhouse>

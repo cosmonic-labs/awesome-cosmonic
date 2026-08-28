@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clickstream Insights</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f1116;
+        --panel: #171a21;
+        --panel-2: #1e222b;
+        --line: #2a2f3a;
+        --text: #e6e8ee;
+        --muted: #949bab;
+        --accent: #655dc6;
+        --accent-2: #46b8a9;
+        --warn: #d98324;
+        --err: #d9534f;
+        --radius: 10px;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f6f7f9;
+          --panel: #ffffff;
+          --panel-2: #f0f2f5;
+          --line: #dfe3ea;
+          --text: #1a1d24;
+          --muted: #5d6675;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+      .sub { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+      .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      button {
+        background: var(--accent);
+        color: #fff;
+        border: 0;
+        border-radius: 7px;
+        padding: 8px 14px;
+        font: inherit;
+        font-weight: 550;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) { filter: brightness(1.1); }
+      button:disabled { opacity: 0.55; cursor: default; }
+      button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+      main { padding: 20px 24px 48px; display: grid; gap: 16px; max-width: 1400px; }
+      .row { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+      .panel h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--muted);
+        margin: 0 0 12px;
+        font-weight: 600;
+      }
+      .stat { font-size: 27px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+      .stat-note { color: var(--muted); font-size: 12px; margin-top: 2px; }
+      .wide { grid-column: 1 / -1; }
+      .split { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+      table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      th {
+        text-align: left;
+        color: var(--muted);
+        font-weight: 550;
+        padding: 6px 10px 6px 0;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      td { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      tr:last-child td { border-bottom: 0; }
+      .num { text-align: right; font-variant-numeric: tabular-nums; }
+      .scroll { overflow-x: auto; }
+      .bar-row { display: grid; grid-template-columns: 110px 1fr 62px; gap: 10px; align-items: center; margin-bottom: 7px; }
+      .bar-track { background: var(--panel-2); border-radius: 4px; height: 9px; overflow: hidden; }
+      .bar-fill { background: var(--accent); height: 100%; border-radius: 4px; }
+      .muted { color: var(--muted); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+      .pill.ok { background: color-mix(in srgb, var(--accent-2) 20%, transparent); color: var(--accent-2); }
+      .pill.warn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+      .pill.err { background: color-mix(in srgb, var(--err) 20%, transparent); color: var(--err); }
+      #chart { width: 100%; height: 150px; display: block; }
+      .banner {
+        display: none;
+        padding: 10px 14px;
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--err) 15%, transparent);
+        border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
+        color: var(--err);
+        font-size: 13px;
+      }
+      .banner.show { display: block; }
+      .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+      footer { color: var(--muted); font-size: 12px; padding: 0 24px 32px; max-width: 1400px; }
+      code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Clickstream Insights</h1>
+        <div class="sub">
+          Kafka &rarr; ClickHouse Kafka engine &rarr; materialized view &rarr; MergeTree. Every number below is a live query.
+        </div>
+      </div>
+      <div class="controls">
+        <span id="freshness" class="muted"></span>
+        <button id="generate">Generate 500 events</button>
+        <button id="refresh" class="ghost">Refresh</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="banner" class="banner"></div>
+
+      <section class="row">
+        <div class="panel">
+          <h2>Events</h2>
+          <div class="stat" id="s-events">&mdash;</div>
+          <div class="stat-note">rows in analytics.events</div>
+        </div>
+        <div class="panel">
+          <h2>Sessions</h2>
+          <div class="stat" id="s-sessions">&mdash;</div>
+          <div class="stat-note">uniq(session_id)</div>
+        </div>
+        <div class="panel">
+          <h2>Revenue</h2>
+          <div class="stat" id="s-revenue">&mdash;</div>
+          <div class="stat-note">sum(revenue_cents)</div>
+        </div>
+        <div class="panel">
+          <h2>Ingest lag</h2>
+          <div class="stat" id="s-lag">&mdash;</div>
+          <div class="stat-note">newest event vs. now</div>
+        </div>
+        <div class="panel">
+          <h2>Dead letters</h2>
+          <div class="stat" id="s-errors">&mdash;</div>
+          <div class="stat-note">analytics.events_errors</div>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <h2>Events per minute &mdash; from the rollup, not raw events</h2>
+        <svg id="chart" role="img" aria-label="Events per minute"></svg>
+        <div class="stat-note" id="chart-note"></div>
+      </section>
+
+      <section class="split">
+        <div class="panel">
+          <h2>By event type (last hour)</h2>
+          <div id="by-type"></div>
+        </div>
+        <div class="panel">
+          <h2>By country (last hour)</h2>
+          <div id="by-country"></div>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <h2>Kafka consumers &mdash; system.kafka_consumers</h2>
+        <div class="scroll"><table id="consumers"></table></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>Recent events &mdash; with the Kafka coordinates the view carried through</h2>
+        <div class="scroll"><table id="recent"></table></div>
+      </section>
+
+      <section class="panel wide" id="errors-panel" hidden>
+        <h2>Dead-lettered messages</h2>
+        <div class="scroll"><table id="errors"></table></div>
+      </section>
+    </main>
+
+    <footer>
+      Ingestion is defined entirely in <code>infra/clickhouse/init/01-ingest-pipeline.sql</code>. This page runs no
+      aggregation of its own; the chart reads <code>analytics.events_per_minute</code>, which a second materialized
+      view fills from the same Kafka batch as the raw table.
+    </footer>
+
+    <script>
+      // Replaced server-side with a JSON string literal.
+      const GATEWAY_URL = "__GATEWAY_URL__";
+
+      const $ = (id) => document.getElementById(id);
+      const nf = new Intl.NumberFormat();
+
+      const fmtInt = (v) => nf.format(Number(v ?? 0));
+      const fmtMoney = (cents) =>
+        (Number(cents ?? 0) / 100).toLocaleString(undefined, { style: "currency", currency: "USD" });
+
+      function showError(message) {
+        const b = $("banner");
+        b.textContent = message;
+        b.classList.add("show");
+      }
+      function clearError() {
+        $("banner").classList.remove("show");
+      }
+
+      async function getJSON(url) {
+        const res = await fetch(url, { cache: "no-store" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `${url} returned ${res.status}`);
+        return body;
+      }
+
+      // Renders into the existing <table> in both the empty and populated
+      // cases. Swapping the element out for a <div> on empty would mean the
+      // next refresh writes <tbody> into a <div>, and the panel could never
+      // show rows again.
+      function table(el, columns, rows, emptyMessage) {
+        if (!rows.length) {
+          const td = document.createElement("td");
+          td.className = "empty";
+          td.colSpan = columns.length;
+          td.textContent = emptyMessage;
+          const tr = document.createElement("tr");
+          tr.appendChild(td);
+          el.innerHTML = "";
+          el.appendChild(tr);
+          return;
+        }
+        const thead = `<thead><tr>${columns
+          .map((c) => `<th class="${c.num ? "num" : ""}">${c.label}</th>`)
+          .join("")}</tr></thead>`;
+        const tbody = rows
+          .map(
+            (row) =>
+              `<tr>${columns
+                .map((c) => {
+                  const value = c.render ? c.render(row) : row[c.key];
+                  const cls = [c.num ? "num" : "", c.mono ? "mono" : ""].filter(Boolean).join(" ");
+                  const td = document.createElement("td");
+                  td.textContent = value ?? "";
+                  if (cls) td.className = cls;
+                  return td.outerHTML;
+                })
+                .join("")}</tr>`,
+          )
+          .join("");
+        el.innerHTML = thead + `<tbody>${tbody}</tbody>`;
+      }
+
+      function bars(el, rows, labelKey, valueKey) {
+        if (!rows.length) {
+          el.innerHTML = '<div class="empty">No data yet. Generate some events.</div>';
+          return;
+        }
+        const max = Math.max(...rows.map((r) => Number(r[valueKey] ?? 0)), 1);
+        el.innerHTML = "";
+        for (const row of rows) {
+          const value = Number(row[valueKey] ?? 0);
+          const wrap = document.createElement("div");
+          wrap.className = "bar-row";
+
+          const label = document.createElement("div");
+          label.textContent = row[labelKey] || "(none)";
+          label.style.overflow = "hidden";
+          label.style.textOverflow = "ellipsis";
+
+          const track = document.createElement("div");
+          track.className = "bar-track";
+          const fill = document.createElement("div");
+          fill.className = "bar-fill";
+          fill.style.width = `${(value / max) * 100}%`;
+          track.appendChild(fill);
+
+          const num = document.createElement("div");
+          num.className = "num";
+          num.textContent = fmtInt(value);
+
+          wrap.append(label, track, num);
+          el.appendChild(wrap);
+        }
+      }
+
+      function chart(series) {
+        const svg = $("chart");
+        const note = $("chart-note");
+        svg.innerHTML = "";
+        if (!series.length) {
+          note.textContent = "No data in the last 30 minutes.";
+          return;
+        }
+
+        const W = svg.clientWidth || 900;
+        const H = 150;
+        const pad = { top: 8, right: 4, bottom: 18, left: 4 };
+        const max = Math.max(...series.map((d) => Number(d.events || 0)), 1);
+        const innerW = W - pad.left - pad.right;
+        const innerH = H - pad.top - pad.bottom;
+        const barW = Math.max(1, (innerW / series.length) * 0.72);
+        const step = innerW / series.length;
+
+        svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+        const ns = "http://www.w3.org/2000/svg";
+
+        series.forEach((d, i) => {
+          const value = Number(d.events || 0);
+          const h = Math.max(1, (value / max) * innerH);
+          const rect = document.createElementNS(ns, "rect");
+          rect.setAttribute("x", pad.left + i * step + (step - barW) / 2);
+          rect.setAttribute("y", pad.top + innerH - h);
+          rect.setAttribute("width", barW);
+          rect.setAttribute("height", h);
+          rect.setAttribute("rx", Math.min(2, barW / 2));
+          rect.setAttribute("fill", "var(--accent)");
+          const title = document.createElementNS(ns, "title");
+          title.textContent = `${d.minute} — ${fmtInt(value)} events, ${fmtInt(d.sessions)} sessions`;
+          rect.appendChild(title);
+          svg.appendChild(rect);
+        });
+
+        const first = series[0].minute.slice(11, 16);
+        const last = series[series.length - 1].minute.slice(11, 16);
+        const axis = document.createElementNS(ns, "text");
+        axis.setAttribute("x", pad.left);
+        axis.setAttribute("y", H - 4);
+        axis.setAttribute("fill", "var(--muted)");
+        axis.setAttribute("font-size", "11");
+        axis.textContent = `${first} → ${last} UTC · peak ${fmtInt(max)}/min`;
+        svg.appendChild(axis);
+        note.textContent = `${series.length} minute buckets from analytics.events_per_minute`;
+      }
+
+      async function load() {
+        try {
+          const [overview, recent, errors] = await Promise.all([
+            getJSON("/api/overview"),
+            getJSON("/api/recent"),
+            getJSON("/api/errors"),
+          ]);
+          clearError();
+
+          const t = overview.totals || {};
+          $("s-events").textContent = fmtInt(t.events);
+          $("s-sessions").textContent = fmtInt(t.sessions);
+          $("s-revenue").textContent = fmtMoney(t.revenue_cents);
+
+          const lag = Number(t.ingest_lag_seconds ?? 0);
+          $("s-lag").textContent = Number(t.events ?? 0) === 0 ? "—" : `${fmtInt(lag)}s`;
+
+          const errorRows = errors.errors || [];
+          $("s-errors").textContent = fmtInt(errorRows.length);
+          $("errors-panel").hidden = errorRows.length === 0;
+
+          chart(overview.per_minute || []);
+          bars($("by-type"), overview.by_event_type || [], "event_type", "events");
+          bars($("by-country"), overview.by_country || [], "country", "events");
+
+          table(
+            $("consumers"),
+            [
+              { label: "Table", key: "table", mono: true },
+              { label: "Consumer", key: "consumer_id", mono: true },
+              { label: "Partitions", render: (r) => (r.partitions || []).join(", "), mono: true },
+              { label: "Messages read", key: "num_messages_read", num: true },
+              { label: "Rebalances", key: "rebalance_assignments", num: true },
+              { label: "Active", render: (r) => (Number(r.active) ? "yes" : "no") },
+              { label: "Last poll", key: "last_poll_time", mono: true },
+              { label: "Last exception", render: (r) => r.last_exception || "—" },
+            ],
+            overview.consumers || [],
+            "No Kafka consumers registered yet.",
+          );
+
+          table(
+            $("recent"),
+            [
+              { label: "Occurred at", key: "occurred_at", mono: true },
+              { label: "Type", key: "event_type" },
+              { label: "Path", key: "path", mono: true },
+              { label: "Referrer host", render: (r) => r.referrer_host || "—", mono: true },
+              { label: "Country", key: "country" },
+              { label: "Device", key: "device" },
+              { label: "Revenue", render: (r) => fmtMoney(r.revenue_cents), num: true },
+              { label: "Partition", key: "kafka_partition", num: true, mono: true },
+              { label: "Offset", key: "kafka_offset", num: true, mono: true },
+            ],
+            recent.events || [],
+            "No events yet. Press “Generate 500 events”.",
+          );
+
+          if (errorRows.length) {
+            table(
+              $("errors"),
+              [
+                { label: "Seen at", key: "seen_at", mono: true },
+                { label: "Partition", key: "partition", num: true },
+                { label: "Offset", key: "offset", num: true },
+                { label: "Error", key: "error" },
+                { label: "Raw message", key: "raw_message", mono: true },
+              ],
+              errorRows,
+              "",
+            );
+          }
+
+          $("freshness").textContent = `updated ${new Date().toLocaleTimeString()}`;
+        } catch (e) {
+          showError(`${e.message}. Is ClickHouse up? Try: docker compose -f infra/docker-compose.yaml ps`);
+        }
+      }
+
+      $("generate").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Producing…";
+        try {
+          const res = await fetch(`${GATEWAY_URL}/events/simulate?count=500`, { method: "POST" });
+          if (!res.ok) throw new Error(`gateway returned ${res.status}`);
+          button.textContent = "Waiting for flush…";
+          // kafka_flush_interval_ms is 1000; give the batch a moment to land.
+          await new Promise((r) => setTimeout(r, 1800));
+          await load();
+        } catch (e) {
+          showError(`Could not reach the event gateway at ${GATEWAY_URL}: ${e.message}`);
+        } finally {
+          button.disabled = false;
+          button.textContent = "Generate 500 events";
+        }
+      });
+
+      $("refresh").addEventListener("click", load);
+      load();
+      setInterval(load, 5000);
+    </script>
+  </body>
+</html>

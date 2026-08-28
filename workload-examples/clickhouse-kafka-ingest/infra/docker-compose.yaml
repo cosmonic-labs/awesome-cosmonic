@@ -1,0 +1,96 @@
+# Backing services for the example. Neither container knows anything about
+# Cosmonic Control; the components reach both over plain HTTP.
+#
+#   redpanda    Kafka API on 9092 (in-network) and 19092 (from the host).
+#               HTTP Proxy on 8082 is what event-gateway produces through,
+#               so the component needs no Kafka client and no messaging
+#               capability provider.
+#   clickhouse  HTTP interface on 8123. Runs every .sql file in
+#               clickhouse/init/ on first boot, which is where the whole
+#               ingestion pipeline is defined.
+#
+# Redpanda is used because it speaks the Kafka protocol and ships an HTTP
+# proxy in the same binary. Point kafka_broker_list at Apache Kafka instead
+# and the ClickHouse side is unchanged.
+
+name: clickhouse-kafka-ingest
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v25.1.9
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=info
+      # Two listeners: `internal` is how ClickHouse connects from inside the
+      # compose network, `external` is how you reach it from the host with
+      # rpk or any Kafka client. Advertising both under the right names is
+      # the usual thing to get wrong.
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr=internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr=internal://redpanda:8082,external://localhost:18082
+    ports:
+      - "18082:18082" # HTTP Proxy, from the host
+      - "19092:19092" # Kafka API, from the host
+      - "9644:9644" # Admin API
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+  # Creates the topic before ClickHouse starts. Without this, the Kafka engine
+  # table would come up pointed at a topic that does not exist yet: with
+  # auto-creation on it resolves itself, but the first consumer poll logs
+  # errors and the demo looks broken for its first minute.
+  topic-setup:
+    image: redpandadata/redpanda:v25.1.9
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "rpk topic create clickstream.events --brokers redpanda:9092 --partitions 3 --replicas 1 || true"
+    restart: "no"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.6
+    depends_on:
+      topic-setup:
+        condition: service_completed_successfully
+    environment:
+      CLICKHOUSE_USER: analytics
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-analytics}
+      CLICKHOUSE_DB: analytics
+      # Lets the init SQL create users/tables and the components run DDL-free
+      # queries as `analytics`.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123" # HTTP interface, used by both components
+      - "9000:9000" # Native protocol, used by clickhouse-client
+    volumes:
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+      - ./clickhouse/config/kafka-logging.xml:/etc/clickhouse-server/config.d/kafka-logging.xml:ro
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --user analytics --password ${CLICKHOUSE_PASSWORD:-analytics} --query 'SELECT 1' || exit 1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  redpanda-data:
+  clickhouse-data:

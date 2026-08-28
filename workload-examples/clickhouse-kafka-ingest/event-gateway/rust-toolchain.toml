@@ -1,0 +1,8 @@
+# Pinned deliberately. A component built with a Rust nightly can produce a
+# wasm32-wasip2 binary that instantiates but never completes a response - the
+# HTTP server accepts the connection and the request hangs with no trap and no
+# log line, which is a miserable thing to debug. Stable is the supported
+# toolchain for wasip2 components.
+[toolchain]
+channel = "stable"
+targets = ["wasm32-wasip2"]

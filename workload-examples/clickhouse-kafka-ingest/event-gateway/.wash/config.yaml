@@ -1,0 +1,26 @@
+version: 2.0.0
+
+# A wasip3 component still builds for the wasm32-wasip2 *target*: the standard
+# library and libc remain p2, while the component's own world is p3
+# (`wasi:http/handler@0.3.0`). wasm32-wasip3 is tier 3 and ships no prebuilt
+# std, so this is the supported way to write p3 components today.
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/event_gateway.wasm
+
+dev:
+  address: 0.0.0.0:8000
+
+workload:
+  # Delivered to the component through wasi:config/store. Nothing about the
+  # broker is compiled in, so the same artifact runs against a local Redpanda
+  # and a production cluster.
+  config:
+    KAFKA_PROXY_URL: http://localhost:18082
+    KAFKA_TOPIC: clickstream.events
+    REQUEST_TIMEOUT_MS: "5000"
+    MAX_BATCH: "5000"
+  # The component can reach nothing else over the network. Producing to a
+  # different broker means changing this list, not rebuilding.
+  allowedHosts:
+    - localhost

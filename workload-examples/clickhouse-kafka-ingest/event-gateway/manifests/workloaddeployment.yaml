@@ -1,0 +1,78 @@
+# Cosmonic Control deployment for the producing half of the pipeline.
+#
+# Push the component first:
+#   wash oci push <registry>/event-gateway:0.1.0 \
+#     target/wasm32-wasip2/release/event_gateway.wasm
+#
+# `KAFKA_PROXY_URL` and `allowedHosts` here assume Redpanda is reachable in
+# cluster as `redpanda.data.svc.cluster.local`. Point them at Apache Kafka's
+# REST Proxy instead and nothing else changes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: event-gateway
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-gateway-config
+data:
+  KAFKA_PROXY_URL: http://redpanda.data.svc.cluster.local:8082
+  KAFKA_TOPIC: clickstream.events
+  REQUEST_TIMEOUT_MS: "5000"
+  MAX_BATCH: "5000"
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: event-gateway
+spec:
+  # The gateway is stateless and request-scoped, so it scales horizontally
+  # without coordination. Ordering is preserved per session by the partition
+  # key, not by running a single replica.
+  replicas: 3
+  template:
+    spec:
+      hostSelector:
+        hostgroup: default
+      kubernetes:
+        service:
+          name: event-gateway
+      components:
+        - name: event-gateway
+          image: ghcr.io/example/event-gateway:0.1.0
+      hostInterfaces:
+        # wasip3: the entrypoint is `handler` at 0.3.0, not p2's
+        # `incoming-handler`.
+        - namespace: wasi
+          package: http
+          version: "0.3.0"
+          interfaces:
+            - handler
+          config:
+            host: "0.0.0.0"
+            port: "8000"
+        # Outbound HTTP is the only other capability the component has, and it
+        # is scoped to the broker's proxy. `client` is p3's outbound
+        # interface, replacing p2's `outgoing-handler`.
+        - namespace: wasi
+          package: http
+          version: "0.3.0"
+          interfaces:
+            - client
+          config:
+            allowedHosts: redpanda.data.svc.cluster.local
+        - namespace: wasi
+          package: config
+          interfaces:
+            - store
+          configFrom:
+            - configMapRef:
+                name: event-gateway-config
