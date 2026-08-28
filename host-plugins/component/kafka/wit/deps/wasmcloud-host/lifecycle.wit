@@ -1,0 +1,141 @@
+package wasmcloud:host@0.1.3;
+
+/// Optionally exported by a host component plugin. The host calls these as
+/// workloads that import the plugin's capabilities are bound and unbound,
+/// letting the plugin provision and reclaim per-workload state eagerly —
+/// validate interface config at deploy time, allocate per-tenant resources,
+/// and free them when the workload goes away.
+///
+/// A plugin that does not export this interface simply never hears about
+/// workload lifecycle; its capability calls behave as before.
+///
+/// During a lifecycle call, `wasmcloud:host/identity#get-workload-id` reports
+/// the workload the call concerns, so bind-time state keyed by workload id
+/// lines up with the identity seen on later capability calls.
+///
+/// `get-component-id` is NOT meaningful inside these hooks and its value must
+/// not be relied on. A hook is delivered about a whole workload rather than on
+/// behalf of any one of its items, so there is no component to report; the
+/// interface returns a bare `string` and therefore cannot say "none". Every id
+/// a hook needs is already on the `workload-info` argument — the workload id,
+/// the service id if there is one, and every component id — so read it from
+/// there rather than asking who is calling.
+///
+/// Hooks should not invoke the plugin's own exported capabilities: during a
+/// post-restart replay such a self-call cannot be served until the replay
+/// completes, so the host times the hook out rather than waiting on it. A
+/// bind still running past the host's timeout may also observe the same
+/// workload's unbind delivered concurrently; state it provisions after that
+/// is reclaimed only by a later unbind or a plugin restart.
+///
+/// Nor can a hook *call* the workload it is about, on an interface the
+/// workload exports and the plugin imports. A workload is callable only while
+/// it is running, and a hook is delivered either side of that: it is still
+/// deploying when `on-workload-bind` arrives, and already being torn down when
+/// `on-workload-unbind` does — its service is aborted and its warm instances
+/// dropped before the hook runs, so there is nothing left to answer.
+///
+/// This costs a hook nothing, because the cleanup a plugin owes is its own.
+/// Everything it provisioned for a workload it keyed by that workload's id, and
+/// the id is what `on-workload-unbind` is handed — so reclaiming it needs no
+/// cooperation from the workload, which by then has none to give. A plugin that
+/// wants a workload to know it is going away should tell it while it is still
+/// running, not at teardown.
+///
+/// Calls the plugin already had in flight when the unbind arrived are not
+/// interrupted, the same way an in-flight request finishes rather than failing
+/// halfway. A `wasmcloud:host/workload-call` target handle opened before the
+/// stop does not extend that to *new* calls: the workload it names is gone, so
+/// the next call through the handle comes back `not-running`.
+interface workload-lifecycle {
+    use types.{workload-id, component-id};
+
+    /// Semantic version of an interface instance (e.g. `0.2.0-draft`).
+    record version {
+        major: u64,
+        minor: u64,
+        patch: u64,
+        /// Pre-release identifier, if any (e.g. `draft`, `rc.1`).
+        pre: option<string>,
+        /// Build metadata, if any.
+        build: option<string>,
+    }
+
+    /// One interface instance the workload matched on this plugin — e.g. the
+    /// `store` interface of `acme:kv@0.1.0`, labeled `cache`, with its
+    /// manifest config.
+    record interface-binding {
+        /// Interface namespace (e.g. `acme`).
+        namespace: string,
+        /// Package within the namespace (e.g. `kv`).
+        %package: string,
+        /// The matched interface names within the package (e.g. `store`).
+        interfaces: list<string>,
+        /// Version of the instance, if one was requested.
+        version: option<version>,
+        /// Instance label when the workload names multiple instances of the
+        /// same namespace:package, if any. Component-facing: what the component
+        /// calls this import.
+        ///
+        /// Two gaps for a **wasm** host component plugin specifically (a
+        /// Rust built-in plugin doesn't have either): a workload with more
+        /// than one *named* binding on the same namespace:package is
+        /// rejected before bind unless the plugin implements
+        /// `supports_named_instances()` — no wasm plugin can opt into that
+        /// today, so this field only ever arrives as at most one populated
+        /// `name` per namespace:package per workload in practice. And even
+        /// where it is populated, it reaches `on-workload-bind` but is not
+        /// threaded through to the capability call itself — nothing on a
+        /// later `store.get`-style call says which binding it's for, only
+        /// `wasmcloud:host/identity`'s workload/component id. A plugin that
+        /// needs to serve two *unnamed* bindings of the same
+        /// namespace:package differently has no way to disambiguate them at
+        /// all today.
+        name: option<string>,
+        /// Platform-facing id the binding was declared with, if any — what the
+        /// platform's configuration calls the same instance.
+        ///
+        /// Two names, one contract: `name` above and `external-id` here are the
+        /// two names an instance can carry, and both refer to the one interface
+        /// contract described by the rest of this record. An external-id is not
+        /// an identity — it carries no uniqueness requirement, and a binding may
+        /// declare either name, both, or neither.
+        external-id: option<string>,
+        /// Interface-level configuration from the workload manifest, as
+        /// key/value pairs sorted by key.
+        config: list<tuple<string, string>>,
+    }
+
+    /// Identity and configuration of a workload binding to this plugin.
+    record workload-info {
+        /// Unique id of the workload instance.
+        id: workload-id,
+        /// Human-readable workload name.
+        name: string,
+        /// Namespace the workload was deployed under.
+        namespace: string,
+        /// Id of the workload's service, if it has one. A service is the
+        /// workload's long-lived item; it can make capability calls just as a
+        /// component can, so this id also appears as `identity.get-component-id`
+        /// on calls the service makes.
+        service: option<component-id>,
+        /// Ids of the workload's components, excluding the service above.
+        components: list<component-id>,
+        /// Every interface instance the workload matched on this plugin.
+        interfaces: list<interface-binding>,
+    }
+
+    /// A workload importing one of this plugin's exported capabilities is
+    /// being bound. Runs to completion before any capability call from that
+    /// workload is delivered. Returning an error rejects the bind and the
+    /// workload fails to deploy.
+    ///
+    /// MUST be idempotent: after a plugin restart the host replays a bind for
+    /// every workload still bound, so the fresh incarnation can rebuild its
+    /// per-workload state before serving.
+    on-workload-bind: async func(workload: workload-info) -> result<_, string>;
+
+    /// The workload is gone — a normal stop, or cleanup after a failed bind.
+    /// Best-effort: must tolerate ids never bound or already unbound.
+    on-workload-unbind: async func(id: workload-id);
+}

@@ -26,7 +26,9 @@ dist/
 **/*.wasm
 
 # wash
-.wash/
+# Local state only. `config.yaml` is a project's build definition
+**/.wash/*
+!**/.wash/config.yaml
 
 # Go
 vendor/

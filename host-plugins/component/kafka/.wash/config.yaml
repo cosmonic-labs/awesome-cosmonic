@@ -1,0 +1,13 @@
+build:
+  # wasm32-wasip2 is required, not incidental: `std::net` only lowers to
+  # `wasi:sockets` on p2. A wasip1 core module wrapped with the reactor adapter
+  # has no TCP connect at all, which is why the wash-runtime plugin fixtures
+  # (which target wasip1) never make outbound connections.
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/kafka_host_plugin.wasm
+
+# No `dev:` block here on purpose. This project is a host plugin, not a
+# workload — `wash dev` in this directory would deploy the plugin as the
+# component under development, which is not what it is. Run a dev session from
+# `example/` instead: its config builds an ordinary workload and loads the wasm
+# built here as a host plugin, which is the shape a plugin is actually used in.

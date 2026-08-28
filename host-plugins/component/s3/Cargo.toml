@@ -1,0 +1,24 @@
+[package]
+name = "s3-host-plugin"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "S3-compatible object storage for wasmCloud, as a host component plugin"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# SigV4 needs HMAC-SHA256 and SHA-256, and nothing else. Both are pure Rust;
+# the AWS SDK is not an option here because it does not build for
+# wasm32-wasip2.
+hmac = "0.12"
+sha2 = { version = "0.10", default-features = false }
+# 0.60 is a floor: this world's exports are `async func`, and older releases
+# encode those as an extern name no current `wit-component` will decode.
+wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true

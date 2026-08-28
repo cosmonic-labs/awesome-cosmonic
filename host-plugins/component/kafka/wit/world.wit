@@ -1,0 +1,54 @@
+package cosmonic:kafka-plugin@0.1.0;
+
+/// Kafka capability, built as a host component plugin.
+///
+/// The plugin is a single long-lived, host-scoped instance. Ephemeral workloads
+/// call into it across store boundaries; it owns the Kafka connections, broker
+/// metadata, and consumer-group state that no per-request instance could hold.
+/// This is the same split AWS Lambda draws between an event poller and a
+/// function — the difference is that here the poller is itself a sandboxed
+/// component rather than privileged platform infrastructure.
+///
+/// It serves `cosmonic:kafka@0.2.0` — the interface published from
+/// `cosmonic-labs/librdkafka`, unmodified — so a workload written against the
+/// native plugin runs against this one without changing. The two are the same
+/// contract with different backends: librdkafka behind an FFI boundary there,
+/// the wire protocol implemented in Rust here, which is what lets this one run
+/// inside the sandbox with no C in the host process.
+///
+/// Transport is the native Kafka wire protocol over TCP. Rust's `std::net`
+/// lowers to `wasi:sockets` on `wasm32-wasip2`, and the plugin loader leaves
+/// outbound connect unrestricted (it denies only `tcp-bind`/`udp-bind`), so no
+/// import declaration is needed here — the toolchain adds the `wasi:sockets`
+/// imports when the component is built.
+world kafka-plugin {
+    /// The capability, served across store boundaries to bound workloads.
+    /// `admin` is deliberately absent: this backend implements the protocol by
+    /// hand and has no topic administration, and a plugin that exported the
+    /// interface only to fail every call would be worse than one a workload can
+    /// see it does not serve.
+    export cosmonic:kafka/types@0.2.0;
+    export cosmonic:kafka/producer@0.2.0;
+    export cosmonic:kafka/consumer@0.2.0;
+
+    /// The push direction, and the reason this plugin exists alongside the
+    /// native one. `handler` is *imported* because the workload exports it: the
+    /// plugin opens a target for a workload id and an interface, then calls in.
+    import cosmonic:kafka/handler@0.2.0;
+    import wasmcloud:host/workload-call@0.1.3;
+
+    /// Bind-time configuration, delivered from the plugin's own `config:` block.
+    /// A plugin store is built without an environment, so this is the only
+    /// channel these values have.
+    import wasi:config/store@0.2.0-rc.1;
+
+    /// The trigger loop's suspension point. Without one, a loop starves the
+    /// capability calls sharing this store.
+    import wasi:clocks/monotonic-clock@0.3.0;
+
+    import wasi:logging/logging@0.1.0-draft;
+
+    /// The trigger loop itself: polls the subscribed topics and pushes each
+    /// batch into a workload exporting `handler`.
+    export wasi:cli/run@0.3.0;
+}
