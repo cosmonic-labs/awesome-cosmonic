@@ -1,0 +1,55 @@
+# Cosmonic Desktop / wasmCloud v2 Workload manifest — the published image.
+#
+# Two manifests ship with this template:
+#   workload.yaml          local iteration (Desktop's built-in registry)
+#   deploy/workload.yaml   the published image (your registry)
+#
+# Rename every `nats-jetstream-consumer` occurrence when you fork, and narrow the grants below —
+# they are deny-by-default and intentionally minimal.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "nats-jetstream-consumer"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "nats-jetstream-consumer"
+    app.kubernetes.io/version: "0.1.0"
+    cosmonic.com/pattern: "jetstream-consumer"
+    cosmonic.com/language: "rust"
+  annotations:
+    desktop.cosmonic.com/source: template
+spec:
+  hostInterfaces:
+    - namespace: wasmcloud
+      package: nats
+      version: "0.1.0"
+      interfaces: ["types", "jetstream", "jetstream-handler"]
+      config:
+        # Grants are deny-by-default and separate on purpose: subject-allow
+        # covers publish/request, stream-allow covers stream reads,
+        # bucket-allow covers KV. Widen only what this workload needs.
+            subject-allow: load.>,done.js-sink.>
+            stream-allow: LOAD
+            # STREAM:filter:policy:queue-group — the fourth field makes the
+            # consumer DURABLE. Without it the server creates an ephemeral
+            # consumer and deletes it after ~120 s idle; delivery then stops
+            # with nothing logged.
+            jetstream-subscriptions: LOAD:load.push.>:new:workers
+            ack-mode: auto
+  components:
+    - name: jetstream-consumer
+      image: ghcr.io/your-org/nats-jetstream-consumer:0.1.0
+      # Instance reuse: `poolSize` keeps up to N instances warm and reuses
+      # them across deliveries — it applies to every delivery path
+      # (request/reply, core, JetStream, and KV watch). A warm instance skips
+      # cold instantiation, and each one retains its heap, so the memory cost
+      # scales with poolSize × payload. Leave it at 1 for payloads ≥1 MB:
+      # measured at 5 MB, poolSize=4 turned a survivable run into an OOM kill.
+      #
+      # Example — raise the drain rate when DUPLICATES show the guest cannot
+      # settle within ack-wait (raising max-ack-pending alone makes it worse):
+      #   poolSize: 4
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        allowedHosts: []

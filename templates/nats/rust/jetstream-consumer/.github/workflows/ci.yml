@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-features -- -D warnings
+      - name: Build component
+        run: cargo build --release --target wasm32-wasip2
+
+      # The component must export the async WASI P3 interface. A component that
+      # builds but exports nothing is the classic failure here — the Go
+      # generator `wit-bindgen-go` silently drops every `async func`, producing
+      # exactly that. This check is what catches it.
+      - name: Verify wasmcloud:nats export
+        run: |
+          cargo install wasm-tools --locked || go install github.com/bytecodealliance/wasm-tools-go/cmd/wasm-tools@latest || true
+          wasm-tools component wit target/wasm32-wasip2/release/jetstream_consumer.wasm | tee /tmp/world.wit
+          grep -q 'export wasmcloud:nats/jetstream-handler@0.1.0' /tmp/world.wit
+
+      - name: Verify the async canonical ABI is present
+        run: |
+          wasm-tools print target/wasm32-wasip2/release/jetstream_consumer.wasm | grep -qE 'async-lift|task-return' \
+            || (echo "component is not async-lifted — the build produced a sync component" && exit 1)

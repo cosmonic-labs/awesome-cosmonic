@@ -1,0 +1,9 @@
+package cosmonic:core-subscriber@0.1.0;
+
+/// Core Subscriber — Receive fire-and-forget core NATS messages on a subject and do work per message.
+world core-subscriber {
+  import wasmcloud:nats/types@0.1.0;
+  import wasmcloud:nats/jetstream@0.1.0;
+
+  export wasmcloud:nats/core-handler@0.1.0;
+}

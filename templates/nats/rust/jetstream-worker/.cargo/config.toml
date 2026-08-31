@@ -1,0 +1,9 @@
+# wasmcloud:nats@0.1.0 is async-only WASI P3, but the async canonical ABI comes
+# from wit-bindgen's generated lift/lower code, not from the target. Build for
+# wasm32-wasip2: cargo's wasm-component-ld emits a finished component, which is
+# what Cosmonic Desktop's project mode expects at .wash/config.yaml's
+# component_path — it runs build.command verbatim and never adapts a wasip1
+# core module (only `wash build` does that), and its toolchain doctor installs
+# the wasm32-wasip2 target only.
+[build]
+target = "wasm32-wasip2"

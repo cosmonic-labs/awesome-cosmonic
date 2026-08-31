@@ -1,0 +1,5 @@
+*.wasm
+.wash/cache/
+# componentize-go regenerates these
+wasmcloud_nats_*/
+wit_exports.go

@@ -1,0 +1,56 @@
+# Cosmonic Desktop / wasmCloud v2 Workload manifest — local iteration against Desktop's built-in registry.
+#
+# Two manifests ship with this template:
+#   workload.yaml          local iteration (Desktop's built-in registry)
+#   deploy/workload.yaml   the published image (your registry)
+#
+# Rename every `nats-jetstream-worker` occurrence when you fork, and narrow the grants below —
+# they are deny-by-default and intentionally minimal.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "nats-jetstream-worker"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "nats-jetstream-worker"
+    app.kubernetes.io/version: "0.1.0"
+    cosmonic.com/pattern: "jetstream-worker"
+    cosmonic.com/language: "go"
+  annotations:
+    desktop.cosmonic.com/source: template
+spec:
+  hostInterfaces:
+    - namespace: wasmcloud
+      package: nats
+      version: "0.1.0"
+      interfaces: ["types", "jetstream", "core-handler"]
+      config:
+        # Grants are deny-by-default and separate on purpose: subject-allow
+        # covers publish/request, stream-allow covers stream reads,
+        # bucket-allow covers KV. Widen only what this workload needs.
+            # `load.pull.>` is the pull consumer's filter, not a subject this
+            # component publishes to — but stored messages are checked against
+            # subject-allow as well (stream-allow alone reaches nothing readable),
+            # so the grant must cover the consumer's filter next to the trigger
+            # (pull.run) and the receipt (done.js-pull.>) subjects. Without it
+            # open-pull-consumer fails: Denied(NotGranted, Subject "load.pull.>").
+            subject-allow: pull.run,done.js-pull.>,load.pull.>
+            stream-allow: LOAD
+            core-subscriptions: pull.run
+  components:
+    - name: jetstream-worker
+      image: oci.localhost:8200/nats-jetstream-worker:0.1.0
+      # Instance reuse: `poolSize` keeps up to N instances warm and reuses
+      # them across deliveries — it applies to every delivery path
+      # (request/reply, core, JetStream, and KV watch). A warm instance skips
+      # cold instantiation, and each one retains its heap, so the memory cost
+      # scales with poolSize × payload. Leave it at 1 for payloads ≥1 MB:
+      # measured at 5 MB, poolSize=4 turned a survivable run into an OOM kill.
+      #
+      # Example — amortize instantiation across fetch batches at small
+      # payloads (keep the fetch batch itself sized to the payload):
+      #   poolSize: 4
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        allowedHosts: []

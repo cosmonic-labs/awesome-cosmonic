@@ -1,0 +1,4 @@
+# componentize-go discovers this via `go list`. The world name must match
+# wit/world.wit.
+worlds = ["cosmonic:core-subscriber/core-subscriber@0.1.0"]
+wit_paths = ["wit"]
