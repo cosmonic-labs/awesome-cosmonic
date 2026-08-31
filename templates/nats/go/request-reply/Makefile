@@ -14,13 +14,7 @@ OUT   := request-reply.wasm
 build: bindings
 	componentize-go -d ./wit -w "$(WORLD)" build -o $(OUT)
 
-# componentize-go starts with `go list`, which needs a go.sum entry for the
-# runtime package; go.sum is committed, and the download is a no-op then, but on
-# a machine that never fetched the module it is exactly what the error says to
-# run. `bindings` may also rewrite go.mod's pkg version to the one its generator
-# was built against (v0.2.2 at the pinned commit) — commit what it writes.
 bindings:
-	go mod download go.bytecodealliance.org/pkg
 	componentize-go -d ./wit -w "$(WORLD)" bindings --format
 	go mod tidy
 
@@ -31,5 +25,5 @@ verify: build
 	@echo "OK: exports core-handler@0.1.0, async-lifted"
 
 clean:
-	rm -f $(OUT)
+	rm -f $(OUT) go.sum
 	rm -rf wasmcloud_nats_* wit_exports.go

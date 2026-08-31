@@ -1,113 +1,165 @@
-# KV Watcher (go)
+# KV Watcher (Go)
 
-✅ **RECOMMENDED** — Measured 100% watch delivery across every KV cell in the campaign — `ok=20 err=0 watch_receipts=20` with no drops, in both languages.
+React to changes in a NATS KV bucket - put, delete, and purge events.
 
-React to changes in a NATS KV bucket — put, delete, and purge events.
-
-> **Go limitation:** a handler that parks on a timer traps. No `time.Sleep`,
-> no `context.WithTimeout`, no retry/backoff. See [docs/limitations.md](docs/limitations.md).
+> **Go note:** a handler must not park on a Go runtime timer - `time.Sleep`,
+> `time.After`, `context.WithTimeout` all trap the instance. Await the host
+> clock (`wasi:clocks/monotonic-clock@0.3.0`) instead; details in
+> [docs/limitations.md](docs/limitations.md).
 
 ## When to use this
 
-You want a component invoked whenever a key changes — cache invalidation, config reload, projection updates, change-data-capture. The host maintains the watch; you just handle events.
+You want a component invoked whenever a key changes: cache invalidation,
+config reload, projection updates, change-data-capture. The host maintains
+the watch; you just handle events. Measured 100% watch delivery in every cell,
+both languages, with flat memory - the watch itself costs effectively
+nothing.
 
 ## When not to
 
-Do not use it as a work queue. Watch delivery follows KV semantics, not queue semantics, and a purge or a history-trimmed key can collapse several logical changes into one event.
-
-## Questions to dial it in
-
-Answer these before you deploy — each one changes a config value, not code.
-
-1. **Which key prefix do you need to watch?**
-   The watch is configured on the binding, not in code. A prefix that is too broad wakes your component on every unrelated change.
-
-2. **Do you care about deletes and purges, or only writes?**
-   Delete and purge events arrive with an empty value and an operation marker. Handlers that assume a value will misbehave on them.
-
-3. **Is the handler idempotent?**
-   A watch can redeliver, and a restart replays from the bucket's current state rather than from where you left off.
-
-4. **Do you need the previous value?**
-   The event carries the new value and a revision, not a diff. If you need before/after, keep the prior value yourself or read history.
-
-## Measured operational envelope
-
-Every number below came from the `nats-2.8-testing` campaign (186 cells against
-the `wasmcloud:nats@0.1.0` driver on a 512Mi host). Full detail in
-[docs/tuning.md](docs/tuning.md).
-
-| load | result |
-|---|---|
-| 20 KV writes | 20 watch events delivered (100%) |
-| across every KV cell in the campaign | no drops observed |
-
-Watch delivery was the one thing that never lost an event in either language.
-Peak host memory stayed flat — the watch itself costs effectively nothing.
-
-## Known driver defects that affect this pattern
-
-- No pattern-specific defects found.
-
-## Layout
-
-```
-├── .wash/config.yaml    # wash v2 / Cosmonic Desktop project config
-├── Makefile             # componentize-go build (see docs/building.md)
-├── componentize-go.toml # world selection
-├── deploy/workload.yaml # published-image manifest
-├── docs/building.md     # toolchain workarounds you WILL need
-├── docs/limitations.md  # the timer trap — read before writing a handler
-├── docs/tuning.md       # measured operational envelope
-├── export_.../handler.go # START HERE
-├── go.mod, go.sum       # pkg v0.2.2 — what the pinned componentize-go generates against
-├── scripts/e2e.sh       # drive one message through the deployment, assert the effect
-├── skills/kv-watcher/SKILL.md
-├── wit-vendor/          # vendored wasmcloud:nats@0.1.0 — the wkg.toml override target
-├── wit/world.wit        # + deps/, written from wit-vendor by wash build
-├── wkg.toml, wkg.lock   # override → wit-vendor (outside wit/deps, which wash build rewrites)
-└── workload.yaml
-```
+As a work queue. Watch delivery follows KV semantics, not queue semantics: a
+purge or a history-trimmed key can collapse several logical changes into one
+event. And not when you only need the value now - a plain `get` is far
+cheaper than a watch.
 
 ## Build
 
 ```bash
-make build      # make verify asserts the export and the async lift
+make build     # componentize-go build (see docs/building.md)
+make verify    # assert the handler export and the async ABI are really there
 ```
-
-`make bindings` (which `build` depends on) first runs
-`go mod download go.bytecodealliance.org/pkg` — componentize-go starts with
-`go list`, which needs `go.sum` — and may rewrite `go.mod`'s pkg version to
-the one its generator was built against (`v0.2.2` at the pinned commit; commit
-what it writes). `wash build` and Cosmonic Desktop's project mode run the
-bare `componentize-go … build` from `.wash/config.yaml` instead, so they rely
-on the committed `go.sum`. Details: [docs/building.md](docs/building.md).
 
 ## Deploy
 
 ```bash
-# local iteration against Desktop's built-in registry (ingress host oci.localhost;
-# oci.localhost.cosmonic.sh is the one name Windows can resolve)
-wash oci push --insecure oci.localhost:8200/nats-kv-watcher:0.1.0 kv-watcher.wasm
-
-# apply workload.yaml — there is no kubectl on Cosmonic Desktop. Pick one:
-#   app     Workloads → New workload → paste workload.yaml
-#   agent   the cosmonic MCP server's `cosmonic_apply_workload` tool, manifest as its argument
-#   shell   POST the manifest as JSON to the daemon's unix socket (`cosmonicd paths` prints it;
-#           macOS: ~/Library/Application Support/Cosmonic/cosmonicd.sock,
-#           Linux: $XDG_RUNTIME_DIR/cosmonic/cosmonicd.sock)
-SOCK="$HOME/Library/Application Support/Cosmonic/cosmonicd.sock"
-yq -o=json . workload.yaml | curl -sS --unix-socket "$SOCK" -X POST \
-  -H 'content-type: application/json' --data-binary @- http://localhost/v1/workloads
-curl -sS --unix-socket "$SOCK" http://localhost/v1/workloads | jq '.[] | .status.state'   # → running
-
-# then drive it (a local `nats` CLI against nats://127.0.0.1:4222; see the script header)
-./scripts/e2e.sh
+# Push the component wherever your cluster pulls from (Cosmonic Desktop's
+# built-in registry shown), point `image:` in deploy/workload.yaml at it,
+# and apply.
+wash oci push --insecure oci-registry.localhost:8200/nats-kv-watcher:0.1.0 kv-watcher.wasm
+kubectl apply -f deploy/workload.yaml
+./scripts/e2e.sh        # drive one message, assert the effect
 ```
 
-## Grants
+Rename every `nats-kv-watcher` occurrence when you fork, and narrow the grants -
+they ship deny-by-default and intentionally minimal.
 
-The manifest is deny-by-default and lists only what this pattern needs.
-`subject-allow` covers publish and request, `stream-allow` covers stream reads,
-`bucket-allow` covers KV — permission to publish to a subject does **not**
-carry permission to read a stream capturing it.
+## Deploying on Cosmonic Control
+
+On Cosmonic Control the `wasmcloud-nats` host plugin's `workloadConfig`
+defaults to `deny`: grants live in the hostgroup's values —
+`hostPlugins: [{id: wasmcloud-nats, config: {subject-allow, stream-allow,
+bucket-allow}}]` — and a workload manifest that carries its own grants is
+refused at deploy. Before applying this template's manifest to Control, strip
+`subject-allow` / `stream-allow` / `bucket-allow` from `deploy/workload.yaml`
+(keep only the subscriptions and behaviour keys), and wrap it as a
+`WorkloadDeployment` (`kind: WorkloadDeployment`, spec under
+`.spec.template.spec` — replicas are the operator's). On Cosmonic Desktop the
+manifest works as shipped.
+
+## Performance and tuning
+
+- **Scope the prefix on the binding, not in code** (`kv-watches:
+  bucket:filter`). A prefix that is too broad wakes the component on every
+  unrelated change.
+- **Handle deletes and purges.** Both arrive with an empty value and an
+  operation marker; handlers that assume a value misbehave on them.
+- **Be idempotent.** A watch can redeliver, and a restart replays from the
+  bucket's current state rather than from where you left off.
+- **The event carries the new value and a revision, not a diff.** Keep the
+  prior value yourself, or read history, if you need before/after.
+- **Writing back to the bucket at ≥1 MB values?** Carry the same
+  `request-timeout-ms: "10000"` the kv-store pattern needs.
+
+Measured envelope (details in [docs/tuning.md](docs/tuning.md); cross-pattern
+guidance and the full error catalogue in
+[`nats-tuning.md`](../../nats-tuning.md)):
+
+| load | result |
+|---|---|
+| every KV cell measured, both languages | 100% watch delivery, no drops |
+| watch cost | peak host memory flat |
+
+## Layout
+
+```
+├── Makefile                 # componentize-go build
+├── componentize-go.toml     # world selection
+├── docs/building.md         # toolchain setup
+├── docs/limitations.md      # the timer trap - read before writing a handler
+├── export_.../handler.go    # START HERE
+├── .wash/config.yaml        # wash v2 / Cosmonic Desktop project config
+├── .github/workflows/ci.yml # build + verify the async export is really there
+├── README.md
+├── LICENSE
+├── deploy/workload.yaml     # the manifest - set `image:`, then kubectl apply
+├── docs/tuning.md           # measured operational envelope
+├── scripts/e2e.sh           # drive one message, assert the effect
+├── skills/kv-watcher/SKILL.md
+└── wit/world.wit            # + deps/
+```
+
+## All tuning options
+
+Every knob this template understands, in one commented manifest. Uncommented
+values are the shipped defaults; commented keys show the driver default and
+when to reach for them.
+
+```yaml
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "nats-kv-watcher"
+  namespace: default
+spec:
+  # Each replica gets its own subscription and its own buffer. Replicas do
+  # not add buffer -- and without a queue group, each receives its own full
+  # copy of the traffic.
+  #replicas: 1
+  hostInterfaces:
+    - namespace: wasmcloud
+      package: nats
+      version: "0.1.0"
+      interfaces: [types, kv, jetstream, kv-handler]
+      config:
+        # ---- Grants: operator-declared ceilings, deny-by-default. --------
+        # A workload may ask for a subset of what the hostgroup's
+        # wasmcloud-nats plugin entry declares, never more. subject-allow
+        # covers publish/request, stream-allow covers stream reads,
+        # bucket-allow covers KV -- and they are separate: publishing to a
+        # subject does not grant reading the stream that captures it.
+        subject-allow: done.kv-watch.>
+        bucket-allow: appkv
+        # ---- Watches: bucket[:filter], comma separated. An omitted filter
+        # is `>` (the whole bucket).
+        kv-watches: appkv:>
+        # Concurrent deliveries in flight (driver default 64). Each in-flight
+        # delivery beyond the warm pool occupies its own fresh instance --
+        # bound it on a small host (8 measured safe at 512Mi).
+        #max-in-flight: "8"
+        # Timeout for the driver's own NATS requests (publish acks above
+        # all). The measured fix for ack timeouts on values/messages >=1 MB.
+        #request-timeout-ms: "10000"
+  components:
+    - name: kv-watcher
+      image: ghcr.io/your-org/nats-kv-watcher:0.1.0
+      # Warm instances reused across deliveries. 1 keeps a single instance
+      # warm; raise it for latency-sensitive or high-rate small-payload work,
+      # and leave it low for payloads >=1 MB (each warm instance retains its
+      # heap; memory cost ~ poolSize x payload). Reuse is a state contract:
+      # package-level state survives across deliveries (treat it as a cache;
+      # the shipped handler is reuse-safe). Unset or 0 declares state
+      # ephemeral: a fresh instance per delivery, guaranteed.
+      poolSize: 1
+      # Calls one warm instance may have in flight at once. Default 1 = a
+      # guest sees one call at a time. Raise only for a guest that yields
+      # while it waits.
+      #maxConcurrency: 1
+      # Calls one instance serves before it is retired and replaced.
+      # 0 = unlimited. Set a bound if package-level state should decay.
+      maxInvocations: 0
+      localResources:
+        # This component's own outbound-HTTP allowlist (wasi:http). Empty
+        # denies every outbound host; NATS traffic flows through the host
+        # binding, not HTTP.
+        allowedHosts: []
+```

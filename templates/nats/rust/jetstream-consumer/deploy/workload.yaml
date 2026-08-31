@@ -1,10 +1,6 @@
-# Cosmonic Desktop / wasmCloud v2 Workload manifest — the published image.
+# Cosmonic Desktop / wasmCloud v2 Workload manifest.
 #
-# Two manifests ship with this template:
-#   workload.yaml          local iteration (Desktop's built-in registry)
-#   deploy/workload.yaml   the published image (your registry)
-#
-# Rename every `nats-jetstream-consumer` occurrence when you fork, and narrow the grants below —
+# Rename every `nats-jetstream-consumer` occurrence when you fork, and narrow the grants below -
 # they are deny-by-default and intentionally minimal.
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: Workload
@@ -30,26 +26,38 @@ spec:
         # bucket-allow covers KV. Widen only what this workload needs.
             subject-allow: load.>,done.js-sink.>
             stream-allow: LOAD
-            # STREAM:filter:policy:queue-group — the fourth field makes the
-            # consumer DURABLE. Without it the server creates an ephemeral
-            # consumer and deletes it after ~120 s idle; delivery then stops
-            # with nothing logged.
+            # STREAM:filter[:policy[:queue]] - the queue group makes the consumer
+            # DURABLE (an ephemeral is server-deleted after 120s idle and
+            # delivery stops silently) and distributes across replicas.
             jetstream-subscriptions: LOAD:load.push.>:new:workers
             ack-mode: auto
   components:
     - name: jetstream-consumer
       image: ghcr.io/your-org/nats-jetstream-consumer:0.1.0
       # Instance reuse: `poolSize` keeps up to N instances warm and reuses
-      # them across deliveries — it applies to every delivery path
+      # them across deliveries - it applies to every delivery path
       # (request/reply, core, JetStream, and KV watch). A warm instance skips
       # cold instantiation, and each one retains its heap, so the memory cost
-      # scales with poolSize × payload. Leave it at 1 for payloads ≥1 MB:
-      # measured at 5 MB, poolSize=4 turned a survivable run into an OOM kill.
+      # scales with poolSize × payload - leave it at 1 for payloads ≥1 MB
+      # unless host memory is sized for that product.
       #
-      # Example — raise the drain rate when DUPLICATES show the guest cannot
+      # Reuse is also a state contract: package-level state survives across
+      # deliveries on a warm instance - write handlers that treat it as a
+      # cache (the shipped handler is reuse-safe). Unset or 0 declares state
+      # ephemeral: a fresh instance per delivery, guaranteed.
+      #
+      # Example - raise the drain rate when DUPLICATES show the guest cannot
       # settle within ack-wait (raising max-ack-pending alone makes it worse):
       #   poolSize: 4
       poolSize: 1
+      # How many calls one warm instance serves before it is retired and
+      # replaced. 0 = unlimited - an instance lives until the pool reclaims
+      # it. Set a bound if package-level state should decay, or to recycle
+      # instances on a long-lived deployment.
       maxInvocations: 0
       localResources:
+        # This component's own outbound-HTTP allowlist (wasi:http). Empty
+        # denies every outbound host. NATS traffic flows through the host
+        # binding above, not HTTP, so leave this empty unless the handler
+        # genuinely dials out - then list exactly the hosts it needs.
         allowedHosts: []

@@ -1,4 +1,4 @@
-# Operational envelope — Request / Reply
+# Operational envelope - Request / Reply
 
 Measured on the `nats-2.8-testing` rig: kind on podman, a 512Mi host, NATS
 2.12.8 with JetStream, `wasmcloud:nats@0.1.0`. 186 cells total.
@@ -11,7 +11,7 @@ Measured on the `nats-2.8-testing` rig: kind on podman, a 512Mi host, NATS
 | 5,000 requests, 2 replicas (queue group) | CLEAN 5000/5000 |
 | 5,000 requests, 3 replicas (queue group) | CLEAN 5000/5000 |
 
-Core queue groups distribute correctly — delivery stays at exactly the request
+Core queue groups distribute correctly - delivery stays at exactly the request
 count as replicas scale, rather than multiplying. This was the only pattern
 CLEAN at every replica count tested, in both languages.
 
@@ -30,7 +30,7 @@ CLEAN at every replica count tested, in both languages.
 |---|---|
 | `subscription-capacity` | Buffer between NATS and the admission semaphore, in **messages**. The dominant knob for every push pattern. |
 | `max-in-flight` | Concurrent handler admissions. Matters for request/reply; largely inert for push subscribers, because a full semaphore stops the driver *pulling* and the buffer overflows instead. |
-| `--default-heap-memory` | Per-guest linear memory ceiling. Defaults to 4GiB against a 512Mi host — the host warns about this at every boot. |
+| `--default-heap-memory` | Per-guest linear memory ceiling. Defaults to 4GiB against a 512Mi host - the host warns about this at every boot. |
 | replicas | Multiplies load unless a queue group distributes it. Core queue groups work; JetStream's do not (see the pattern's defect list). |
 
 ## Sizing rule
@@ -39,7 +39,7 @@ CLEAN at every replica count tested, in both languages.
 host_mem >= baseline(guest) + subscription-capacity x max_payload + mif x payload
 ```
 
-`baseline(guest)` is **not** a driver constant — it was ~98 Mi for Rust and
+`baseline(guest)` is **not** a driver constant - it was ~98 Mi for Rust and
 ~315 Mi for Go on the same host. Measure it for your own component rather than
 assuming; and note a GC'd guest's residency is elastic, so a peak observed
 under one budget cannot be used to size that budget.

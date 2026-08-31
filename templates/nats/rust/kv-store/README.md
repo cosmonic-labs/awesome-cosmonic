@@ -1,107 +1,170 @@
-# KV Store Client (rust)
+# KV Store Client (Rust)
 
-⚠️ **CAUTION** — Core operations (put/get/update/delete) are solid and measured CLEAN. But `history()` on a key with no retained history hung the guest call indefinitely in the reference campaign, pinning the instance (rust ledger D7).
-
-Read and write a NATS KV bucket — get, put, CAS update, delete, history.
+Read and write a NATS KV bucket - get, put, CAS update, delete, history.
 
 ## When to use this
 
-You need durable key/value state that outlives an instance. NATS KV gives you revisions (so compare-and-swap works), history, and a watch channel other components can subscribe to.
+You need durable key/value state that outlives an instance: configuration,
+feature flags, session or device state. NATS KV gives you revisions (so
+compare-and-swap works), history, and a watch channel other components can
+subscribe to.
 
 ## When not to
 
-Do not treat it as a database. Listings are capped host-side, and there are no queries — only key lookups and prefix watches.
-
-## Questions to dial it in
-
-Answer these before you deploy — each one changes a config value, not code.
-
-1. **What is your key naming scheme?**
-   Keys are a flat namespace with `.`-delimited convention. Watches are prefix-based, so the scheme decides what can be watched independently.
-
-2. **Do concurrent writers touch the same key?**
-   If so use `update` with the expected revision (CAS) rather than `put`. A revision mismatch returns the current revision so you can retry without re-reading.
-
-3. **How much history do you need?**
-   The bucket's history depth is set at creation, not by the client. Depth 1 means no history at all — and see the `history()` caveat above.
-
-4. **Does anything need to react to changes?**
-   If yes, pair this with `kv-watcher` rather than polling.
-
-## Measured operational envelope
-
-Every number below came from the `nats-2.8-testing` campaign (186 cells against
-the `wasmcloud:nats@0.1.0` driver on a 512Mi host). Full detail in
-[docs/tuning.md](docs/tuning.md).
-
-| operation | result |
-|---|---|
-| put / get / update (CAS) / delete | CLEAN, ~333 op/s serial |
-| 20-op batch with watch | `ok=20 err=0 watch_receipts=20` |
-| `history()` on a key with no history | **hangs the guest call indefinitely** |
-
-Operations are serial per handler invocation, so throughput is bounded by
-round-trip latency rather than by admission. The `history()` hang pins the
-instance and its admission permit — treat that call as unsafe until fixed.
-
-## Known driver defects that affect this pattern
-
-- **G18** — Go's minimum component memory is 2.2x Rust's; a heap-floor refusal never reaches the Kubernetes CRD status.
-
-## Layout
-
-```
-├── .cargo/config.toml   # wasm32-wasip2 target — cargo emits the component itself
-├── .wash/config.yaml    # wash v2 / Cosmonic Desktop project config
-├── Cargo.toml           # wit-bindgen 0.60 with async-spawn
-├── deploy/workload.yaml # published-image manifest
-├── docs/tuning.md       # measured operational envelope
-├── scripts/e2e.sh       # drive one message through the deployment, assert the effect
-├── skills/kv-store/SKILL.md
-├── src/lib.rs           # START HERE
-├── wit-vendor/          # vendored wasmcloud:nats@0.1.0 — the wkg.toml override target
-├── wit/world.wit        # the world this component targets (+ deps/, written from wit-vendor)
-├── wkg.toml, wkg.lock   # override → wit-vendor (outside wit/deps, which wash build rewrites)
-└── workload.yaml        # local-dev manifest
-```
+As a database. Listings are filtered and capped host-side and there are no
+queries - only key lookups and prefix watches. And not for high write rates
+or large blobs: each put is a stream publish with an ack (~1 put/s at 5 MB).
 
 ## Build
 
 ```bash
-wash build      # or: cargo build --release --target wasm32-wasip2 — the same component
+cargo build --release --target wasm32-wasip1     # or: wash build
+# verify the export is really there:
+wasm-tools component wit target/wasm32-wasip1/release/kv_store.wasm | grep 'export wasmcloud:nats/'
 ```
-
-Either way the artifact is `target/wasm32-wasip2/release/kv_store.wasm`. `wash build` also
-re-materialises `wit/deps/` from `wit-vendor/` through `wkg.toml` (the
-override lives outside `wit/deps` on purpose: wkg empties that directory
-on every build). Cosmonic Desktop's project mode runs the same
-`cargo build` from `.wash/config.yaml` and reads the same path.
 
 ## Deploy
 
 ```bash
-# local iteration against Desktop's built-in registry (ingress host oci.localhost;
-# oci.localhost.cosmonic.sh is the one name Windows can resolve)
-wash oci push --insecure oci.localhost:8200/nats-kv-store:0.1.0 target/wasm32-wasip2/release/kv_store.wasm
-
-# apply workload.yaml — there is no kubectl on Cosmonic Desktop. Pick one:
-#   app     Workloads → New workload → paste workload.yaml
-#   agent   the cosmonic MCP server's `cosmonic_apply_workload` tool, manifest as its argument
-#   shell   POST the manifest as JSON to the daemon's unix socket (`cosmonicd paths` prints it;
-#           macOS: ~/Library/Application Support/Cosmonic/cosmonicd.sock,
-#           Linux: $XDG_RUNTIME_DIR/cosmonic/cosmonicd.sock)
-SOCK="$HOME/Library/Application Support/Cosmonic/cosmonicd.sock"
-yq -o=json . workload.yaml | curl -sS --unix-socket "$SOCK" -X POST \
-  -H 'content-type: application/json' --data-binary @- http://localhost/v1/workloads
-curl -sS --unix-socket "$SOCK" http://localhost/v1/workloads | jq '.[] | .status.state'   # → running
-
-# then drive it (a local `nats` CLI against nats://127.0.0.1:4222; see the script header)
-./scripts/e2e.sh
+# Push the component wherever your cluster pulls from (Cosmonic Desktop's
+# built-in registry shown), point `image:` in deploy/workload.yaml at it,
+# and apply.
+wash oci push --insecure oci-registry.localhost:8200/nats-kv-store:0.1.0 target/wasm32-wasip1/release/kv_store.wasm
+kubectl apply -f deploy/workload.yaml
+./scripts/e2e.sh        # drive one message, assert the effect
 ```
 
-## Grants
+Rename every `nats-kv-store` occurrence when you fork, and narrow the grants -
+they ship deny-by-default and intentionally minimal.
 
-The manifest is deny-by-default and lists only what this pattern needs.
-`subject-allow` covers publish and request, `stream-allow` covers stream reads,
-`bucket-allow` covers KV — permission to publish to a subject does **not**
-carry permission to read a stream capturing it.
+## Deploying on Cosmonic Control
+
+On Cosmonic Control the `wasmcloud-nats` host plugin's `workloadConfig`
+defaults to `deny`: grants live in the hostgroup's values —
+`hostPlugins: [{id: wasmcloud-nats, config: {subject-allow, stream-allow,
+bucket-allow}}]` — and a workload manifest that carries its own grants is
+refused at deploy. Before applying this template's manifest to Control, strip
+`subject-allow` / `stream-allow` / `bucket-allow` from `deploy/workload.yaml`
+(keep only the subscriptions and behaviour keys), and wrap it as a
+`WorkloadDeployment` (`kind: WorkloadDeployment`, spec under
+`.spec.template.spec` — replicas are the operator's). On Cosmonic Desktop the
+manifest works as shipped.
+
+## Performance and tuning
+
+- **Use `update` with the expected revision (CAS) when writers can race.**
+  A mismatch returns the current revision so you can retry without
+  re-reading.
+- **`keys` takes a subject-pattern filter** (`>` for every key) and pages are
+  capped host-side at 1,000; the page's `truncated` flag distinguishes a
+  partial page from a complete one - narrow the filter to walk a large
+  bucket.
+- **`request-timeout-ms: "10000"` is the knob for values ≥1 MB.** The
+  failure mode at size is a publish-ack timeout, not memory; with it, 1 MB
+  and 2 MB values measured clean. At 5 MB plan for ~1 put/s and retry the
+  occasional ack timeout.
+- **`get` on an absent, deleted, or purged key returns a typed status** -
+  design the handler for all three, not just present-with-value.
+- **History depth is a bucket-creation property**, not a client setting;
+  depth 1 means no history at all. Pair with `kv-watcher` to react to
+  changes instead of polling.
+
+Measured envelope (details in [docs/tuning.md](docs/tuning.md); cross-pattern
+guidance and the full error catalogue in
+[`nats-tuning.md`](../../nats-tuning.md)):
+
+| operation | result |
+|---|---|
+| put / get / CAS update / delete | CLEAN, ~333 op/s serial |
+| 1 MB values + `request-timeout-ms: "10000"` | CLEAN 500/500 |
+| 5 MB values, same | ~1 op/s; retry the occasional ack timeout |
+
+## Layout
+
+```
+├── Cargo.toml               # wit-bindgen 0.60, async features
+├── .cargo/config.toml       # wasm32-wasip1 target
+├── wkg.toml                 # resolves wasmcloud:nats from the vendored WIT
+├── src/lib.rs               # START HERE
+├── .wash/config.yaml        # wash v2 / Cosmonic Desktop project config
+├── .github/workflows/ci.yml # build + verify the async export is really there
+├── README.md
+├── LICENSE
+├── deploy/workload.yaml     # the manifest - set `image:`, then kubectl apply
+├── docs/tuning.md           # measured operational envelope
+├── scripts/e2e.sh           # drive one message, assert the effect
+├── skills/kv-store/SKILL.md
+└── wit/world.wit            # + deps/
+```
+
+## All tuning options
+
+Every knob this template understands, in one commented manifest. Uncommented
+values are the shipped defaults; commented keys show the driver default and
+when to reach for them.
+
+```yaml
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "nats-kv-store"
+  namespace: default
+spec:
+  # Each replica gets its own subscription and its own buffer. Replicas do
+  # not add buffer -- and without a queue group, each receives its own full
+  # copy of the traffic.
+  #replicas: 1
+  hostInterfaces:
+    - namespace: wasmcloud
+      package: nats
+      version: "0.1.0"
+      interfaces: [types, kv, jetstream, core-handler]
+      config:
+        # ---- Grants: operator-declared ceilings, deny-by-default. --------
+        # A workload may ask for a subset of what the hostgroup's
+        # wasmcloud-nats plugin entry declares, never more. subject-allow
+        # covers publish/request, stream-allow covers stream reads,
+        # bucket-allow covers KV -- and they are separate: publishing to a
+        # subject does not grant reading the stream that captures it.
+        subject-allow: kv.run,done.kv-worker.>
+        bucket-allow: appkv
+        # ---- Trigger: subject[:queue], comma separated. ------------------
+        core-subscriptions: kv.run
+        # Concurrent deliveries in flight (driver default 64). Each in-flight
+        # delivery beyond the warm pool occupies its own fresh instance --
+        # bound it on a small host (8 measured safe at 512Mi).
+        #max-in-flight: "8"
+        # The measured fix for KV publish-ack timeouts at values >=1 MB.
+        #request-timeout-ms: "10000"
+        # Per-subscription buffer, in MESSAGES. Size it to the BURST, not the
+        # rate: the protection it buys is capacity/(arrival-drain) seconds.
+        # The shed warning prints `would_have_absorbed=` -- the capacity that
+        # would have worked for that window.
+        #subscription-capacity: "1024"
+        # Per-subscription buffer, in BYTES (default 32 MiB). At >=1 MB
+        # payloads this binds first: it admits capacity/payload messages.
+        #subscription-capacity-bytes: "33554432"
+  components:
+    - name: kv-store
+      image: ghcr.io/your-org/nats-kv-store:0.1.0
+      # Warm instances reused across deliveries. 1 keeps a single instance
+      # warm; raise it for latency-sensitive or high-rate small-payload work,
+      # and leave it low for payloads >=1 MB (each warm instance retains its
+      # heap; memory cost ~ poolSize x payload). Reuse is a state contract:
+      # package-level state survives across deliveries (treat it as a cache;
+      # the shipped handler is reuse-safe). Unset or 0 declares state
+      # ephemeral: a fresh instance per delivery, guaranteed.
+      poolSize: 1
+      # Calls one warm instance may have in flight at once. Default 1 = a
+      # guest sees one call at a time. Raise only for a guest that yields
+      # while it waits.
+      #maxConcurrency: 1
+      # Calls one instance serves before it is retired and replaced.
+      # 0 = unlimited. Set a bound if package-level state should decay.
+      maxInvocations: 0
+      localResources:
+        # This component's own outbound-HTTP allowlist (wasi:http). Empty
+        # denies every outbound host; NATS traffic flows through the host
+        # binding, not HTTP.
+        allowedHosts: []
+```

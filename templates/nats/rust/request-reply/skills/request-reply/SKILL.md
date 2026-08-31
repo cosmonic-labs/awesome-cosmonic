@@ -1,19 +1,17 @@
 ---
 name: request-reply-rust
-description: Build, configure, and deploy a Request / Reply component on Cosmonic Desktop against the wasmcloud:nats@0.1.0 driver, in Rust. Use when the user wants to answer NATS requests — an RPC endpoint that scales to zero between calls.
+description: Build, configure, and deploy a Request / Reply component on Cosmonic Desktop against the wasmcloud:nats@0.1.0 driver, in Rust. Use when the user wants to answer NATS requests - an RPC endpoint that scales to zero between calls.
 ---
 
 # Request / Reply (Rust)
-
-✅ **RECOMMENDED** — The most robust pattern measured. CLEAN at every replica count (1, 2, 3) and every load tested, including 5,000-request runs. Core queue groups distribute correctly, so it scales horizontally without duplication.
 
 ## When this pattern is the right answer
 
 You want a service other components or clients call and wait on. The host delivers the request, you publish the answer to the requester's reply subject. Per-request instantiation means it costs nothing when idle.
 
-**When it is not:** Do not use it for work longer than the caller's timeout, and do not use it for fire-and-forget notifications — a reply nobody awaits is wasted work.
+**When it is not:** Do not use it for work longer than the caller's timeout, and do not use it for fire-and-forget notifications - a reply nobody awaits is wasted work.
 
-## Phase 1 — dial it in before writing code
+## Phase 1 - dial it in before writing code
 
 Every one of these changes configuration, not code. Ask them first.
 
@@ -22,7 +20,7 @@ Every one of these changes configuration, not code. Ask them first.
 3. **How many concurrent requests at peak?** This sets `max-in-flight`. Unlike the subscriber patterns, admission is the real limit here because each request occupies an instance until it replies.
 4. **Do you need more than one replica?** Add a queue group so requests round-robin. Verified CLEAN at 3 replicas.
 
-## Phase 2 — non-negotiable guardrails
+## Phase 2 - non-negotiable guardrails
 
 1. **Grants are deny-by-default and separate.** `subject-allow` covers publish
    and request, `stream-allow` covers stream reads, `bucket-allow` covers KV.
@@ -32,27 +30,24 @@ Every one of these changes configuration, not code. Ask them first.
    `capacity / (arrival - drain)` seconds. Sizing it from throughput alone is
    how people lose data.
 3. **The component must export the async P3 interface.** Verify with
-   `wasm-tools component wit <component>.wasm` — a component that builds but
+   `wasm-tools component wit <component>.wasm` - a component that builds but
    exports nothing is a real and common failure mode.
 4. **wit-bindgen must be 0.60+ with `async-spawn`.** Every function in
    `wasmcloud:nats@0.1.0` is an `async func`; a sync-signature function cannot
    be lifted with the async canonical ABI.
 
-## Phase 3 — build, deploy, verify
+## Phase 3 - build, deploy, verify
 
 ```bash
-wash build          # or: cargo build --release --target wasm32-wasip2 — the same component
-wash oci push --insecure oci.localhost:8200/nats-request-reply:0.1.0 target/wasm32-wasip2/release/request_reply.wasm
-# Apply workload.yaml — there is no kubectl on Cosmonic Desktop. From an agent,
-# call the cosmonic MCP tool `cosmonic_apply_workload` with the manifest; from
-# a shell, POST it as JSON to the daemon's unix socket (README.md → Deploy has
-# the recipe); in the app, Workloads → New workload → paste it.
-./scripts/e2e.sh    # local `nats` CLI against nats://127.0.0.1:4222 (NATS= overrides)
+wash build
+wash oci push --insecure oci-registry.localhost:8200/nats-request-reply:0.1.0 target/wasm32-wasip1/release/request_reply.wasm
+kubectl apply -f deploy/workload.yaml
+./scripts/e2e.sh
 ```
 
 ## Pitfalls (read before writing code)
 
-- **A handler that always fails will retry forever** on JetStream — the
+- **A handler that always fails will retry forever** on JetStream - the
   redelivery ladder cannot tell "transient" from "always broken". Bound it with
   `max-deliver`.
 - **Adding replicas does not increase buffer capacity.** Each replica gets its
@@ -62,7 +57,7 @@ wash oci push --insecure oci.localhost:8200/nats-request-reply:0.1.0 target/wasm
 - **A drop is reported as `subscription=N` with no count and no subject.** You
   cannot attribute loss from the log alone; instrument your own receipts.
 - **Changing a config value rebinds the workload**, and the previous consumer
-  can keep delivering for up to 120s — expect duplicates around a config change.
+  can keep delivering for up to 120s - expect duplicates around a config change.
 
 ## Reference
 

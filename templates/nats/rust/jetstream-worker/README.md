@@ -1,108 +1,176 @@
-# JetStream Pull Worker (rust)
+# JetStream Pull Worker (Rust)
 
-🚧 **NEEDS WORK** — The pattern is sound but ships next to a live footgun: plain `fetch(batch)` materializes batch x message_size in host memory and OOM-killed the host at 5 MB messages in BOTH languages, taking every co-tenant workload down with it (F7).
-
-Guest-paced batch processing — you decide when and how much to fetch.
+Guest-paced batch processing - you decide when and how much to fetch.
 
 ## When to use this
 
-You want to control the pace and batch size rather than have the host push at you. Good for expensive per-batch work, rate-limited downstreams, and anything that benefits from amortizing setup across a batch.
+You want to control the pace and batch size rather than have the host push at
+you: expensive per-batch work, rate-limited downstreams, anything that
+amortizes setup across a batch. The safest pattern at large payloads - the
+worker sets the pace.
 
 ## When not to
 
-Do not use plain `fetch(batch)` on a stream with large messages. See the warning below — it is the single most dangerous call in this interface.
-
-## Questions to dial it in
-
-Answer these before you deploy — each one changes a config value, not code.
-
-1. **How large can one message be?**
-   MULTIPLY IT BY YOUR BATCH SIZE. `fetch(100)` on a stream of 5 MB messages asks the host for 500 MB in one call. Use `fetch-with-limits` and set a byte bound.
-
-2. **What is a useful batch size for your work?**
-   Batches amortize setup. Too large and you risk the memory above; too small and you lose the advantage over a push consumer.
-
-3. **What should the worker do when the stream is empty?**
-   `fetch` returns a stop reason — drained, batch-filled, or byte-limit. Decide whether to exit, back off, or keep polling.
-
-4. **Who triggers a run?**
-   This template is trigger-driven: a core message starts a fetch loop. Alternatives are a timer (NOT available to Go guests — see the Go template's limitation note) or a long-running loop.
-
-## Measured operational envelope
-
-Every number below came from the `nats-2.8-testing` campaign (186 cells against
-the `wasmcloud:nats@0.1.0` driver on a 512Mi host). Full detail in
-[docs/tuning.md](docs/tuning.md).
-
-| load | result |
-|---|---|
-| 1 MB messages, `fetch(100)` | CLEAN 100/100 |
-| **5 MB messages, `fetch(100)`** | **CRASH — host OOMKilled, 0/50, both languages** |
-| 25 MB messages, `fetch(100)` | CRASH (known) |
-
-`fetch(100)` on 5 MB messages asks the host to materialize **500 MB** in one
-call. It killed the host — and every co-tenant workload's connection with it —
-identically in Rust and Go, which is what proves it is a driver-side issue and
-not a guest one. Use `fetch-with-limits` with a byte bound.
-
-## Known driver defects that affect this pattern
-
-- **G21** — Plain `fetch(batch)` on jumbo messages OOM-kills the host in both languages.
-
-## Layout
-
-```
-├── .cargo/config.toml   # wasm32-wasip2 target — cargo emits the component itself
-├── .wash/config.yaml    # wash v2 / Cosmonic Desktop project config
-├── Cargo.toml           # wit-bindgen 0.60 with async-spawn
-├── deploy/workload.yaml # published-image manifest
-├── docs/tuning.md       # measured operational envelope
-├── scripts/e2e.sh       # drive one message through the deployment, assert the effect
-├── skills/jetstream-worker/SKILL.md
-├── src/lib.rs           # START HERE
-├── wit-vendor/          # vendored wasmcloud:nats@0.1.0 — the wkg.toml override target
-├── wit/world.wit        # the world this component targets (+ deps/, written from wit-vendor)
-├── wkg.toml, wkg.lock   # override → wit-vendor (outside wit/deps, which wash build rewrites)
-└── workload.yaml        # local-dev manifest
-```
+For latency-critical paths: the fetch round-trip adds delay a push consumer
+does not pay.
 
 ## Build
 
 ```bash
-wash build      # or: cargo build --release --target wasm32-wasip2 — the same component
+cargo build --release --target wasm32-wasip1     # or: wash build
+# verify the export is really there:
+wasm-tools component wit target/wasm32-wasip1/release/jetstream_worker.wasm | grep 'export wasmcloud:nats/'
 ```
-
-Either way the artifact is `target/wasm32-wasip2/release/jetstream_worker.wasm`. `wash build` also
-re-materialises `wit/deps/` from `wit-vendor/` through `wkg.toml` (the
-override lives outside `wit/deps` on purpose: wkg empties that directory
-on every build). Cosmonic Desktop's project mode runs the same
-`cargo build` from `.wash/config.yaml` and reads the same path.
 
 ## Deploy
 
 ```bash
-# local iteration against Desktop's built-in registry (ingress host oci.localhost;
-# oci.localhost.cosmonic.sh is the one name Windows can resolve)
-wash oci push --insecure oci.localhost:8200/nats-jetstream-worker:0.1.0 target/wasm32-wasip2/release/jetstream_worker.wasm
-
-# apply workload.yaml — there is no kubectl on Cosmonic Desktop. Pick one:
-#   app     Workloads → New workload → paste workload.yaml
-#   agent   the cosmonic MCP server's `cosmonic_apply_workload` tool, manifest as its argument
-#   shell   POST the manifest as JSON to the daemon's unix socket (`cosmonicd paths` prints it;
-#           macOS: ~/Library/Application Support/Cosmonic/cosmonicd.sock,
-#           Linux: $XDG_RUNTIME_DIR/cosmonic/cosmonicd.sock)
-SOCK="$HOME/Library/Application Support/Cosmonic/cosmonicd.sock"
-yq -o=json . workload.yaml | curl -sS --unix-socket "$SOCK" -X POST \
-  -H 'content-type: application/json' --data-binary @- http://localhost/v1/workloads
-curl -sS --unix-socket "$SOCK" http://localhost/v1/workloads | jq '.[] | .status.state'   # → running
-
-# then drive it (a local `nats` CLI against nats://127.0.0.1:4222; see the script header)
-./scripts/e2e.sh
+# Push the component wherever your cluster pulls from (Cosmonic Desktop's
+# built-in registry shown), point `image:` in deploy/workload.yaml at it,
+# and apply.
+wash oci push --insecure oci-registry.localhost:8200/nats-jetstream-worker:0.1.0 target/wasm32-wasip1/release/jetstream_worker.wasm
+kubectl apply -f deploy/workload.yaml
+./scripts/e2e.sh        # drive one message, assert the effect
 ```
 
-## Grants
+Rename every `nats-jetstream-worker` occurrence when you fork, and narrow the grants -
+they ship deny-by-default and intentionally minimal.
 
-The manifest is deny-by-default and lists only what this pattern needs.
-`subject-allow` covers publish and request, `stream-allow` covers stream reads,
-`bucket-allow` covers KV — permission to publish to a subject does **not**
-carry permission to read a stream capturing it.
+## Deploying on Cosmonic Control
+
+On Cosmonic Control the `wasmcloud-nats` host plugin's `workloadConfig`
+defaults to `deny`: grants live in the hostgroup's values —
+`hostPlugins: [{id: wasmcloud-nats, config: {subject-allow, stream-allow,
+bucket-allow}}]` — and a workload manifest that carries its own grants is
+refused at deploy. Before applying this template's manifest to Control, strip
+`subject-allow` / `stream-allow` / `bucket-allow` from `deploy/workload.yaml`
+(keep only the subscriptions and behaviour keys), and wrap it as a
+`WorkloadDeployment` (`kind: WorkloadDeployment`, spec under
+`.spec.template.spec` — replicas are the operator's). On Cosmonic Desktop the
+manifest works as shipped.
+
+## Performance and tuning
+
+- **`fetch(batch)` materializes `batch × message size` in host memory.**
+  Size the batch to the payload: the default is fine at kilobytes, use
+  **batch 4 at 1-2 MB and 1-5 at 5 MB** - with that one change, pull ran
+  clean at every size measured. Use `fetch-with-limits` to add a byte bound.
+- **Close fetched batches when done** - settling the messages does not
+  release the batch handle.
+- **A refused fetch has two causes with different fixes.** Over the
+  consumer's provisioned limits: `info` reports the limits to size against.
+  Or already-fetched messages hold the binding's whole memory budget: drop
+  the `message-handle`s from earlier batches - acking one does not release
+  it. Either way, retrying unchanged fails the same way.
+- **Decide the empty-stream behaviour up front.** `fetch` returns a stop
+  reason - drained, batch-filled, byte-limit - so the loop can exit, back
+  off, or keep polling deliberately.
+- **The trigger is a core delivery** (one per run), so the delivery-side
+  knobs matter less here; the memory story is the fetch itself.
+
+Measured envelope (details in [docs/tuning.md](docs/tuning.md); cross-pattern
+guidance and the full error catalogue in
+[`nats-tuning.md`](../../nats-tuning.md)):
+
+| load | result |
+|---|---|
+| 1,000 msgs @ 16 KiB | CLEAN 1000/1000 @ 1,000 msg/s |
+| 500 × 1-5 MB, batch 4 | CLEAN 500/500 at every size |
+| 5 MB messages, `fetch(100)` | 500 MB in one call - size the batch instead |
+
+## Layout
+
+```
+├── Cargo.toml               # wit-bindgen 0.60, async features
+├── .cargo/config.toml       # wasm32-wasip1 target
+├── wkg.toml                 # resolves wasmcloud:nats from the vendored WIT
+├── src/lib.rs               # START HERE
+├── .wash/config.yaml        # wash v2 / Cosmonic Desktop project config
+├── .github/workflows/ci.yml # build + verify the async export is really there
+├── README.md
+├── LICENSE
+├── deploy/workload.yaml     # the manifest - set `image:`, then kubectl apply
+├── docs/tuning.md           # measured operational envelope
+├── scripts/e2e.sh           # drive one message, assert the effect
+├── skills/jetstream-worker/SKILL.md
+└── wit/world.wit            # + deps/
+```
+
+## All tuning options
+
+Every knob this template understands, in one commented manifest. Uncommented
+values are the shipped defaults; commented keys show the driver default and
+when to reach for them.
+
+```yaml
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "nats-jetstream-worker"
+  namespace: default
+spec:
+  # Each replica gets its own subscription and its own buffer. Replicas do
+  # not add buffer -- and without a queue group, each receives its own full
+  # copy of the traffic.
+  #replicas: 1
+  hostInterfaces:
+    - namespace: wasmcloud
+      package: nats
+      version: "0.1.0"
+      interfaces: [types, jetstream, core-handler]
+      config:
+        # ---- Grants: operator-declared ceilings, deny-by-default. --------
+        # A workload may ask for a subset of what the hostgroup's
+        # wasmcloud-nats plugin entry declares, never more. subject-allow
+        # covers publish/request, stream-allow covers stream reads,
+        # bucket-allow covers KV -- and they are separate: publishing to a
+        # subject does not grant reading the stream that captures it.
+        subject-allow: pull.run,done.js-pull.>
+        stream-allow: LOAD
+        # ---- Trigger: subject[:queue], comma separated. One core message
+        # starts a fetch loop.
+        core-subscriptions: pull.run
+        # Unsettled pull deliveries the server allows; x payload = bytes
+        # resident.
+        #max-ack-pending: "16"
+        # Redelivery bound for a message that always fails.
+        #max-deliver: "5"
+        # Concurrent deliveries in flight (driver default 64). Each in-flight
+        # delivery beyond the warm pool occupies its own fresh instance --
+        # bound it on a small host (8 measured safe at 512Mi).
+        #max-in-flight: "8"
+        # Per-subscription buffer, in MESSAGES. Size it to the BURST, not the
+        # rate: the protection it buys is capacity/(arrival-drain) seconds.
+        # The shed warning prints `would_have_absorbed=` -- the capacity that
+        # would have worked for that window.
+        #subscription-capacity: "1024"
+        # Per-subscription buffer, in BYTES (default 32 MiB). At >=1 MB
+        # payloads this binds first: it admits capacity/payload messages.
+        #subscription-capacity-bytes: "33554432"
+        # Timeout for the driver's own NATS requests (publish acks above
+        # all). The measured fix for ack timeouts on values/messages >=1 MB.
+        #request-timeout-ms: "10000"
+  components:
+    - name: jetstream-worker
+      image: ghcr.io/your-org/nats-jetstream-worker:0.1.0
+      # Warm instances reused across deliveries. 1 keeps a single instance
+      # warm; raise it for latency-sensitive or high-rate small-payload work,
+      # and leave it low for payloads >=1 MB (each warm instance retains its
+      # heap; memory cost ~ poolSize x payload). Reuse is a state contract:
+      # package-level state survives across deliveries (treat it as a cache;
+      # the shipped handler is reuse-safe). Unset or 0 declares state
+      # ephemeral: a fresh instance per delivery, guaranteed.
+      poolSize: 1
+      # Calls one warm instance may have in flight at once. Default 1 = a
+      # guest sees one call at a time. Raise only for a guest that yields
+      # while it waits.
+      #maxConcurrency: 1
+      # Calls one instance serves before it is retired and replaced.
+      # 0 = unlimited. Set a bound if package-level state should decay.
+      maxInvocations: 0
+      localResources:
+        # This component's own outbound-HTTP allowlist (wasi:http). Empty
+        # denies every outbound host; NATS traffic flows through the host
+        # binding, not HTTP.
+        allowedHosts: []
+```

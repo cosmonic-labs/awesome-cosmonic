@@ -9,6 +9,14 @@ package wasmcloud:nats@0.1.0;
 /// sync-signature function cannot be lifted with the async canonical ABI, so
 /// one package cannot serve both, and P3 is where this interface is going.
 interface types {
+  /// A NATS message. Applies to both core and JetStream messages.
+  record nats-message {
+    subject: string,
+    body: list<u8>,
+    reply-to: option<string>,
+    headers: option<list<header-entry>>,
+  }
+
   /// A single header key-value pair.
   ///
   /// Names must be printable ASCII without `:`; values may not contain CR or
@@ -17,14 +25,6 @@ interface types {
   record header-entry {
     name: string,
     value: string,
-  }
-
-  /// A NATS message. Applies to both core and JetStream messages.
-  record nats-message {
-    subject: string,
-    body: list<u8>,
-    reply-to: option<string>,
-    headers: option<list<header-entry>>,
   }
 
   /// Why the host refused a name.
@@ -262,6 +262,12 @@ interface jetstream {
     byte-limit,
   }
 
+  /// A fetched batch, and why it ended.
+  record fetched-batch {
+    messages: list<message-handle>,
+    stop: fetch-stop,
+  }
+
   /// Handle to a single JetStream-delivered message.
   ///
   /// Settling is one-shot, but only on success: an `ack`, `nak`, or `term`
@@ -279,6 +285,7 @@ interface jetstream {
     sequence: func() -> u64;
     /// Number of times this message has been delivered (1 on first delivery).
     delivery-count: func() -> u32;
+
     /// Acknowledge successful processing. Fire-and-forget: it resolves once
     /// the ack is written, not once the server has recorded it.
     ack: async func() -> result<_, nats-error>;
@@ -293,12 +300,6 @@ interface jetstream {
     in-progress: async func() -> result<_, nats-error>;
     /// Reject the message permanently — do not redeliver.
     term: async func() -> result<_, nats-error>;
-  }
-
-  /// A fetched batch, and why it ended.
-  record fetched-batch {
-    messages: list<message-handle>,
-    stop: fetch-stop,
   }
 
   /// Pull-based consumer for batched, backpressure-friendly reads. The
@@ -434,6 +435,7 @@ interface kv {
     delete: async func(key: string) -> result<_, nats-error>;
     /// Purge a key (removes history as well).
     purge: async func(key: string) -> result<_, nats-error>;
+
     /// Lists keys in the bucket matching `filter` (`>` for all), up to a
     /// host-imposed cap of 1000.
     ///
@@ -445,6 +447,7 @@ interface kv {
     /// All historical entries for a key (put/update/delete/purge ops).
     /// `key-not-found` when the key has no history at all.
     history: async func(key: string) -> result<list<entry>, nats-error>;
+
     /// Bucket state snapshot, read fresh from the server.
     status: async func() -> result<bucket-status, nats-error>;
   }
@@ -497,42 +500,38 @@ world imports {
   import jetstream;
   import kv;
 }
+
 /// A workload that publishes, or does request/reply. No subscriptions.
 world publisher {
-  import types;
-  import core;
-  import jetstream;
-  import kv;
+  include imports;
 }
+
 /// A workload the host pushes core NATS messages into. The manifest names the
 /// subjects under `core-subscriptions`.
 world subscriber {
-  import types;
-  import core;
-  import jetstream;
-  import kv;
-
+  include imports;
   export core-handler;
 }
+
 /// A workload the host pushes JetStream deliveries into. Per-request: it holds
 /// no consumer and no stream, so it scales down between bursts. The manifest
 /// names the stream and filter under `jetstream-subscriptions`; who
 /// acknowledges is the binding's `ack-mode`.
 world js-processor {
-  import types;
-  import core;
-  import jetstream;
-  import kv;
-
+  include imports;
   export jetstream-handler;
 }
+
 /// A workload the host pushes KV change events into. The manifest names the
 /// bucket and key filter under `kv-watches`.
 world kv-watcher {
-  import types;
-  import core;
-  import jetstream;
-  import kv;
-
+  include imports;
   export kv-handler;
 }
+
+// These worlds describe the NATS surface alone, which is what the host binds.
+// A component also needs the WASI platform surface its language runtime pulls
+// in, but which revision is the application's business, not this interface's:
+// a `wasm32-wasip2`/`wasip3` target supplies it (examples/nats-jetstream-replay
+// includes nothing else), while a `wasm32-wasip1` build names in its own world
+// whatever it awaits — `wasi:clocks/monotonic-clock`, and so on.

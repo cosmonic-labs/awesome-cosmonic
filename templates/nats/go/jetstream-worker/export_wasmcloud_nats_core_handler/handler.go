@@ -65,10 +65,8 @@ func HandleMessage(msg wasmcloud_nats_types.NatsMessage) witTypes.Result[witType
 			fmt.Sprintf("open-pull-consumer failed: %s", detail))
 	}
 	puller := opened.Ok()
-	// The consumer handle lives exactly as long as this invocation — the Go
-	// bindings only drop host resources from a GC cleanup, which never runs in
-	// time inside one handler, so release it explicitly (Rust drops `puller`
-	// when it goes out of scope).
+	// Release the consumer resource when the handler ends; without it every
+	// trigger leaks a host-side pull-consumer handle.
 	defer puller.Drop()
 
 	var total uint64
@@ -91,15 +89,10 @@ func HandleMessage(msg wasmcloud_nats_types.NatsMessage) witTypes.Result[witType
 		total += got
 		for _, handle := range batchResult.Messages {
 			r := handle.Ack()
-			// Release the message-handle NOW, whatever the ack said. Acking does
-			// not release it, and the host charges every handle this instance
-			// still holds against the binding's `subscription-capacity-bytes`
-			// (32 MiB by default). Without this Drop a 10,000 × 16 KiB run
-			// stalled at 958 delivered, every later fetch refused with
-			// LimitExceeded("… bound by what is left of the binding's
-			// subscription-capacity-bytes after the handles it still holds").
-			// Rust gets the drop for free when `batch_result` goes out of scope
-			// each round; Go's generated bindings drop only on GC.
+			// Acking does not release the handle: fetched bytes stay pinned
+			// against the binding's subscription-capacity-bytes until the
+			// message-handle is dropped (see the nats-error limit-exceeded docs).
+			// Un-dropped handles exhaust the budget and fetch silently stalls.
 			handle.Drop()
 			if r.IsErr() {
 				return witTypes.Err[witTypes.Unit, string](

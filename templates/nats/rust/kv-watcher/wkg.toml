@@ -1,10 +1,2 @@
-# Resolve wasmcloud:nats@0.1.0 from the vendored copy, never from a registry.
-#
-# The override MUST live outside wit/deps: `wash build` (wkg) empties wit/deps
-# and re-materialises it from this path on every build. An override that points
-# INTO wit/deps makes wkg delete the package and then fail to read it (ENOENT),
-# leaving the tree broken. wit/deps/wasmcloud-nats-0.1.0 is wkg's own rendering
-# of wit-vendor — committed so that a plain `cargo build` (no wash) works
-# too — and wkg.lock stays empty because nothing is fetched.
 [overrides]
-"wasmcloud:nats" = { path = "wit-vendor/wasmcloud-nats-0.1.0" }
+"wasmcloud:nats" = { path = "wit/deps/wasmcloud-nats-0.1.0" }
