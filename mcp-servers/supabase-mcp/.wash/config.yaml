@@ -1,0 +1,24 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/supabase_mcp.wasm
+# Mirrors deploy/workload.yaml components[].localResources; carried over into
+# the durable Workload draft when you promote this project.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "supabase-mcp.localhost"
+      SUPABASE_READ_ONLY: "true"
+      SUPABASE_PROJECT_REF: ""
+      SUPABASE_MAX_ROWS: "200"
+    # Secret references are plain names here (the daemon's project config
+    # parser expects strings, unlike the Workload manifest's {name:} form).
+    secretFrom:
+      - supabase-mcp-access-token
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). Every
+  # tool except get_project_url dials the Supabase Management API.
+  allowedHosts:
+    - "api.supabase.com"

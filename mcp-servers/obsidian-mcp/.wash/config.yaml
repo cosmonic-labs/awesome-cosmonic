@@ -1,0 +1,29 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/obsidian_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project. Keep in step
+# with deploy/workload.yaml.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "obsidian-mcp.localhost"
+      OBSIDIAN_BASE_URL: "http://host.wasmcloud.internal:27123"
+      OBSIDIAN_READ_ONLY: "false"
+      OBSIDIAN_ENABLE_COMMANDS: "false"
+      OBSIDIAN_MAX_CONTENT_CHARS: "100000"
+    # Secret refs are plain names here (Desktop's project config parser).
+    secretFrom:
+      - obsidian-mcp-api-key
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). Exactly
+  # the host the tools dial: Obsidian's plain-HTTP listener on this machine.
+  allowedHosts:
+    - "host.wasmcloud.internal:27123"
+  # Loopback grant for that port (plus Desktop Settings -> Security ->
+  # allow host loopback).
+  allowedHostLoopbackPorts:
+    - "27123"

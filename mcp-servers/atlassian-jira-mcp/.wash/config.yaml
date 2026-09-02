@@ -1,0 +1,27 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/atlassian_jira_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project. Keep it in step
+# with deploy/workload.yaml (the manifest of record).
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "atlassian-jira-mcp.localhost"
+      ATLASSIAN_SITE: ""
+      ATLASSIAN_EMAIL: ""
+      ATLASSIAN_CLOUD_ID: ""
+      JIRA_READ_ONLY: "false"
+      JIRA_PROJECTS_FILTER: ""
+    # Secret refs by name (the ref itself carries the env var).
+    secretFrom:
+      - atlassian-api-token
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). List every
+  # host your tools dial out to — same entries as deploy/workload.yaml.
+  allowedHosts:
+    - "https://*.atlassian.net"
+    - "https://api.atlassian.com"

@@ -1,0 +1,100 @@
+[package]
+name = "official-filesystem-mcp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Filesystem MCP server: a Rust/Wasm port of the official modelcontextprotocol/servers filesystem reference server (read, write, edit, search, tree, move) over a mounted host folder"
+license = "Apache-2.0"
+repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Official Model Context Protocol SDK. The streamable-http-server transport is
+# pure `http`/`http-body` types (no hyper/axum), so it compiles to wasm32-wasip2.
+rmcp = { version = "3.1.1", default-features = false, features = [
+    "server",
+    "macros",
+    "schemars",
+    "transport-streamable-http-server",
+] }
+
+# WASI 0.3 bindings: exports the `wasi:http@0.3.0` service world and bridges
+# to hyperium `http` types via `http_compat`.
+wasip3 = { version = "0.7.0", features = ["http-compat"] }
+
+# The bridge parks tasks on Rust-only events (the request-lock mutex, the
+# outbound-reply oneshot). Under concurrent same-instance invocation the
+# component-model executor must be able to wake one task from another's action,
+# which requires wit-bindgen's `inter-task-wakeup` feature. wasip3 only forwards
+# `async-spawn`, so enable it here directly (Cargo unifies features across the
+# graph, turning it on for wasip3's generated code too). Version pinned to match
+# wasip3's wit-bindgen. WITHOUT this, any outbound tool traps under concurrency.
+wit-bindgen = { version = "0.57.1", default-features = false, features = [
+    "async",
+    "async-spawn",
+    "inter-task-wakeup",
+] }
+
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+bytes = "1"
+
+# rmcp drives its session/dispatch machinery with tokio primitives; on
+# wasm32-wasip2 we run a single-threaded runtime. Outbound I/O goes through
+# the wasi:http bindings (see src/bridge.rs), not tokio::net — if you add the
+# `net` feature for raw TCP, the `tokio_unstable` cfg in .cargo/config.toml
+# already enables its wasm support.
+tokio = { version = "1.50", features = ["rt", "macros", "sync", "time", "io-util"] }
+
+serde = { version = "1", features = ["derive"] }
+# preserve_order: directory_tree nodes print as {name, type, children} like the
+# reference server instead of alphabetically.
+serde_json = { version = "1", features = ["preserve_order"] }
+schemars = "1"
+thiserror = "2"
+
+# Filesystem port dependencies (all pure Rust, wasm32-wasip2 clean):
+# - similar: git-style unified diff for edit_file (Apache-2.0)
+# - globset: minimatch-like globs for search_files / excludePatterns (MIT/Unlicense)
+# - base64: read_media_file payloads (MIT/Apache-2.0)
+similar = { version = "2.7", default-features = false, features = ["text"] }
+globset = { version = "0.4", default-features = false }
+base64 = "0.22"
+
+# Observability: structured JSON logs on stderr. The wasmCloud / Cosmonic host
+# captures stderr and exports it as OTLP log records when OTEL is enabled.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "env-filter",
+    "json",
+    "registry",
+] }
+
+# Optional native wasi:otel support (`--features wasi-otel`): guest spans are
+# reported to the host via the wasi:otel@0.2.0-rc.2 interfaces and join the
+# host's traces. Requires a host that implements wasi:otel (wasmCloud v2 /
+# Cosmonic Control); plain `wasmtime serve` does not.
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", default-features = false, features = [
+    "trace",
+], optional = true }
+opentelemetry-wasi = { git = "https://github.com/bytecodealliance/opentelemetry-wasi", rev = "2962a286aa66", optional = true }
+tracing-opentelemetry = { version = "0.32", default-features = false, optional = true }
+
+[features]
+default = []
+wasi-otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-wasi",
+    "dep:tracing-opentelemetry",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

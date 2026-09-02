@@ -1,0 +1,118 @@
+# Cosmonic Desktop workload manifest for docker-mcp (the only manifest in
+# this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `promote` returns for a local build.
+# Reach the server at http://docker-mcp.localhost:8200/ (Desktop routes by Host).
+#
+# Before applying:
+#   1. Expose the daemon on plain HTTP 127.0.0.1:2375 (see README / the
+#      skill's references/SETUP.md): `podman system service --time 0
+#      tcp://127.0.0.1:2375`, `dockerd -H fd:// -H tcp://127.0.0.1:2375`, or
+#      Tecnativa/docker-socket-proxy. Verify: curl http://127.0.0.1:2375/_ping
+#   2. Desktop Settings -> Security -> allow host loopback (the third grant;
+#      the first two are allowedHosts + allowedHostLoopbackPorts below).
+#   3. Optional, private registries only: register the
+#      docker-mcp-registry-auth secret and uncomment `secretFrom`.
+# Deploy docs: https://cosmonic.com/docs/desktop
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "docker-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior.
+  labels:
+    app.kubernetes.io/name: "docker-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none — the deployment
+    # boundary (loopback ingress) is the trust boundary. The daemon itself
+    # has no authentication either: the TCP listener plus the loopback
+    # grants ARE the access control, which is why writes are off by default.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools.
+    mcp.ai/domain: "docker"
+    # Primary MCP surface: tools (skills ride on resources, see below).
+    "mcp.ai/function-type": tools
+    # Skills over MCP: SKILL.md + references served under skill:// URIs.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # No sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials the server can use (presence only). The registry credential
+    # is OPTIONAL: public images pull without it. Same list as the
+    # `credentials` block on GET /.
+    desktop.cosmonic.com/credentials: '[{"ref":"docker-mcp-registry-auth","env":"DOCKER_REGISTRY_AUTH","required":false,"description":"Optional registry credential for pull_image of private images: JSON {\"username\":\"..\",\"password\":\"<read-only token>\",\"serveraddress\":\"<registry host>\"}; sent only as X-Registry-Auth on POST /images/create","obtainUrl":"https://app.docker.com/settings/personal-access-tokens","scopes":["pull private images"]}]'
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "docker-mcp.localhost"
+  components:
+    - name: "docker-mcp"
+      # Published image; Desktop pins the tag to a digest at apply time. For a
+      # local build use the digest-pinned oci.localhost:8200 ref promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/docker-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must equal the ingress host above.
+            MCP_ALLOWED_HOSTS: "docker-mcp.localhost"
+            # The daemon's plain-HTTP TCP listener on this machine, reached
+            # through the Desktop loopback sentinel (never localhost /
+            # 127.0.0.1 — that is the workload's own network). unix:// and
+            # ssh:// cannot be dialled from the sandbox; TLS daemons with
+            # client certificates are unsupported.
+            DOCKER_HOST: "http://host.wasmcloud.internal:2375"
+            # API version prefix on every path. v1.44 = Docker 25.0+ and the
+            # minimum Docker 29+ accepts; podman 5.x reports 1.44 and ignores
+            # the prefix. Must satisfy MinAPIVersion <= value <= ApiVersion
+            # from the `version` tool.
+            DOCKER_API_VERSION: "v1.44"
+            # "true" (default, fail-closed) refuses run/start/stop/restart/
+            # kill/remove_container, pull_image and remove_image without
+            # dialling the daemon. Set "false" to enable lifecycle control
+            # (and POST=1 on a docker-socket-proxy if one fronts the daemon).
+            DOCKER_READ_ONLY: "true"
+            # Outbound deadline per exchange. pull_image is synchronous and
+            # Docker cancels the pull when the connection closes, so it is
+            # raised from the template's 30000. run_container wait=true and
+            # stop_container's grace period are bounded by it too.
+            MCP_OUTBOUND_TIMEOUT_MS: "120000"
+            # Template response-body cap (4 MiB). Raise it only if raw
+            # inspect / system_df / pull progress on a daemon with thousands
+            # of images trips "response body exceeded the outbound size limit".
+            # MCP_OUTBOUND_MAX_BYTES: "4194304"
+          # Optional: registry credentials for private-image pulls, injected
+          # as DOCKER_REGISTRY_AUTH by the ref (never inline a value here).
+          # Register first:
+          #   cosmonic_set_secret name=docker-mcp-registry-auth
+          #     uri=keychain://cosmonic/docker-mcp-registry-auth
+          #     env=DOCKER_REGISTRY_AUTH
+          #     value='{"username":"<user>","password":"<token>","serveraddress":"index.docker.io"}'
+          # secretFrom:
+          #   - name: docker-mcp-registry-auth
+        # Outbound allow-list (deny-all when empty). Exactly the host the
+        # code dials:
+        allowedHosts:
+          # The Docker Engine / podman TCP listener on this machine (see
+          # DOCKER_HOST above). Nothing else is ever dialled.
+          - "host.wasmcloud.internal:2375"
+        # Loopback grant for that port (inert until Desktop Settings ->
+        # Security -> "allow host loopback" is switched on).
+        allowedHostLoopbackPorts:
+          - "2375"

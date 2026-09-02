@@ -1,0 +1,28 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/aws_cloud_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project. Keep in step with
+# deploy/workload.yaml.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "aws-cloud-mcp.localhost"
+      AWS_REGION: "us-east-1"
+      AWS_ALLOW_WRITES: "false"
+      AWS_ENDPOINT_URL: ""
+      MCP_OUTBOUND_MAX_BYTES: "4194304"
+    # Secret references are plain names here (the Workload CRD uses {name:}).
+    # Add aws-cloud-mcp-session-token only for temporary credentials.
+    secretFrom:
+      - aws-cloud-mcp-access-key-id
+      - aws-cloud-mcp-secret-access-key
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). List every
+  # host your tools dial out to.
+  allowedHosts:
+    # Every regional AWS endpoint: sts/s3/ec2/lambda/logs.<region>.amazonaws.com.
+    - "*.amazonaws.com"

@@ -1,0 +1,23 @@
+# Default to building a WebAssembly component. The wasm32-wasip2 target emits
+# a component directly (via wasm-component-ld); the wasi:http@0.3.0 handler
+# export makes it a WASI p3 async component.
+[build]
+target = "wasm32-wasip2"
+
+# tokio's wasm32-wasip2 support (including tokio::net) is gated behind the
+# tokio_unstable cfg until stabilized.
+#
+# Linker: this server imports wasmcloud:postgres under component-model
+# `(implements ..)` labels (wit/world.wit). The wasm-component-ld that rustup
+# bundles with the toolchain (0.5.22, wit-component 0.246) cannot encode a
+# labeled import ("invalid leading byte (0x2) for import name"), so the build
+# uses a newer one installed into the project:
+#
+#   cargo install wasm-component-ld --version 0.5.30 --root .tools
+#
+# The path is relative to the project root (cargo resolves config-relative
+# program paths against the parent of this .cargo directory). `.tools/` is
+# gitignored; scripts/e2e.sh and the README repeat the install line.
+[target.wasm32-wasip2]
+rustflags = ["--cfg", "tokio_unstable"]
+linker = ".tools/bin/wasm-component-ld"

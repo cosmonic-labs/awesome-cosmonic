@@ -1,0 +1,23 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/notion_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project. Keep in step with
+# deploy/workload.yaml (the manifest of record).
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "notion-mcp.localhost"
+      NOTION_VERSION: "2026-03-11"
+      NOTION_READ_ONLY: "false"
+    # Secret references by name (this file takes plain strings; the Workload
+    # manifest takes {name: ...} entries).
+    secretFrom:
+      - notion-mcp-token
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed).
+  allowedHosts:
+    - "api.notion.com"

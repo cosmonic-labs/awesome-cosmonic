@@ -1,0 +1,147 @@
+# Cosmonic Desktop workload manifest for postgres-mcp (the only manifest in
+# this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `cosmonic_promote` returns for a local build.
+# Reach the server at http://postgres-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# How the database is reached: NOT by the component. The two named
+# wasmcloud:postgres host interfaces below (`db`, `db-prepared`) are bound by
+# the daemon to a connection pool it owns; their config key `url` comes from
+# the secret ref `postgres-mcp-url`, whose `env` MUST be literally `url`.
+# Register it before applying (value = a libpq URL; 127.0.0.1 is right for a
+# database on this machine because the daemon dials from the host process):
+#
+#   curl --unix-socket "$SOCK" -X POST http://localhost/v1/secrets/refs \
+#     -H 'Content-Type: application/json' \
+#     -d '{"name":"postgres-mcp-url","uri":"keychain://cosmonic/postgres-mcp-url","env":"url",
+#          "value":"postgres://mcp:mcp@127.0.0.1:5432/mcp?sslmode=disable"}'
+#
+# A missing or mis-registered ref fails the workload BIND ("named
+# wasmcloud:postgres interface requires a 'url' config") — the server never
+# starts — rather than producing a tool error. Changing the value requires
+# re-applying the workload (resolved at bind time).
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "postgres-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "postgres-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none — the deployment
+    # boundary (local ingress) is the trust boundary; see docs/auth.md.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "postgres"
+    # Primary MCP capability surface (the server also serves resources —
+    # see mcp.ai/skills below).
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): the server publishes
+    # its SKILL.md playbook as read-only resources under skill:// URIs.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials the server needs (presence only; the same list GET /
+    # reports at runtime), so a tool can show them before the workload runs.
+    desktop.cosmonic.com/credentials: |
+      [{"ref":"postgres-mcp-url","env":"url",
+        "description":"PostgreSQL connection URL postgres://user:password@host:5432/dbname?sslmode=disable|require (consumed by the wasmcloud:postgres host interfaces db and db-prepared, not by the component; prefer a dedicated read-only role; 127.0.0.1 = this machine, the daemon dials from the host process)",
+        "obtainUrl":"https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING-URIS",
+        "scopes":["CONNECT","USAGE on schemas","SELECT on tables","INSERT/UPDATE/DELETE/DDL only with POSTGRES_ALLOW_WRITES=true"]}]
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "postgres-mcp.localhost"
+    # wasmcloud:postgres@0.2.0 in multiplex mode: `name` is the component's
+    # import label (wit/world.wit: `import db: wasmcloud:postgres/query`).
+    # WIT allows one interface per label, so `query` and `prepared` are two
+    # labels and two entries; both carry the same URL secret (the daemon
+    # pools by URL, so this is one connection pool). `types` has no
+    # functions and rides along with the first entry.
+    - namespace: wasmcloud
+      package: postgres
+      version: "0.2.0"
+      name: db
+      interfaces:
+        - types
+        - query
+      # Provides the `url` config key (the ref's env is `url`).
+      secretFrom:
+        - name: postgres-mcp-url
+    - namespace: wasmcloud
+      package: postgres
+      version: "0.2.0"
+      name: db-prepared
+      interfaces:
+        - prepared
+      secretFrom:
+        - name: postgres-mcp-url
+  components:
+    - name: "postgres-mcp"
+      # Published image; Desktop pins the tag to a digest at apply time. To
+      # deploy a locally promoted build instead, use the digest-pinned
+      # oci.localhost:8200/apps/postgres-mcp:0.1.0@sha256:… reference that
+      # promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/postgres-mcp:0.1.0"
+      # One warm instance: the bridge serializes exchanges per instance, and
+      # a query blocks other calls on that instance until it returns (or
+      # POSTGRES_QUERY_TIMEOUT_MS). Raise poolSize for more parallel calls.
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "postgres-mcp.localhost"
+            # "true" enables `execute` / `execute_batch` and lifts the
+            # read-only statement inspector on `query` / `explain_query`.
+            # Anything else = read-only (statement inspection in the
+            # component; for a database-level guarantee use a role with
+            # default_transaction_read_only = on in the URL).
+            POSTGRES_ALLOW_WRITES: "false"
+            # Rows `query` returns when `limit` is omitted.
+            POSTGRES_DEFAULT_ROW_LIMIT: "100"
+            # Hard ceiling for `limit`; larger requests are clamped and the
+            # result says so (truncated / limit_applied).
+            POSTGRES_MAX_ROW_LIMIT: "1000"
+            # Component-side deadline per host call (1000..600000). On expiry
+            # the row stream is dropped and a `timeout` error returned; the
+            # statement may keep running server-side — pair it with
+            # `options=-c statement_timeout=30000` in the URL.
+            POSTGRES_QUERY_TIMEOUT_MS: "30000"
+            # Cap on the serialized JSON result of one tool call (bytes);
+            # rows are cut at the boundary with truncated=true.
+            POSTGRES_MAX_RESULT_BYTES: "1048576"
+            # Schema used by list_tables / describe_table / list_indexes /
+            # table_stats when `schema` is omitted.
+            POSTGRES_DEFAULT_SCHEMA: "public"
+            # list_schemas / search_objects hide pg_catalog, pg_toast,
+            # pg_temp_*, information_schema unless include_system=true.
+            POSTGRES_HIDE_SYSTEM_SCHEMAS: "true"
+          # No component-level secrets: the database URL is consumed by the
+          # host interfaces above and never enters the component's env.
+        # Outbound allow-list — empty means deny-all (fail-closed). Nothing
+        # here dials out: the database is reached through the host's
+        # wasmcloud:postgres interface, so no hosts, no loopback ports and
+        # no volumes are needed.
+        allowedHosts: []

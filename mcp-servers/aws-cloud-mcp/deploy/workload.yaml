@@ -1,0 +1,112 @@
+# Cosmonic Desktop workload manifest for this MCP server (the only manifest
+# in this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `cosmonic_promote` returns for a local build.
+# Reach the server at http://aws-cloud-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# Before applying, register the credential secrets (values never go here):
+#   cosmonic_set_secret name=aws-cloud-mcp-access-key-id \
+#     uri=keychain://cosmonic/aws-cloud-mcp-access-key-id env=AWS_ACCESS_KEY_ID value=AKIA…
+#   cosmonic_set_secret name=aws-cloud-mcp-secret-access-key \
+#     uri=keychain://cosmonic/aws-cloud-mcp-secret-access-key env=AWS_SECRET_ACCESS_KEY value=…
+# Temporary (ASIA…) credentials additionally need aws-cloud-mcp-session-token
+# (env AWS_SESSION_TOKEN) — register it AND uncomment it under secretFrom; a
+# listed-but-unregistered ref makes the apply fail.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "aws-cloud-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "aws-cloud-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none | oauth. The AWS
+    # credentials are server-side secrets; MCP clients need no auth (the
+    # deployment boundary is the Desktop ingress).
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "aws"
+    # MCP capability surface this server exposes (primary): tools. It also
+    # serves resources — see mcp.ai/skills below.
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): the server publishes
+    # its SKILL.md playbook as read-only resources under skill:// URIs.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials the server needs (presence only; mirrors the `credentials`
+    # block GET / serves) so Desktop can show the setup before the workload
+    # runs. The session token is only for temporary credentials.
+    desktop.cosmonic.com/credentials: '[{"ref":"aws-cloud-mcp-access-key-id","env":"AWS_ACCESS_KEY_ID","kind":"aws-access-key-id","description":"IAM access key id (AKIA… long-term or ASIA… temporary) of a principal with the read-only actions; SigV4-signed in the component","obtainUrl":"https://console.aws.amazon.com/iam/home#/users","scopes":["sts:GetCallerIdentity","s3:ListAllMyBuckets","s3:ListBucket","s3:GetObject","ec2:DescribeInstances","lambda:ListFunctions","logs:DescribeLogGroups","logs:FilterLogEvents"],"validate":"check_auth"},{"ref":"aws-cloud-mcp-secret-access-key","env":"AWS_SECRET_ACCESS_KEY","kind":"aws-secret-access-key","description":"Secret access key paired with the key id (shown once at creation)","obtainUrl":"https://console.aws.amazon.com/iam/home#/users","scopes":[],"validate":"check_auth"},{"ref":"aws-cloud-mcp-session-token","env":"AWS_SESSION_TOKEN","kind":"aws-session-token","required":false,"description":"Session token for temporary credentials only (aws configure export-credentials --format env); must come from the same STS call as the key pair","obtainUrl":"https://docs.aws.amazon.com/cli/latest/reference/configure/export-credentials.html","scopes":[],"validate":"check_auth"}]'
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "aws-cloud-mcp.localhost"
+  components:
+    - name: "aws-cloud-mcp"
+      # Point at your published image; Desktop pins the tag to a digest at
+      # apply time. To deploy a locally promoted build instead, use the
+      # digest-pinned oci.localhost:8200 reference promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/aws-cloud-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "aws-cloud-mcp.localhost"
+            # Default region for every regional endpoint
+            # (sts/s3/ec2/lambda/logs.<region>.amazonaws.com) and the SigV4
+            # credential scope. Every tool takes a `region` override.
+            AWS_REGION: "us-east-1"
+            # "true" enables s3_put_object and lambda_invoke
+            # (RequestResponse/Event). Anything else refuses them locally;
+            # lambda_invoke DryRun is never gated. Flip deliberately, ideally
+            # on a separate workload with a narrower IAM policy.
+            AWS_ALLOW_WRITES: "false"
+            # Base URL override applied to every service (scheme://host[:port],
+            # no path). Empty = the real regional AWS endpoints. Tests point
+            # it at a fixture; a local MinIO/LocalStack needs
+            # http://host.wasmcloud.internal:<port> plus the loopback grant
+            # (see README).
+            AWS_ENDPOINT_URL: ""
+            # Template outbound response cap (bytes). 4 MiB covers every tool
+            # except lambda_invoke against functions returning >4 MB
+            # payloads (sync max 6 MB); raise to 8388608 for those.
+            MCP_OUTBOUND_MAX_BYTES: "4194304"
+          # The credentials, injected as AWS_ACCESS_KEY_ID /
+          # AWS_SECRET_ACCESS_KEY by the secret references (registered with
+          # cosmonic_set_secret) — never inline values.
+          secretFrom:
+            - name: aws-cloud-mcp-access-key-id
+            - name: aws-cloud-mcp-secret-access-key
+            # Only for temporary credentials (register the ref first):
+            # - name: aws-cloud-mcp-session-token
+        # Outbound allow-list — empty means deny-all (fail-closed).
+        allowedHosts:
+          # Every regional AWS endpoint the tools dial:
+          # sts.<region>.amazonaws.com, s3.<region>.amazonaws.com,
+          # ec2.<region>.amazonaws.com, lambda.<region>.amazonaws.com and
+          # logs.<region>.amazonaws.com (HTTPS, public CA roots). China
+          # (amazonaws.com.cn) and private VPC endpoints are not covered.
+          - "*.amazonaws.com"

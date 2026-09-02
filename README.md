@@ -50,8 +50,18 @@ _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
 ### MCP Servers
 
-[Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).
+[Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`mcp-servers/`](mcp-servers/), one directory per server, all built from the Rust template and deployable on Cosmonic Desktop at `http://<name>.localhost:8200/`; the [status table](mcp-servers/README.md) records tools, tests, credentials and deployment state for each, plus design notes for the servers deferred on auth. Conventions: [`mcp-servers/docs/CONVENTIONS.md`](mcp-servers/docs/CONVENTIONS.md).
 
+- [official-filesystem-mcp](mcp-servers/official-filesystem-mcp/) (hosted): The reference filesystem server (read, write, edit, search, tree) over WASI preopens mounted with `spec.volumes`; `FS_ALLOWED_DIRS` names the folders it may touch.
+- [notion-mcp](mcp-servers/notion-mcp/) (hosted): Notion search, pages, data sources, blocks, comments and users over the REST API with an internal-integration token.
+- [atlassian-jira-mcp](mcp-servers/atlassian-jira-mcp/) (hosted) and [atlassian-confluence-mcp](mcp-servers/atlassian-confluence-mcp/) (hosted): Jira issues, JQL search, transitions and comments; Confluence CQL search, pages, comments and labels; one shared Atlassian API-token secret.
+- [slack-mcp](mcp-servers/slack-mcp/) (hosted): Channels, history, threads, users and posting with a bot token created from a one-link app manifest.
+- [supabase-mcp](mcp-servers/supabase-mcp/) (hosted): Projects, SQL, migrations, logs, advisors and edge functions through the Supabase Management API with a personal access token.
+- [obsidian-mcp](mcp-servers/obsidian-mcp/) (hosted): Vault files, search, periodic notes and patches through the Local REST API plugin, reached over a loopback grant.
+- [docker-mcp](mcp-servers/docker-mcp/) (hosted): Containers, images, logs, stats, networks and volumes over the Docker Engine API (Podman-compatible) on a loopback grant, read-only by default.
+- [postgres-mcp](mcp-servers/postgres-mcp/) (hosted): Read-only-by-default SQL, schema introspection, EXPLAIN and statistics over Desktop's native `wasmcloud:postgres` host interface; the daemon owns the connection, the component never sees the password.
+- [aws-cloud-mcp](mcp-servers/aws-cloud-mcp/) (hosted): STS, S3, EC2, Lambda and CloudWatch Logs with SigV4 signing done in the component from static keys held as secrets.
+- [playwright-mcp](mcp-servers/playwright-mcp/) (hosted): A sandboxed proxy to the official `@playwright/mcp` server running on the developer machine, mirroring its browser tools and adding a skill and discovery route.
 - [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
 
 ## Host Plugins

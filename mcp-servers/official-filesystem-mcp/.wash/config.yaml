@@ -1,0 +1,30 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/official_filesystem_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project. The authoritative
+# manifest (with the spec.volumes hostPath the tools need) is
+# deploy/workload.yaml — apply that after promoting.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: official-filesystem-mcp.localhost
+      FS_ALLOWED_DIRS: /data
+      FS_READ_ONLY: "false"
+      FS_MAX_FILE_BYTES: "1048576"
+      FS_MAX_RESULTS: "1000"
+      FS_MAX_TREE_DEPTH: "10"
+  # Storage is a mounted host folder (see deploy/workload.yaml spec.volumes);
+  # whether the dev loop honours volumeMounts is unverified, so test under
+  # scripts/e2e.sh (wasmtime --dir) and deploy via deploy/workload.yaml.
+  volumeMounts:
+    - name: data
+      mountPath: /data
+      readOnly: false
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). This
+  # server dials no host at all.
+  allowedHosts: []

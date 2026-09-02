@@ -20,42 +20,6 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Build output
-build/
-dist/
-**/*.wasm
-
-# wash
-.wash/
-
-# Go
-vendor/
-
-# JavaScript / TypeScript
-node_modules/
-
-# Python
+# Python fixture bytecode
 __pycache__/
-*.py[cod]
-.venv/
-
-# Model weights and large fixtures. Fetch these with a script, do not commit them.
-# See CONTRIBUTING.md.
-*.gguf
-*.ggml
-*.bin
-*.safetensors
-*.onnx
-*.pt
-*.wav
-*.mp3
-*.mp4
-
-# macOS
-.DS_Store
-
-# MCP servers keep their wash project config in git: `.wash/config.yaml` is the
-# build command plus the dev-loop/promote draft (see mcp-servers/docs/CONVENTIONS.md).
-!mcp-servers/*/.wash/
-mcp-servers/*/.wash/*
-!mcp-servers/*/.wash/config.yaml
+*.pyc

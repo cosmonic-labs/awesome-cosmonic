@@ -1,0 +1,18 @@
+// The component's own world: only the host capability this server uses.
+//
+// The wasi:http@0.3.0 handler export and the wasi:cli/clocks imports come from
+// the `wasip3` crate's generated bindings; this world adds the
+// wasmcloud:postgres@0.2.0 imports under **labels**. A labeled import
+// (`import db: ...`) compiles to a component-model `(implements ..)` import
+// named `db`, and Cosmonic Desktop routes it to the workload's hostInterfaces
+// entry with the same `name` (deploy/workload.yaml). `types` carries no
+// functions and is imported once, unlabeled; WIT allows one interface per
+// label, so `query` and `prepared` get their own labels and therefore their
+// own hostInterfaces entries (both carry the same connection-URL secret).
+package awesome:postgres-mcp;
+
+world postgres-mcp {
+  import wasmcloud:postgres/types@0.2.0;
+  import db: wasmcloud:postgres/query@0.2.0;
+  import db-prepared: wasmcloud:postgres/prepared@0.2.0;
+}

@@ -1,0 +1,103 @@
+# Cosmonic Desktop workload manifest for supabase-mcp (the only manifest in
+# this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `cosmonic_promote` returns for a local build.
+# Reach the server at http://supabase-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# Before applying, register the secret reference this manifest names:
+#   curl --unix-socket "$SOCK" -X POST http://localhost/v1/secrets/refs \
+#     -H 'Content-Type: application/json' \
+#     -d '{"name":"supabase-mcp-access-token","uri":"keychain://cosmonic/supabase-mcp-access-token","env":"SUPABASE_ACCESS_TOKEN","value":"sbp_..."}'
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "supabase-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "supabase-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none — the deployment
+    # boundary (local ingress) is the trust boundary; see docs/auth.md.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "supabase"
+    # Primary MCP capability surface (the server also serves resources —
+    # see mcp.ai/skills below).
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): the server publishes
+    # its SKILL.md playbook as read-only resources under skill:// URIs.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials the server needs (presence only; the same list GET /
+    # reports at runtime), so a tool can show them before the workload runs.
+    desktop.cosmonic.com/credentials: |
+      [{"ref":"supabase-mcp-access-token","env":"SUPABASE_ACCESS_TOKEN",
+        "description":"Supabase Personal Access Token (sbp_...). Prefer a fine-grained, expiring token with only the permissions the tools need.",
+        "obtainUrl":"https://supabase.com/dashboard/account/tokens",
+        "scopes":["organizations_read","projects_read","database_read","database_write (only with SUPABASE_READ_ONLY=false)","database_migrations_write (only with SUPABASE_READ_ONLY=false)","analytics_logs_read","edge_functions_read","api_gateway_keys_read"]}]
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "supabase-mcp.localhost"
+  components:
+    - name: "supabase-mcp"
+      # Published image; Desktop pins the tag to a digest at apply time. To
+      # deploy a locally promoted build instead, use the digest-pinned
+      # oci.localhost:8200/apps/supabase-mcp:0.1.0@sha256:… reference that
+      # promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/supabase-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "supabase-mcp.localhost"
+            # Read-only mode (default "true"): execute_sql runs as Supabase's
+            # restricted read-only Postgres role and apply_migration is
+            # refused. Set to "false" to allow writes and migrations (the
+            # token then also needs database_write / database_migrations_write).
+            SUPABASE_READ_ONLY: "true"
+            # Optional: pin every tool to one 20-letter project ref. When set,
+            # project_id arguments are ignored and list_organizations /
+            # list_projects disappear from tools/list. Empty = unpinned.
+            SUPABASE_PROJECT_REF: ""
+            # Default row cap for execute_sql / list_tables (1..1000); the
+            # max_rows tool argument overrides it up to 1000.
+            SUPABASE_MAX_ROWS: "200"
+            # Management API origin (test override only; the code appends
+            # /v1). Leave unset in production — it defaults to
+            # https://api.supabase.com and also drives get_project_url's
+            # domain mapping.
+            # SUPABASE_BASE_URL: "https://api.supabase.com"
+          # The Personal Access Token: a secret reference registered with
+          # cosmonic_set_secret (keychain://cosmonic/supabase-mcp-access-token,
+          # env SUPABASE_ACCESS_TOKEN) — never an inline value.
+          secretFrom:
+            - name: supabase-mcp-access-token
+        # Outbound allow-list — empty means deny-all (fail-closed).
+        allowedHosts:
+          # The Supabase Management API: every tool except get_project_url
+          # dials it (HTTPS, public CA roots).
+          - "api.supabase.com"

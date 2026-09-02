@@ -1,0 +1,103 @@
+# Cosmonic Desktop workload manifest for notion-mcp (the only manifest in
+# this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `promote` returns for a local build.
+# Reach the server at http://notion-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# Before applying, register the secret reference this manifest names:
+#   cosmonic_set_secret name=notion-mcp-token uri=keychain://cosmonic/notion-mcp-token \
+#                       env=NOTION_TOKEN value=<ntn_... internal integration secret>
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "notion-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "notion-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none — the Desktop ingress is
+    # the trust boundary; the Notion credential is a server-side secret.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "notion"
+    # MCP capability surface this server exposes (it also serves skills as
+    # resources — see mcp.ai/skills).
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): SKILL.md playbooks are
+    # published as read-only resources under skill:// URIs (src/skills.rs).
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless 2026-07-28 core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials this server needs (presence only; the same list is served
+    # on GET / with a configured/missing status). Lets a tool show the
+    # requirement before the workload runs.
+    desktop.cosmonic.com/credentials: |
+      [{"ref":"notion-mcp-token","env":"NOTION_TOKEN","kind":"bearer-token",
+        "description":"Notion internal integration secret (ntn_...); share each page and database with the integration (... menu -> Connections)",
+        "obtainUrl":"https://www.notion.so/profile/integrations",
+        "scopes":["read content","update content","insert content","read comments","insert comments","read user information"],
+        "validate":"check_auth"}]
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "notion-mcp.localhost"
+  components:
+    - name: "notion-mcp"
+      # Published image; Desktop pins the tag to a digest at apply time. For a
+      # locally promoted build use the digest-pinned oci.localhost:8200
+      # reference promote returns instead.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/notion-mcp:0.1.0"
+      # One warm instance: the data source schema cache lives in a static on
+      # it. Raise poolSize for throughput; caches are then per instance.
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            # Log filter (tracing EnvFilter syntax). Never `trace` in
+            # production: rmcp logs full request payloads at trace level.
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "notion-mcp.localhost"
+            # Notion-Version header for non-Markdown calls. 2026-03-11 (default,
+            # current) or 2025-09-03 (older field names: archived/after); the
+            # Markdown tools always send 2026-03-11.
+            NOTION_VERSION: "2026-03-11"
+            # "true" makes create_page, create_data_source_item, update_page,
+            # update_page_markdown, append_blocks and create_comment refuse
+            # without calling Notion (shared/demo deployments).
+            NOTION_READ_ONLY: "false"
+            # Upstream origin (no /v1). Only override for testing against a
+            # fixture; its host must then also be on allowedHosts.
+            # NOTION_BASE_URL: "https://api.notion.com"
+            # Per-call outbound deadline in ms (default 30000). Raise for very
+            # large Markdown reads/writes.
+            # MCP_OUTBOUND_TIMEOUT_MS: "30000"
+          # The Notion internal integration token, injected as NOTION_TOKEN by
+          # the `notion-mcp-token` secret reference (register it with
+          # cosmonic_set_secret or POST /v1/secrets/refs) — never inline.
+          secretFrom:
+            - name: notion-mcp-token
+        # Outbound allow-list — empty means deny-all (fail-closed).
+        allowedHosts:
+          # The Notion REST API: every tool dials https://api.notion.com/v1/...
+          - "api.notion.com"

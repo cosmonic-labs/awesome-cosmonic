@@ -1,0 +1,111 @@
+# Cosmonic Desktop workload manifest for this MCP server (the only manifest
+# in this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `cosmonic_promote` returns for a local build.
+# Reach the server at http://official-filesystem-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# BEFORE APPLYING: create the host folder named under spec.volumes below
+# (`mkdir -p ~/.local/share/cosmonic/volumes/official-filesystem-mcp`). The
+# daemon never creates hostPath directories; a missing one is a permanent
+# start failure ("HostPath volume '<path>' does not exist or is not a
+# directory") that is not retried until you re-apply. Files the tools write
+# land in that folder immediately — mount a dedicated folder, not your home
+# directory, and use FS_READ_ONLY + readOnly: true when reads suffice.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "official-filesystem-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "official-filesystem-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none | oauth. Like the
+    # reference server (an unauthenticated stdio process) this one relies on
+    # the deployment boundary; the sandbox + the explicit volume mount is
+    # the authority.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "filesystem"
+    # MCP capability surface this server exposes: tools (plus the skill
+    # resources every template server serves — see mcp.ai/skills).
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): the server publishes
+    # SKILL.md playbooks as read-only resources under skill:// URIs, so a
+    # connected agent can learn when and how to use the tools.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless 2026-07-28 core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "official-filesystem-mcp.localhost"
+  # Host folders the tools may touch. One entry per folder; the path MUST
+  # already exist on the host (absolute path — do not rely on ~ expansion).
+  # To expose more folders add another volume + volumeMount pair and list its
+  # mountPath in FS_ALLOWED_DIRS (e.g. FS_ALLOWED_DIRS: /data,/notes).
+  volumes:
+    - name: data
+      hostPath:
+        path: /home/liam/.local/share/cosmonic/volumes/official-filesystem-mcp
+  components:
+    - name: "official-filesystem-mcp"
+      # Point at your published image; Desktop pins the tag to a digest at
+      # apply time. To deploy a locally promoted build instead, use the
+      # digest-pinned oci.localhost:8200 reference promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/official-filesystem-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        # Each mount becomes a WASI preopen at mountPath inside the component.
+        # readOnly: true pairs with FS_READ_ONLY=true for a read-only server
+        # (set both so the tools return a clear message instead of EROFS).
+        volumeMounts:
+          - name: data
+            mountPath: /data
+            readOnly: false
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "official-filesystem-mcp.localhost"
+            # REQUIRED. Comma-separated GUEST paths the tools may touch; each
+            # must be a mountPath from volumeMounts above. Missing -> every
+            # tool returns an actionable error naming this variable.
+            FS_ALLOWED_DIRS: "/data"
+            # "true"/"1"/"yes" disables write_file, edit_file (dryRun still
+            # works), create_directory and move_file. Default: false.
+            FS_READ_ONLY: "false"
+            # Cap on bytes read per file by read_text_file (whole-file reads
+            # are truncated with a note), read_media_file (refused above the
+            # cap) and edit_file. Clamped to 1024..=67108864. Default: 1 MiB.
+            FS_MAX_FILE_BYTES: "1048576"
+            # Max entries returned by list_directory*, search_files and
+            # directory_tree (a truncation note is appended). Clamped to
+            # 1..=100000. Default: 1000.
+            FS_MAX_RESULTS: "1000"
+            # Recursion depth for directory_tree and search_files; a per-call
+            # maxDepth may lower it but never exceed it. Clamped to 1..=64.
+            FS_MAX_TREE_DEPTH: "10"
+          # This server holds no credential: no secretFrom.
+        # Outbound allow-list — empty means deny-all (fail-closed). The tools
+        # never dial out: storage is wasi:filesystem via the volume above.
+        allowedHosts: []

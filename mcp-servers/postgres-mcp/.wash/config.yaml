@@ -1,0 +1,50 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  # The labeled wasmcloud:postgres imports need wasm-component-ld >= 0.5.30
+  # (.cargo/config.toml points at .tools/bin/wasm-component-ld); install it
+  # into the project once when missing, then build.
+  command: sh -c 'test -x .tools/bin/wasm-component-ld || cargo install wasm-component-ld --version 0.5.30 --root .tools --locked; cargo build --target wasm32-wasip2 --release'
+  component_path: target/wasm32-wasip2/release/postgres_mcp.wasm
+# Mirrors deploy/workload.yaml components[].localResources and the postgres
+# host interfaces; carried over into the durable Workload draft when you
+# promote this project.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "postgres-mcp.localhost"
+      POSTGRES_ALLOW_WRITES: "false"
+      POSTGRES_DEFAULT_ROW_LIMIT: "100"
+      POSTGRES_MAX_ROW_LIMIT: "1000"
+      POSTGRES_QUERY_TIMEOUT_MS: "30000"
+      POSTGRES_MAX_RESULT_BYTES: "1048576"
+      POSTGRES_DEFAULT_SCHEMA: "public"
+      POSTGRES_HIDE_SYSTEM_SCHEMAS: "true"
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). Nothing
+  # dials out: the database is reached through the host interfaces below.
+  allowedHosts: []
+  # wasmcloud:postgres@0.2.0 named host interfaces (multiplex mode). `name`
+  # is the component's import label; the `url` config key comes from the
+  # secret ref `postgres-mcp-url` (registered with env `url`). Note the
+  # daemon's project-config parser wants `{name: …}` here (a SourceRef),
+  # unlike environment.secretFrom above, which takes plain strings.
+  hostInterfaces:
+    - namespace: wasmcloud
+      package: postgres
+      version: "0.2.0"
+      name: db
+      interfaces:
+        - types
+        - query
+      secretFrom:
+        - name: postgres-mcp-url
+    - namespace: wasmcloud
+      package: postgres
+      version: "0.2.0"
+      name: db-prepared
+      interfaces:
+        - prepared
+      secretFrom:
+        - name: postgres-mcp-url

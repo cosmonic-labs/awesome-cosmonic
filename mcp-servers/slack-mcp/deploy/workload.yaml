@@ -1,0 +1,96 @@
+# Cosmonic Desktop workload manifest for this MCP server (the only manifest
+# in this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `cosmonic_promote` returns for a local build.
+# Reach the server at http://slack-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# Before applying, register the bot-token secret (value never goes here):
+#   cosmonic_set_secret name=slack-mcp-bot-token \
+#     uri=keychain://cosmonic/slack-mcp-bot-token env=SLACK_BOT_TOKEN value=<xoxb-…>
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "slack-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "slack-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none | oauth. The Slack
+    # credential is a server-side secret; MCP clients need no auth (the
+    # deployment boundary is the Desktop ingress).
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "slack"
+    # MCP capability surface this server exposes (primary): tools. It also
+    # serves resources — see mcp.ai/skills below.
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): the server publishes
+    # its SKILL.md playbook as read-only resources under skill:// URIs.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials the server needs (presence only; mirrors the `credentials`
+    # block GET / serves) so Desktop can show the setup before the workload
+    # runs. The obtainUrl pre-fills a Slack app with the required scopes.
+    desktop.cosmonic.com/credentials: '[{"ref":"slack-mcp-bot-token","env":"SLACK_BOT_TOKEN","kind":"bearer-token","description":"Bot User OAuth Token (xoxb-…) of an internal Slack app installed in the workspace; the bot only sees channels it is a member of","obtainUrl":"https://api.slack.com/apps?new_app=1&manifest_json=%7B%22display_information%22%3A%7B%22name%22%3A%22Cosmonic%20Slack%20MCP%22%2C%22description%22%3A%22Slack%20MCP%20server%20on%20Cosmonic%20Desktop%20%28slack-mcp%29%22%7D%2C%22features%22%3A%7B%22bot_user%22%3A%7B%22display_name%22%3A%22cosmonic-mcp%22%2C%22always_online%22%3Afalse%7D%7D%2C%22oauth_config%22%3A%7B%22scopes%22%3A%7B%22bot%22%3A%5B%22channels%3Aread%22%2C%22channels%3Ahistory%22%2C%22channels%3Ajoin%22%2C%22groups%3Aread%22%2C%22groups%3Ahistory%22%2C%22chat%3Awrite%22%2C%22chat%3Awrite.public%22%2C%22reactions%3Awrite%22%2C%22users%3Aread%22%2C%22users.profile%3Aread%22%5D%7D%7D%2C%22settings%22%3A%7B%22org_deploy_enabled%22%3Afalse%2C%22socket_mode_enabled%22%3Afalse%2C%22token_rotation_enabled%22%3Afalse%7D%7D","scopes":["channels:read","channels:history","chat:write","reactions:write","users:read","users.profile:read"],"validate":"check_auth"}]'
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "slack-mcp.localhost"
+  components:
+    - name: "slack-mcp"
+      # Point at your published image; Desktop pins the tag to a digest at
+      # apply time. To deploy a locally promoted build instead, use the
+      # digest-pinned oci.localhost:8200 reference promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/slack-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "slack-mcp.localhost"
+            # Workspace id (T…). Forwarded as `team_id` to conversations.list
+            # and users.list (required on Enterprise Grid, harmless
+            # otherwise). check_auth reports the value the token belongs to;
+            # leave empty until you know it, then fill it in.
+            SLACK_TEAM_ID: ""
+            # Optional comma-separated channel ids (C…). When set,
+            # list_channels returns exactly these and the write tools refuse
+            # any other channel — a sandbox fence. Empty = no fence.
+            SLACK_CHANNEL_IDS: ""
+            # "true" disables post_message, reply_to_thread, add_reaction and
+            # join_channel without calling Slack. Default: writes allowed.
+            SLACK_READ_ONLY: "false"
+            # Upstream base URL. GovSlack: https://slack-gov.com (add that
+            # host to allowedHosts too). Tests point this at a fixture.
+            SLACK_BASE_URL: "https://slack.com"
+          # The Bot User OAuth Token, injected as SLACK_BOT_TOKEN by the
+          # secret reference (registered with cosmonic_set_secret) — never
+          # an inline value.
+          secretFrom:
+            - name: slack-mcp-bot-token
+        # Outbound allow-list — empty means deny-all (fail-closed).
+        allowedHosts:
+          # Slack Web API: every tool dials https://slack.com/api/<method>.
+          - "slack.com"

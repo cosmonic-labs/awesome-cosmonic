@@ -1,0 +1,30 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/playwright_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project. Keep in step
+# with deploy/workload.yaml.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "playwright-mcp.localhost"
+      PLAYWRIGHT_BASE_URL: "http://host.wasmcloud.internal:8931/mcp"
+      PLAYWRIGHT_ALLOW_UNSAFE: "false"
+      PLAYWRIGHT_AUTO_SNAPSHOT: "true"
+      PLAYWRIGHT_TOOLS_TTL_SECS: "300"
+      MCP_OUTBOUND_TIMEOUT_MS: "90000"
+    # Optional bearer token for a hosted upstream (see deploy/workload.yaml).
+    # secretFrom:
+    #   - name: playwright-mcp-token
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). Exactly
+  # the host the tools dial: the @playwright/mcp listener on this machine.
+  allowedHosts:
+    - "host.wasmcloud.internal:8931"
+  # Loopback grant for that port (plus Desktop Settings -> Security ->
+  # allow host loopback).
+  allowedHostLoopbackPorts:
+    - "8931"

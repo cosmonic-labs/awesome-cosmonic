@@ -1,0 +1,30 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/docker_mcp.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into
+# the durable Workload draft when you promote this project. Keep in step
+# with deploy/workload.yaml.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+      MCP_ALLOWED_HOSTS: "docker-mcp.localhost"
+      DOCKER_HOST: "http://host.wasmcloud.internal:2375"
+      DOCKER_API_VERSION: "v1.44"
+      DOCKER_READ_ONLY: "true"
+      MCP_OUTBOUND_TIMEOUT_MS: "120000"
+    # Optional, private registries only (see deploy/workload.yaml):
+    # secretFrom:
+    #   - name: docker-mcp-registry-auth
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). Exactly
+  # the host the tools dial: the Docker Engine / podman TCP listener on this
+  # machine.
+  allowedHosts:
+    - "host.wasmcloud.internal:2375"
+  # Loopback grant for that port (plus Desktop Settings -> Security ->
+  # allow host loopback).
+  allowedHostLoopbackPorts:
+    - "2375"

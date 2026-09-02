@@ -1,0 +1,110 @@
+# Cosmonic Desktop workload manifest for this MCP server (the only manifest
+# in this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `cosmonic_promote` returns for a local build.
+# Reach the server at http://atlassian-confluence-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# Before applying, replace `your-site` (twice: ATLASSIAN_SITE and
+# allowedHosts) with your Atlassian Cloud tenant, set ATLASSIAN_EMAIL, and
+# register the `atlassian-api-token` secret ref (shared with
+# atlassian-jira-mcp) — see README.md.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "atlassian-confluence-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "atlassian-confluence-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none | oauth. The server
+    # relies on the deployment boundary; upstream auth is the API token.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "confluence"
+    # MCP capability surface this server exposes (tools; skills ride on
+    # resources — see mcp.ai/skills below).
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): SKILL.md playbooks
+    # served as read-only resources under skill:// URIs (src/skills.rs).
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless 2026-07-28 core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials this server needs (presence only; values live in secret
+    # refs). Same shape as the `credentials` block of GET /.
+    desktop.cosmonic.com/credentials: >-
+      [{"ref":"atlassian-api-token","env":"ATLASSIAN_API_TOKEN",
+      "description":"Atlassian API token (unscoped), sent as the Basic-auth password with ATLASSIAN_EMAIL; one ref serves the Jira and Confluence servers",
+      "obtainUrl":"https://id.atlassian.com/manage-profile/security/api-tokens",
+      "scopes":["read:page:confluence","write:page:confluence","delete:page:confluence","read:space:confluence","read:comment:confluence","write:comment:confluence","read:label:confluence","write:label:confluence","read:attachment:confluence","read:user:confluence","read:confluence-user","search:confluence","write:confluence-content"]}]
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "atlassian-confluence-mcp.localhost"
+  components:
+    - name: "atlassian-confluence-mcp"
+      # Point at the published image; Desktop pins the tag to a digest at
+      # apply time. To deploy a locally promoted build instead, use the
+      # digest-pinned oci.localhost:8200 reference promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/atlassian-confluence-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "atlassian-confluence-mcp.localhost"
+            # Your Atlassian Cloud tenant: `acme` or `acme.atlassian.net`.
+            # Must match the host in allowedHosts below.
+            ATLASSIAN_SITE: "your-site.atlassian.net"
+            # Email of the Atlassian account that owns the API token.
+            ATLASSIAN_EMAIL: "you@example.com"
+            # Only for tokens created "with scopes": the `cloudId` from
+            # https://<site>.atlassian.net/_edge/tenant_info. Routes every
+            # call through https://api.atlassian.com/ex/confluence/<id>.
+            # ATLASSIAN_CLOUD_ID: "00000000-0000-0000-0000-000000000000"
+            # Refuse every write tool (create/update/delete page, add
+            # comment, add label) when "true".
+            CONFLUENCE_READ_ONLY: "false"
+            # delete_page (trash only) is refused unless "true".
+            CONFLUENCE_ALLOW_DELETE: "false"
+            # Optional comma-separated space keys to scope search, list_pages,
+            # list_spaces and create_page to, e.g. "ENG,DOCS".
+            # CONFLUENCE_SPACES_FILTER: "ENG,DOCS"
+            # Test override of the upstream origin (the e2e points it at a
+            # local fixture). Leave unset in production.
+            # ATLASSIAN_BASE_URL: ""
+          # The API token is injected by the registered secret reference
+          # (keychain://cosmonic/atlassian-api-token, env ATLASSIAN_API_TOKEN).
+          # Never inline a secret value here.
+          secretFrom:
+            - name: atlassian-api-token
+        # Outbound allow-list — empty means deny-all (fail-closed). Exactly
+        # the hosts the tools dial:
+        allowedHosts:
+          # Your Confluence Cloud site (classic API tokens). Replace
+          # `your-site`. (A looser "*.atlassian.net" wildcard may be accepted by
+          # the host matcher, but was not verified here.)
+          - "https://your-site.atlassian.net"
+          # The scoped-token gateway; only dialed when ATLASSIAN_CLOUD_ID is
+          # set. Harmless to keep otherwise.
+          - "https://api.atlassian.com"

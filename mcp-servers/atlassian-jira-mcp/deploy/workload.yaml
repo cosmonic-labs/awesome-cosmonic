@@ -1,0 +1,113 @@
+# Cosmonic Desktop workload manifest for this MCP server (the only manifest
+# in this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `cosmonic_promote` returns for a local build.
+# Reach the server at http://atlassian-jira-mcp.localhost:8200/ (Desktop routes by Host).
+# Deploy docs: https://cosmonic.com/docs/desktop
+#
+# Before applying:
+#   1. set ATLASSIAN_SITE and ATLASSIAN_EMAIL below (named config),
+#   2. register the `atlassian-api-token` secret ref (see README), and
+#   3. optionally narrow allowedHosts to your own site.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "atlassian-jira-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior — how it is listed,
+  # connected to clients, and which transport/auth handling applies.
+  labels:
+    app.kubernetes.io/name: "atlassian-jira-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none | oauth. The server
+    # authenticates to Jira itself (Basic auth with an API token); clients
+    # connect without credentials and rely on the deployment boundary.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools, used for cataloging.
+    mcp.ai/domain: "jira"
+    # MCP capability surface this server exposes: tools (plus skills over the
+    # resources primitive — see mcp.ai/skills).
+    "mcp.ai/function-type": tools
+    # Skills over MCP (io.modelcontextprotocol/skills): the server publishes
+    # skill://atlassian-jira-mcp/SKILL.md and its references.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # stateless: no sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    # MCP transport: streamable HTTP (POST + SSE).
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials this server needs (presence only, never values) so Desktop
+    # and agents can show the setup before the workload runs. The same list
+    # is served live in the `credentials` block of GET /.
+    desktop.cosmonic.com/credentials: >-
+      [{"ref":"atlassian-api-token","env":"ATLASSIAN_API_TOKEN",
+        "description":"Atlassian API token (Basic-auth password, paired with ATLASSIAN_EMAIL); one ref shared by the Jira and Confluence servers",
+        "obtainUrl":"https://id.atlassian.com/manage-profile/security/api-tokens",
+        "scopes":["read:jira-work","write:jira-work","read:jira-user"]}]
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "atlassian-jira-mcp.localhost"
+  components:
+    - name: "atlassian-jira-mcp"
+      # Point at your published image; Desktop pins the tag to a digest at
+      # apply time. To deploy a locally promoted build instead, use the
+      # digest-pinned oci.localhost:8200 reference promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/atlassian-jira-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host above.
+            MCP_ALLOWED_HOSTS: "atlassian-jira-mcp.localhost"
+            # --- Named config (not secret) -------------------------------
+            # Your Jira Cloud site host, e.g. acme.atlassian.net (REQUIRED;
+            # a scheme or trailing slash is tolerated and stripped).
+            ATLASSIAN_SITE: ""
+            # The Atlassian account email that owns the API token — the
+            # Basic-auth username (REQUIRED).
+            ATLASSIAN_EMAIL: ""
+            # Set ONLY when the API token was created "with scopes": routes
+            # every call through https://api.atlassian.com/ex/jira/<cloudId>.
+            # Copy the `cloudId` from https://<site>/_edge/tenant_info.
+            # Leave empty for a classic token.
+            ATLASSIAN_CLOUD_ID: ""
+            # "true" refuses the write tools (create_issue, update_issue,
+            # add_comment, transition_issue, assign_issue) before dialing.
+            JIRA_READ_ONLY: "false"
+            # Optional comma-separated project keys: searches are wrapped as
+            # `(<jql>) AND project in (KEYS)` and list_projects is filtered.
+            JIRA_PROJECTS_FILTER: ""
+            # Test override of the upstream origin (the e2e points it at a
+            # local fixture). Leave unset in production.
+            # ATLASSIAN_BASE_URL: ""
+          # The API token is a secret reference — never an inline value.
+          # Register it once (env ATLASSIAN_API_TOKEN) with cosmonic_set_secret
+          # or POST /v1/secrets/refs; the ref is shared with
+          # atlassian-confluence-mcp (one ref per Atlassian account).
+          secretFrom:
+            - name: atlassian-api-token
+        # Outbound allow-list — empty means deny-all (fail-closed). List
+        # every host the tools dial.
+        allowedHosts:
+          # Your Jira Cloud site (classic API tokens). Narrow this wildcard to
+          # your own site, e.g. "https://acme.atlassian.net".
+          - "https://*.atlassian.net"
+          # The scoped-token gateway; only needed when ATLASSIAN_CLOUD_ID is
+          # set (tokens created "with scopes"). Drop it otherwise.
+          - "https://api.atlassian.com"

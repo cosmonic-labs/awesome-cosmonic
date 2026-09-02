@@ -1,0 +1,98 @@
+# Cosmonic Desktop workload manifest for obsidian-mcp (the only manifest in
+# this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `promote` returns for a local build.
+# Reach the server at http://obsidian-mcp.localhost:8200/ (Desktop routes by Host).
+#
+# Before applying:
+#   1. In Obsidian: install + enable "Local REST API with MCP", copy its API
+#      key, switch on "Enable Non-encrypted (HTTP) Server" (port 27123).
+#   2. Register the key:  cosmonic_set_secret name=obsidian-mcp-api-key
+#      uri=keychain://cosmonic/obsidian-mcp-api-key env=OBSIDIAN_API_KEY value=<key>
+#   3. Desktop Settings -> Security -> allow host loopback (the third grant;
+#      the first two are allowedHosts + allowedHostLoopbackPorts below).
+# Deploy docs: https://cosmonic.com/docs/desktop
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "obsidian-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior.
+  labels:
+    app.kubernetes.io/name: "obsidian-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none — the deployment
+    # boundary (loopback ingress) is the trust boundary; the Obsidian API key
+    # is an upstream credential held in a secret ref, not client auth.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools.
+    mcp.ai/domain: "obsidian"
+    # Primary MCP surface: tools (skills ride on resources, see below).
+    "mcp.ai/function-type": tools
+    # Skills over MCP: SKILL.md + references served under skill:// URIs.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # No sessions or affinity — every request is self-contained.
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials the server needs (presence only), so a tool can show them
+    # before the workload runs. Exactly the `credentials` block of GET / minus
+    # its runtime fields (status, placeholder, validate); the strings come
+    # from CREDENTIAL_DESCRIPTION / CREDENTIAL_SCOPES in src/obsidian.rs and
+    # scripts/e2e.sh fails when the two drift.
+    desktop.cosmonic.com/credentials: '[{"ref":"obsidian-mcp-api-key","env":"OBSIDIAN_API_KEY","kind":"bearer-token","description":"API key shown in Obsidian Settings -> Community plugins -> Local REST API with MCP. The plugin''s ''Enable Non-encrypted (HTTP) Server'' switch (port 27123) must be on: the default HTTPS listener uses a self-signed certificate the sandbox cannot trust.","obtainUrl":"https://github.com/coddingtonbear/obsidian-local-rest-api","deepLink":"obsidian://show-plugin?id=obsidian-local-rest-api","scopes":["vault read","vault write (unless OBSIDIAN_READ_ONLY=true)","commands (only when OBSIDIAN_ENABLE_COMMANDS=true)"]}]'
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "obsidian-mcp.localhost"
+  components:
+    - name: "obsidian-mcp"
+      # Published image; Desktop pins the tag to a digest at apply time. For a
+      # local build use the digest-pinned oci.localhost:8200 ref promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/obsidian-mcp:0.1.0"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must equal the ingress host above.
+            MCP_ALLOWED_HOSTS: "obsidian-mcp.localhost"
+            # The plugin's opt-in plain-HTTP listener on the developer's own
+            # machine, reached through the Desktop loopback sentinel. The
+            # default HTTPS listener (27124) has a self-signed CA the sandbox
+            # cannot trust, so it is unusable here.
+            OBSIDIAN_BASE_URL: "http://host.wasmcloud.internal:27123"
+            # "true" refuses append/put/patch/delete/open_file/execute_command.
+            OBSIDIAN_READ_ONLY: "false"
+            # "true" enables list_commands/execute_command (any palette
+            # command — app-level side effects). Off by default.
+            OBSIDIAN_ENABLE_COMMANDS: "false"
+            # Characters of note text one call may return (1000..2000000).
+            OBSIDIAN_MAX_CONTENT_CHARS: "100000"
+          # The Obsidian API key, injected as OBSIDIAN_API_KEY by the ref
+          # (never inline a value here).
+          secretFrom:
+            - name: obsidian-mcp-api-key
+        # Outbound allow-list (deny-all when empty). Exactly the host the
+        # code dials:
+        allowedHosts:
+          # Obsidian's Local REST API plain-HTTP listener on this machine.
+          - "host.wasmcloud.internal:27123"
+        # Loopback grant for that port (inert until Desktop Settings ->
+        # Security -> "allow host loopback" is switched on).
+        allowedHostLoopbackPorts:
+          - "27123"

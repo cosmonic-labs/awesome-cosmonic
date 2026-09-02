@@ -1,0 +1,124 @@
+# Cosmonic Desktop workload manifest for playwright-mcp (the only manifest in
+# this project; the dev-loop/promote draft comes from .wash/config.yaml).
+#
+# Apply it as-is for the published image, or replace `image` with the
+# digest-pinned reference `promote` returns for a local build.
+# Reach the server at http://playwright-mcp.localhost:8200/ (Desktop routes by Host).
+#
+# This server is a PROXY: the browser runs in the official Playwright MCP
+# server (@playwright/mcp) on this machine. Before applying:
+#   1. Start the upstream in streamable-HTTP mode, bound to IPv4, with the
+#      Host allow-list the sandbox needs (comma-separated!):
+#        npx @playwright/mcp@latest --port 8931 --host 127.0.0.1 --headless \
+#          --allowed-hosts host.wasmcloud.internal:8931,localhost:8931
+#      (add --isolated for a throwaway profile, --shared-browser-context to
+#      keep tabs across proxy re-initializes, --caps pdf,vision for more tools)
+#   2. Desktop Settings -> Security -> allow host loopback (the third grant;
+#      the first two are allowedHosts + allowedHostLoopbackPorts below).
+#   3. Apply, then call playwright_status — it names any missing step.
+# No secret is required: the local upstream has no authentication. Only a
+# hosted Playwright MCP endpoint behind an authenticating proxy needs the
+# optional playwright-mcp-token secret (see secretFrom below).
+# Deploy docs: https://cosmonic.com/docs/desktop
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "playwright-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior.
+  labels:
+    app.kubernetes.io/name: "playwright-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    # Client authentication the server expects: none — the deployment
+    # boundary (loopback ingress) is the trust boundary; the optional
+    # upstream bearer token is a secret ref, not client auth.
+    "mcp.ai/auth-type": none
+    # Subject area of the tools.
+    mcp.ai/domain: "playwright"
+    # Primary MCP surface: tools (skills ride on resources, see below).
+    "mcp.ai/function-type": tools
+    # Skills over MCP: SKILL.md + references served under skill:// URIs.
+    "mcp.ai/skills": "true"
+    # MCP specification revision the server speaks (stateless core).
+    "mcp.ai/spec-version": "2026-07-28"
+    # The MCP transport is stateless (every request self-contained); the
+    # upstream browser session is cached per warm instance, hence poolSize 1.
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    # Marks the workload as MCP-sourced so Desktop applies the mcp.ai labels.
+    desktop.cosmonic.com/source: mcp
+    # Credentials the server can use (presence only). Optional: only a hosted
+    # upstream behind an authenticating proxy needs it. Same list as the
+    # `credentials` block on GET /.
+    desktop.cosmonic.com/credentials: '[{"ref":"playwright-mcp-token","env":"PLAYWRIGHT_BEARER_TOKEN","required":false,"description":"Optional bearer token, only for a hosted Playwright MCP endpoint behind an authenticating reverse proxy; the local npx @playwright/mcp server needs none","obtainUrl":"https://github.com/microsoft/playwright-mcp","scopes":[]}]'
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "playwright-mcp.localhost"
+  components:
+    - name: "playwright-mcp"
+      # Published image; Desktop pins the tag to a digest at apply time. For a
+      # local build use the digest-pinned oci.localhost:8200 ref promote returns.
+      image: "ghcr.io/cosmonic-labs/awesome-cosmonic/playwright-mcp:0.1.0"
+      # One instance = one cached upstream browser session (the session id
+      # lives in a static). More instances would mean more browser sessions
+      # with no affinity between calls.
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must equal the ingress host above.
+            MCP_ALLOWED_HOSTS: "playwright-mcp.localhost"
+            # The upstream's streamable-HTTP endpoint on this machine, reached
+            # through the Desktop loopback sentinel (must end in /mcp). Change
+            # the port here, in allowedHosts, allowedHostLoopbackPorts and the
+            # upstream's --port/--allowed-hosts together.
+            PLAYWRIGHT_BASE_URL: "http://host.wasmcloud.internal:8931/mcp"
+            # "true" lists and forwards browser_evaluate, browser_run_code_unsafe,
+            # browser_file_upload and browser_drop (arbitrary JS / host paths,
+            # outside the sandbox). Off by default.
+            PLAYWRIGHT_ALLOW_UNSAFE: "false"
+            # "true" (default) replaces the file-only "- [Snapshot](…)" link in
+            # action results with an inline accessibility snapshot (one extra
+            # upstream round-trip per action). "false" saves the round-trip.
+            PLAYWRIGHT_AUTO_SNAPSHOT: "true"
+            # Seconds the upstream tools/list is cached per warm instance
+            # (the tool set depends on the upstream's --caps).
+            PLAYWRIGHT_TOOLS_TTL_SECS: "300"
+            # Outbound deadline per upstream exchange. The upstream's own
+            # navigation timeout is 60 s and browser_wait_for may wait 60 s,
+            # so the template's 30 s default would cut long navigations.
+            MCP_OUTBOUND_TIMEOUT_MS: "90000"
+            # Largest upstream reply (screenshots come back as inline base64).
+            # Raise it (bytes) if fullPage PNG screenshots are needed.
+            # MCP_OUTBOUND_MAX_BYTES: "4194304"
+          # Optional: bearer token for a hosted upstream behind an
+          # authenticating proxy, injected as PLAYWRIGHT_BEARER_TOKEN by the
+          # ref (never inline a value). Register it first:
+          #   cosmonic_set_secret name=playwright-mcp-token
+          #     uri=keychain://cosmonic/playwright-mcp-token
+          #     env=PLAYWRIGHT_BEARER_TOKEN value=<token>
+          # secretFrom:
+          #   - name: playwright-mcp-token
+        # Outbound allow-list (deny-all when empty). Exactly the host the
+        # code dials:
+        allowedHosts:
+          # The @playwright/mcp streamable-HTTP listener on this machine
+          # (PLAYWRIGHT_BASE_URL). For a hosted upstream replace it with that
+          # hostname and drop the loopback grant below.
+          - "host.wasmcloud.internal:8931"
+        # Loopback grant for that port (inert until Desktop Settings ->
+        # Security -> "allow host loopback" is switched on).
+        allowedHostLoopbackPorts:
+          - "8931"
