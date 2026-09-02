@@ -210,6 +210,18 @@ world postgres-mcp {
 }
 ```
 
+**Toolchain floor for labeled imports** (measured on `postgres-mcp` and on
+Desktop's `cosmonic:credentials` spike): a labeled package-path import needs
+wit-parser ≥ 0.252, i.e. **wit-bindgen ≥ 0.60** (0.61.1 pairs with
+**wasip3 0.8.0**), and linking it needs **wasm-component-ld ≥ 0.5.30** (the
+copy Rust 1.97 bundles, 0.5.22, fails with "invalid leading byte (0x2) for
+import name"). The template's wasip3 0.7 / wit-bindgen 0.57.1 pairing cannot
+express such an import; bump both and install the linker project-locally
+(`cargo install wasm-component-ld --version 0.5.30 --root .tools`, pointed at
+by `.cargo/config.toml`, `.tools/` gitignored) as `postgres-mcp` does. The
+same floor applies to any server that will import
+`cosmonic:credentials/token@0.1.0` (Desktop Connections, cosmonic/desktop#481).
+
 The `url` config key (`postgres://user:pass@host:5432/db?sslmode=…`) comes from
 a secret ref whose `env` is literally `url` — hostInterfaces accept
 `configFrom`/`secretFrom` exactly like component environments. Host calls are
