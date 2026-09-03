@@ -239,10 +239,6 @@ html, body { margin: 0; padding: 0; background: var(--ground); }
 }
 .ff__step { color: var(--text); font-weight: 600; }
 .ff__step::before { content: "\203A "; color: var(--purple-bright); }
-/* A step that is a real link (cosmonic:// deep link into a Desktop lesson):
-   same chip look, with an underline affordance on hover. */
-a.ff__step { text-decoration: none; cursor: pointer; }
-a.ff__step:hover, a.ff__step:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
 
 .ff__reveal { opacity: 0; transform: translateY(10px); animation: ff-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
 .ff__reveal--1 { animation-delay: 0.05s; }
@@ -309,7 +305,7 @@ a.ff__step:hover, a.ff__step:focus-visible { text-decoration: underline; text-un
   </main>
 
   <p class="ff__next ff__reveal ff__reveal--6">
-    Next in Cosmonic Desktop: <a class="ff__step" href="cosmonic://navigate/academy/first-flight/inspect-your-workload">Inspect what you ran</a>.
+    Next: close this page, return to <span class="ff__step">Academy</span> in Cosmonic Desktop, and open <span class="ff__step">Inspect what you ran</span>.
   </p>
 </div>
 
