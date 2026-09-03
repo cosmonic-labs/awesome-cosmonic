@@ -239,6 +239,10 @@ html, body { margin: 0; padding: 0; background: var(--ground); }
 }
 .ff__step { color: var(--text); font-weight: 600; }
 .ff__step::before { content: "\203A "; color: var(--purple-bright); }
+/* A step that is a real link (cosmonic:// deep link into a Desktop lesson):
+   same chip look, with an underline affordance on hover. */
+a.ff__step { text-decoration: none; cursor: pointer; }
+a.ff__step:hover, a.ff__step:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
 
 .ff__reveal { opacity: 0; transform: translateY(10px); animation: ff-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
 .ff__reveal--1 { animation-delay: 0.05s; }
@@ -276,7 +280,7 @@ html, body { margin: 0; padding: 0; background: var(--ground); }
     <span class="ff__pill ff__reveal ff__reveal--2"><span class="ff__pdot"></span> Workload running</span>
     <h1 class="ff__title ff__reveal ff__reveal--3">You&rsquo;re flying.</h1>
     <p class="ff__sub ff__reveal ff__reveal--4">
-      This page is being served by a <b>WebAssembly component</b> running on your own machine.
+      This page is being served from a <b>sandbox</b> running on your own machine.
     </p>
 
     <div class="ff__console ff__reveal ff__reveal--5">
@@ -305,7 +309,7 @@ html, body { margin: 0; padding: 0; background: var(--ground); }
   </main>
 
   <p class="ff__next ff__reveal ff__reveal--6">
-    Next in Cosmonic Desktop: <span class="ff__step">Inspect</span> what just flew, then <span class="ff__step">Make it yours</span> and rebuild it.
+    Next in Cosmonic Desktop: <a class="ff__step" href="cosmonic://navigate/academy/first-flight/inspect-your-workload">Inspect what you ran</a>.
   </p>
 </div>
 
