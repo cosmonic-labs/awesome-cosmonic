@@ -1,0 +1,72 @@
+# Cosmonic Desktop deployment manifest.
+#
+# This is the project's only Workload manifest. For local iteration you do not
+# need it: `.wash/config.yaml` carries the labels, environment and outbound
+# allow-list, and Desktop's project mode (dev -> promote) builds a
+# digest-pinned Workload draft from them. Use this file to deploy a published
+# image, or as the reference for what a full Workload looks like.
+#
+# Note `poolSize` below — it is a component-level field, so it lives here and
+# NOT in .wash/config.yaml, which mirrors only components[].localResources.
+#
+# Deploy docs: https://cosmonic.com/docs/desktop
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  # The Workload keeps the name `ae-mcp` (and the ingress host below) even
+  # though the crate is `after-effects-mcp`: existing MCP client config points
+  # at this host, and there is no reason to break it.
+  name: ae-mcp
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior.
+  labels:
+    app.kubernetes.io/name: "ae-mcp"
+    app.kubernetes.io/version: "0.3.0"
+    app.kubernetes.io/managed-by: cosmonic-desktop
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "adobe-after-effects"
+    "mcp.ai/function-type": tools
+    # Skills over MCP: this server publishes SKILL.md playbooks as resources
+    # under skill:// URIs.
+    "mcp.ai/skills": "true"
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+    mcp.ai/agent-access: "internal-only"
+    mcp.ai/sandbox-isolation: "wasmtime"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "ae-mcp.localhost.cosmonic.sh"
+    # The bridge command queue; the component will not instantiate without it.
+    - namespace: wasi
+      package: keyvalue
+      interfaces:
+        - "store"
+  components:
+    - name: "mcp"
+      # Point at your published image; Desktop pins the tag to a digest at
+      # apply time. To deploy a locally promoted build instead, use the
+      # digest-pinned oci.localhost:8200 reference promote returns.
+      image: "ghcr.io/<org>/ae-mcp:0.3.0"
+      poolSize: 4
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host(s) above.
+            MCP_ALLOWED_HOSTS: "ae-mcp.localhost.cosmonic.sh"
+            MCP_BRIDGE_KEY_PREFIX: "ae"
+        # Outbound allow-list — empty means deny-all (fail-closed).
+        allowedHosts: []
