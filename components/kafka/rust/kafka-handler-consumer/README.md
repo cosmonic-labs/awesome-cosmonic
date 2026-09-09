@@ -37,9 +37,12 @@ they are. Once you change the source, build it, push it to your own
 registry, and set that reference instead.
 
 The broker address and topic names in the manifests are placeholders. The
-kafka `hostInterfaces[].config` is **host-pinned**: whatever is set there
-(broker, credentials, the topic grant, `handler.group.id`) wins over anything
-the component passes to `open`.
+workload's `cosmonic:kafka` entry under `hostInterfaces` is where the
+connection lives — broker, credentials, the topic grant, `handler.group.id` —
+and whatever it sets wins over anything the component passes to `open`. Use
+`secretFrom` for the credential rather than inlining it. An operator can move
+all of this to the host's own plugin configuration instead; see
+[the pattern guide](../../README.md#where-the-broker-and-credentials-are-configured).
 
 Some keys are the host's, and a workload setting one is refused. They are the
 ones that would hand the host process a capability: loading native code
