@@ -16,6 +16,6 @@ name = "wasi:cli"
 registry = "wasi.dev"
 
 [[packages.versions]]
-requirement = "=0.2.0"
-version = "0.2.0"
-digest = "sha256:e7e85458e11caf76554b724ebf4f113259decf0f3b1ee2e2930de096f72114a7"
+requirement = "=0.3.0"
+version = "0.3.0"
+digest = "sha256:3a2d58743b67a057f7210b9a73d3b21b34ec7895ffe34d1cb092927307156e40"

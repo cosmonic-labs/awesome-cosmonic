@@ -62,6 +62,14 @@ jobs:
           - name: kafka-transactional
             expect: "export wasi:cli/run"
 
+    # Job-wide, not per-step: `wash build` runs a WIT fetch of its own before
+    # it runs the build command, so the registry mapping has to be visible to
+    # every step that shells out to wash — not only the explicit fetch below.
+    # Without it the build fails with `no registry configured for namespace
+    # "cosmonic"` even though the dependencies are already on disk.
+    env:
+      WKG_CONFIG_FILE: ${{ github.workspace }}/templates/kafka/wkg-registries.toml
+
     defaults:
       run:
         working-directory: templates/kafka/rust/${{ matrix.name }}
@@ -89,8 +97,6 @@ jobs:
       # documented first-build path honest — if the registry mapping or a
       # pinned version rots, this fails rather than a user's first attempt.
       - name: Fetch the WIT dependencies
-        env:
-          WKG_CONFIG_FILE: ${{ github.workspace }}/templates/kafka/wkg-registries.toml
         run: wash wit fetch
 
       # Runs each template's own `.wash/config.yaml`, so CI builds the way the
