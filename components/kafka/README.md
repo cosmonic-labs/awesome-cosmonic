@@ -36,6 +36,53 @@ against a real broker, not estimated.
 | **kafka-pull-service** | Long-running Service owns consumer + producer, batches, commits explicitly | at-least-once; your own DLQ routing | The workhorse: consume→transform→produce pipelines, aggregation windows, anything needing batching (`send-batch`), custom offset/commit policy, or a long-lived producer | You need exactly-once (see transactional) or truly trivial per-record work with no produce (handler is less code) |
 | **kafka-transactional** | Pull service + transactions: outputs and input offsets commit atomically | exactly-once (read-process-write) | Money, inventory, dedup-sensitive enrichment — anywhere a replayed or half-applied batch is unacceptable and downstream reads `read_committed` | Throughput matters more than duplicates (txn round trips cost); side effects leave Kafka (a DB write isn't covered by the transaction — then at-least-once + idempotent writes is the honest design) |
 
+## Where the broker and credentials are configured
+
+In the workload's own `cosmonic:kafka` entry under `hostInterfaces`, which is
+what every manifest here shows. That entry is the binding: `bootstrap.servers`,
+`security.protocol`, the SASL or TLS material, the topic grant, and the
+handler keys all live there, and the component never sees a broker address in
+its code.
+
+The plugin claims none of those keys deliberately. It owns the ones that would
+hand the *host process* a capability (see the rule below), and leaves the
+connection, the credential and the topics to the workload — which is what lets
+two workloads on one host reach different clusters as different principals.
+
+Secrets do not belong inline. `config` is for plain values, `configFrom` pulls
+a ConfigMap, and `secretFrom` pulls a Secret; the three merge in that order,
+so a password reaches librdkafka without appearing in the manifest:
+
+```yaml
+hostInterfaces:
+  - namespace: cosmonic
+    package: kafka
+    version: 0.3.0
+    interfaces: [producer, types]
+    config:
+      bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
+      security.protocol: SASL_SSL
+      sasl.mechanism: SCRAM-SHA-512
+      topics: "demo.events"
+    secretFrom:
+      - kafka-credentials      # sasl.username, sasl.password, ssl.ca.pem, ...
+```
+
+Whatever that entry sets wins over anything the component passes to
+`producer.open`/`consumer.open`, so a guest cannot redirect itself at another
+broker or substitute its own credential. A guest's own config is only consulted
+for keys the entry leaves unset.
+
+**An operator can take this over.** A host's plugin configuration accepts the
+same `config`/`configFrom`/`secretFrom`, plus named `bindings` a workload
+selects by label. Two settings decide how much a workload may still say:
+`hostOwnedKeys` claims additional keys for the host, and `workloadConfig`
+(`deny` by default) fails the deploy of a workload that sets a host-owned key
+or widens a grant declared for it. A platform team that owns the cluster puts
+the broker and credentials there once, and workloads name only the label and
+the topics they need. These templates take the self-contained route instead,
+so each runs on its own.
+
 ### Rules that apply to every pattern
 
 - **`handler.topics` and `topics` are different keys.** `handler.topics` is
@@ -44,9 +91,9 @@ against a real broker, not estimated.
   handler that reads one topic and writes another cannot express that with one
   key. Grant exactly what the workload touches; a pure handler needs no
   `topics` at all.
-- **The host pins whatever the manifest sets** (`bootstrap.servers`, creds,
-  the topic grant, `handler.group.id`, `transactional.id`) — guests cannot
-  override it. Put policy in the manifest, not the code.
+- **The binding entry beats the guest** (`bootstrap.servers`, creds, the topic
+  grant, `handler.group.id`, `transactional.id`) — a component cannot override
+  what the manifest sets. Put policy in the manifest, not the code.
 - **Some keys are the host's and are refused to a workload:** anything that
   loads native code (`plugin.library.paths`, `ssl.engine.location`,
   `ssl.providers`), reads a host file by path (the `ssl.*.location` keys,
