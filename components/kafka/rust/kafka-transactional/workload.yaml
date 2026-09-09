@@ -1,7 +1,7 @@
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: Workload
 metadata:
-  name: kafka-pull-service
+  name: kafka-transactional
   namespace: default
 spec:
   hostInterfaces:
@@ -12,17 +12,21 @@ spec:
       config:
         bootstrap.servers: 127.0.0.1:9092
         broker.address.family: v4
-        # Grant every topic the service touches: input, output, and its DLQ.
-        topics: "demo.events,demo.enriched,demo.events.dlq"
+        topics: "demo.events,demo.enriched"
+        # One stable transactional.id per logical pipeline: it is the fencing
+        # token that makes restarts safe. Host-pinned here so a guest cannot
+        # change it.
+        transactional.id: "demo-pipeline-txn-1"
   components:
     - name: pipeline
-      image: ghcr.io/CHANGEME/kafka-pull-service:0.1.0
+      # Prebuilt from this template on every push to main. Swap it for your
+      # own registry once you change the source.
+      image: ghcr.io/cosmonic-labs/kafka-templates/kafka-transactional:latest
       localResources:
         environment:
           config:
             IN_TOPIC: demo.events
             OUT_TOPIC: demo.enriched
-            DLQ_TOPIC: demo.events.dlq
-            GROUP_ID: demo-pipeline-g1
+            GROUP_ID: demo-txn-g1
             BATCH_SIZE: "100"
         allowedHosts: []

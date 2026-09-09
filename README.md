@@ -48,6 +48,15 @@ Reusable WebAssembly components that implement a WIT interface. Hosted projects 
 
 _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
+### Kafka
+
+Starting points for Kafka workloads on `cosmonic:kafka@0.3.0`, one per delivery pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/kafka/`](components/kafka/).
+
+- [http-kafka-producer](components/kafka/rust/http-kafka-producer/) (hosted): HTTP request in, Kafka record out, through `cosmonic:kafka/producer`. The ingest-gateway shape.
+- [kafka-handler-consumer](components/kafka/rust/kafka-handler-consumer/) (hosted): The host owns the consumer and pushes batches into an exported `cosmonic:kafka/handler`, so the component holds no offsets and can be per-request. Least code of the four.
+- [kafka-pull-service](components/kafka/rust/kafka-pull-service/) (hosted): A long-running service owning its own consumer and producer, for consume-transform-produce with your own batching and commit policy.
+- [kafka-transactional](components/kafka/rust/kafka-transactional/) (hosted): The pull service plus transactions, so output records and input offsets commit atomically — exactly-once read-process-write.
+
 ### MCP Servers
 
 [Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).

@@ -1,16 +1,26 @@
-# Golden Kafka templates for Cosmonic Desktop
+# Golden Kafka templates for Cosmonic
 
 Clone-and-customize starting points for building Kafka workloads on Cosmonic
 (`cosmonic:kafka@0.3.0` on wasmCloud 2.8), in the style of
 [mcp-server-template-rs](https://github.com/cosmonic-labs/mcp-server-template-rs):
 each template is a self-contained project — source, a `wkg.lock` pinning the
-WIT it fetches, a Cosmonic Desktop `workload.yaml`, and a Kubernetes
+WIT it fetches, a Cosmonic `workload.yaml`, and a Kubernetes
 `deploy/workload-deployment.yaml`.
+
+Every manifest points at a prebuilt component published from this directory,
+so a pattern can be deployed and watched before any of it is built locally.
+
+To start from one of these without cloning the repository:
+
+```console
+wash new https://github.com/cosmonic-labs/awesome-cosmonic \
+  --subfolder components/kafka/rust/kafka-handler-consumer
+```
 
 Four patterns, in Rust:
 
 ```
-templates/kafka/
+components/kafka/
   rust/   http-kafka-producer | kafka-handler-consumer | kafka-pull-service | kafka-transactional
 ```
 

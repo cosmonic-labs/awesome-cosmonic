@@ -8,7 +8,9 @@ spec:
   template:
     spec:
       service:
-        image: ghcr.io/CHANGEME/kafka-pull-service:0.1.0
+        # Prebuilt from this template; swap for your own registry once you
+        # change the source. Pin a `sha-<commit>` tag if you need one image.
+        image: ghcr.io/cosmonic-labs/kafka-templates/kafka-pull-service:latest
         maxRestarts: 100
       hostInterfaces:
         - namespace: cosmonic

@@ -10,6 +10,8 @@ either way.
 Components serving a well-known protocol are grouped into a subdirectory:
 
 - [`mcp-servers/`](mcp-servers/): Model Context Protocol servers.
+- [`kafka/`](kafka/): Kafka workloads on `cosmonic:kafka`, one directory per
+  delivery pattern.
 
 Everything else lives directly in this directory.
 

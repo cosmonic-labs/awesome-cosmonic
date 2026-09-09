@@ -28,12 +28,15 @@ To stop passing the variable, merge the entries from
 
 ## Deploy
 
-- **Cosmonic Desktop**: push the component to a registry (or use the Desktop
-  local registry), set the image in `workload.yaml`, and apply it.
+- **Cosmonic**: apply `workload.yaml`.
 - **Kubernetes** (wasmCloud runtime-operator / Cosmonic Control):
   `deploy/workload-deployment.yaml`.
 
-Every `CHANGEME` in the manifests needs your registry/broker values. The
+Both point at the component published from this template, so they run as
+they are. Once you change the source, build it, push it to your own
+registry, and set that reference instead.
+
+The broker address and topic names in the manifests are placeholders. The
 kafka `hostInterfaces[].config` is **host-pinned**: whatever is set there
 (broker, topics grant, group.id, ...) wins over anything the component passes.
 
