@@ -14,8 +14,8 @@ templates/kafka/
   rust/   http-kafka-producer | kafka-handler-consumer | kafka-pull-service | kafka-transactional
 ```
 
-Every design guideline and number cited below was measured in this repo's
-k8s performance campaign (`../k8s-perf/RESULTS/REPORT.md`).
+Every design guideline and number cited below was measured on Kubernetes
+against a real broker, not estimated.
 
 ## Which pattern do I want?
 

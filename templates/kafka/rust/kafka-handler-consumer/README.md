@@ -53,4 +53,4 @@ than as file paths.
 ## Tuning notes (measured, wasmCloud 2.8 / cosmonic:kafka 0.3.0)
 
 See the header comment in `src/lib.rs` — it carries the numbers for this
-pattern — and the campaign report in `k8s-perf/RESULTS/REPORT.md`.
+pattern.
