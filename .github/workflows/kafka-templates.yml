@@ -51,20 +51,15 @@ jobs:
       matrix:
         include:
           - name: http-kafka-producer
-            # The crate name with dashes, which is what cargo writes.
-            artifact: http_kafka_producer
             # Losing this export is a deployment failure with an opaque
             # message, so it is worth catching as a build failure with an
             # obvious one.
             expect: "export wasi:http/handler"
           - name: kafka-handler-consumer
-            artifact: kafka_handler_consumer
             expect: "export cosmonic:kafka/handler"
           - name: kafka-pull-service
-            artifact: kafka_pull_service
             expect: "export wasi:cli/run"
           - name: kafka-transactional
-            artifact: kafka_transactional
             expect: "export wasi:cli/run"
 
     defaults:
@@ -98,24 +93,27 @@ jobs:
           WKG_CONFIG_FILE: ${{ github.workspace }}/templates/kafka/wkg-registries.toml
         run: wash wit fetch
 
+      # Runs each template's own `.wash/config.yaml`, so CI builds the way the
+      # READMEs tell a reader to and reports back where the component landed
+      # rather than this workflow reconstructing the path per template.
       - name: Build the component
-        run: cargo build --release
+        id: build
+        uses: wasmCloud/actions/wash-build@v2.0.0
+        with:
+          working-directory: templates/kafka/rust/${{ matrix.name }}
 
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-tools
 
-      # The two checks a `cargo build` cannot make: that the output is a valid
+      # The two checks a build cannot make: that the output is a valid
       # component at all, and that it still exports what a host looks for.
       - name: Validate the component
+        env:
+          COMPONENT: ${{ steps.build.outputs.component_path }}
         run: |
-          artifact="target/wasm32-wasip2/release/${{ matrix.artifact }}.wasm"
-          test -f "$artifact" || {
-            echo "::error::no component at $artifact"
-            exit 1
-          }
-          wasm-tools validate --features all "$artifact"
-          wit=$(wasm-tools component wit "$artifact")
+          wasm-tools validate --features all "$COMPONENT"
+          wit=$(wasm-tools component wit "$COMPONENT")
           echo "$wit"
           echo "$wit" | grep -q -- "${{ matrix.expect }}" || {
             echo "::error::component no longer has '${{ matrix.expect }}'"
@@ -125,7 +123,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: templates/kafka/rust/${{ matrix.name }}/target/wasm32-wasip2/release/${{ matrix.artifact }}.wasm
+          path: ${{ steps.build.outputs.component_path }}
           if-no-files-found: error
 
       # Pull requests build and validate but never publish: a fork's token
@@ -134,11 +132,12 @@ jobs:
       #
       # `wasmCloud/actions/wash-oci-publish` does this job upstream and this
       # mirrors its shape — log in with `docker/login-action`, then let
-      # `wash oci push` read those credentials. It is not used directly
-      # because it derives the image name from `$GITHUB_REPOSITORY` with no
-      # way to override it, which would push all four templates to one
-      # `awesome-cosmonic` package separated only by tag. A repository that
-      # collects many unrelated examples needs a name per component.
+      # `wash oci push` read those credentials. It is the one action here not
+      # used directly, because it derives the image name from
+      # `$GITHUB_REPOSITORY` with no way to override it, which would push all
+      # four templates to one `awesome-cosmonic` package separated only by
+      # tag. A repository that collects many unrelated examples needs a name
+      # per component.
       - name: Log in to GHCR
         if: >-
           github.event_name != 'pull_request' &&
@@ -154,8 +153,9 @@ jobs:
         if: >-
           github.event_name != 'pull_request' &&
           github.repository == 'cosmonic-labs/awesome-cosmonic'
+        env:
+          COMPONENT: ${{ steps.build.outputs.component_path }}
         run: |
-          artifact="target/wasm32-wasip2/release/${{ matrix.artifact }}.wasm"
           image="ghcr.io/cosmonic-labs/kafka-templates/${{ matrix.name }}"
 
           # A tag push is a release and carries the version it names; anything
@@ -173,7 +173,7 @@ jobs:
           digest=""
           for tag in $tags; do
             echo "pushing ${image}:${tag}"
-            pushed=$(wash oci push --output json "${image}:${tag}" "$artifact")
+            pushed=$(wash oci push --output json "${image}:${tag}" "$COMPONENT")
             digest=$(echo "$pushed" | jq -er .data.digest) || {
               echo "::error::push reported no digest: $pushed"
               exit 1

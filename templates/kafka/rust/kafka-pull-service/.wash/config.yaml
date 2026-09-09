@@ -1,0 +1,13 @@
+build:
+  # The target is spelled out rather than left to `.cargo/config.toml`, so
+  # this still builds a component if that file is edited or dropped.
+  # wasm32-wasip2 is required: `cosmonic:kafka@0.3.0`'s functions are all
+  # `async func`, which needs the p3 bindings wit-bindgen generates on top of
+  # a p2 core module.
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/kafka_pull_service.wasm
+
+# No `dev:` block. `wash dev` would have to serve `cosmonic:kafka` itself,
+# and the implementation this template is written against is a native plugin
+# inside Cosmonic Control's host rather than a component plugin `wash dev`
+# can load from a path. Deploy to a Control host instead — see the README.
