@@ -23,6 +23,9 @@ on:
       - ".github/workflows/kafka-templates.yml"
   workflow_dispatch:
 
+# Publishing needs more than `contents`, and attestation more again: the
+# provenance is signed with a workflow identity (`id-token`) and recorded
+# against the repository (`attestations`).
 permissions:
   contents: read
 
@@ -39,6 +42,9 @@ jobs:
       contents: read
       # `wash oci push` authenticates to GHCR as the workflow.
       packages: write
+      # For the build provenance attached to each published component.
+      attestations: write
+      id-token: write
     strategy:
       # Each template is independent, so one failing should not hide the others.
       fail-fast: false
@@ -125,13 +131,29 @@ jobs:
       # Pull requests build and validate but never publish: a fork's token
       # cannot write packages, and an unreviewed change should not become the
       # image someone pulls.
-      - name: Publish to GHCR
+      #
+      # `wasmCloud/actions/wash-oci-publish` does this job upstream and this
+      # mirrors its shape — log in with `docker/login-action`, then let
+      # `wash oci push` read those credentials. It is not used directly
+      # because it derives the image name from `$GITHUB_REPOSITORY` with no
+      # way to override it, which would push all four templates to one
+      # `awesome-cosmonic` package separated only by tag. A repository that
+      # collects many unrelated examples needs a name per component.
+      - name: Log in to GHCR
         if: >-
           github.event_name != 'pull_request' &&
           github.repository == 'cosmonic-labs/awesome-cosmonic'
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GHCR
+        id: publish
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
         run: |
           artifact="target/wasm32-wasip2/release/${{ matrix.artifact }}.wasm"
           image="ghcr.io/cosmonic-labs/kafka-templates/${{ matrix.name }}"
@@ -148,8 +170,28 @@ jobs:
               ;;
           esac
 
+          digest=""
           for tag in $tags; do
             echo "pushing ${image}:${tag}"
-            wash oci push "${image}:${tag}" "$artifact" \
-              --user "$GHCR_USER" --password "$GHCR_TOKEN" --non-interactive
+            pushed=$(wash oci push --output json "${image}:${tag}" "$artifact")
+            digest=$(echo "$pushed" | jq -er .data.digest) || {
+              echo "::error::push reported no digest: $pushed"
+              exit 1
+            }
+            echo "pushed ${image}:${tag} ($digest)"
           done
+          # Every tag carries the same bytes, so one digest describes them all.
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      # Provenance for something a newcomer is told to pull and run: it ties
+      # the published bytes back to this workflow and this commit.
+      - name: Attest the published component
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
