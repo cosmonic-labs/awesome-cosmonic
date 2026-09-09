@@ -1,0 +1,24 @@
+# Registry mapping for `wkg` / `wash wit fetch`.
+#
+# `cosmonic:kafka` is published to a registry the tools do not know by
+# default, so fetching a template's WIT dependencies needs this mapping.
+# Point a tool at it per command:
+#
+#   WKG_CONFIG_FILE=../../wkg-registries.toml wash wit fetch
+#
+# run from a template directory, or merge these entries into
+# `~/.config/wasm-pkg/config.toml` once for a standing local setup.
+#
+# This is a `wasm-pkg-common` config file, not a `wkg.toml` manifest — that
+# schema has no `namespace_registries` field.
+#
+# Self-contained rather than additive: `WKG_CONFIG_FILE` replaces a tool's
+# config wholesale rather than merging with its built-in defaults, so `wasi`
+# and `wasmcloud` are repeated here even though `wash` already knows them.
+# Without that, every `wasi:*` import in these templates would stop
+# resolving the moment this file is in play.
+[namespace_registries]
+cosmonic = "cosmonic.com"
+wasi = "wasi.dev"
+ba = "bytecodealliance.org"
+wasmcloud = "wasmcloud.com"

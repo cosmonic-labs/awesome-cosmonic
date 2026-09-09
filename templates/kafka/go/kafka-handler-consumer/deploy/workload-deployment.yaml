@@ -10,6 +10,7 @@ spec:
       components:
         - name: consumer
           image: ghcr.io/CHANGEME/kafka-handler-consumer-go:0.1.0
+          poolSize: 4
       hostInterfaces:
         - namespace: cosmonic
           package: kafka
@@ -18,7 +19,16 @@ spec:
           config:
             bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
             broker.address.family: v4
-            topics: "demo.events"
-            group.id: "demo-events-handler"
+            # The subscription. `topics` is the separate produce/consume
+            # grant, which a pure handler does not need.
+            handler.topics: "demo.events"
+            # Required, and stable across redeploys: it is what makes a
+            # rolling update resume where the old replicas stopped.
+            handler.group.id: "demo-events-handler"
             auto.offset.reset: earliest
             dead-letter.topic: "demo.events.dlq"
+            # Cooperative by default, so scaling replicas moves only the
+            # partitions that change hands. Every member of a group must
+            # agree, so do not mix strategies across deployments that share
+            # `handler.group.id`.
+            # partition.assignment.strategy: cooperative-sticky
