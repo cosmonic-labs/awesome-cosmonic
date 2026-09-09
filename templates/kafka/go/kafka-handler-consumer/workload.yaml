@@ -12,21 +12,38 @@ spec:
       config:
         bootstrap.servers: 127.0.0.1:9092
         broker.address.family: v4
-        # `topics` is BOTH the subscription list and the produce/consume
-        # grant. This handler consumes demo.events only.
-        topics: "demo.events"
-        # Stable group id — without one the driver derives
-        # {ns}/{workload}/{component}-handler, which collides if two
-        # installations share a broker.
-        group.id: "demo-events-handler"
+        # What the host subscribes to and dispatches from. Distinct from
+        # `topics`: a handler that reads one topic and produces to another
+        # cannot express that with a single key — put the input here and the
+        # output in the grant below.
+        handler.topics: "demo.events"
+        # The grant: what this component's own producer/consumer calls may
+        # name. A pure handler imports neither and needs none, so it is left
+        # unset here. Add the output topic if you add `producer` to
+        # `interfaces` above.
+        # topics: "demo.enriched"
+        # Required, never derived. Nothing the host can see is scoped to an
+        # installation, so a derived group would be identical across two
+        # installations of this manifest and a shared broker would split the
+        # records between them. Not spelled `group.id`: that pins the group
+        # for a consumer the guest opens itself, which is a different thing.
+        handler.group.id: "demo-events-handler"
         auto.offset.reset: earliest
-        # ALWAYS set a DLQ: a `permanent` error without one stalls the
-        # partition forever.
+        # Required. Past the redelivery cap a permanently failed record has
+        # to go somewhere; without this the partition stalls instead.
         dead-letter.topic: "demo.events.dlq"
+        # Records per `handle` call: 1 to 10000, and only as many as fit
+        # about 1 MiB. Default 100. The call deadline covers the whole
+        # batch, so lower it if you spend seconds per record.
+        # handler.batch.size: "100"
   components:
     - name: consumer
       image: ghcr.io/CHANGEME/kafka-handler-consumer-go:0.1.0
-      # poolSize/maxConcurrency do not apply to handler dispatch — scale
-      # with partitions x replicas instead.
+      # Dispatch runs one loop per assigned partition, so a replica handles
+      # as many batches at once as it holds partitions. `poolSize` keeps
+      # instances warm for those calls, and `maxConcurrency` bounds how many
+      # share one instance. Total throughput is still capped by partitions x
+      # replicas.
+      poolSize: 4
       localResources:
         allowedHosts: []

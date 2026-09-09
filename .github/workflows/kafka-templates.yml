@@ -1,0 +1,155 @@
+# Builds the Rust Kafka templates and publishes them to GHCR.
+#
+# The templates exist to be handed to someone trying Kafka on Cosmonic for the
+# first time, so the useful gate is not "does it compile" but "does the
+# documented path still work end to end": fetch the WIT from the registry,
+# build a component, and check it still exports what a host will look for when
+# it loads it. Publishing means that person can deploy a manifest without
+# building anything at all.
+name: kafka-templates
+
+on:
+  push:
+    branches: [main]
+    tags: ["kafka-templates/v*"]
+    paths:
+      - "templates/kafka/rust/**"
+      - "templates/kafka/wkg-registries.toml"
+      - ".github/workflows/kafka-templates.yml"
+  pull_request:
+    paths:
+      - "templates/kafka/rust/**"
+      - "templates/kafka/wkg-registries.toml"
+      - ".github/workflows/kafka-templates.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes this run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `wash oci push` authenticates to GHCR as the workflow.
+      packages: write
+    strategy:
+      # Each template is independent, so one failing should not hide the others.
+      fail-fast: false
+      matrix:
+        include:
+          - name: http-kafka-producer
+            # The crate name with dashes, which is what cargo writes.
+            artifact: http_kafka_producer
+            # Losing this export is a deployment failure with an opaque
+            # message, so it is worth catching as a build failure with an
+            # obvious one.
+            expect: "export wasi:http/handler"
+          - name: kafka-handler-consumer
+            artifact: kafka_handler_consumer
+            expect: "export cosmonic:kafka/handler"
+          - name: kafka-pull-service
+            artifact: kafka_pull_service
+            expect: "export wasi:cli/run"
+          - name: kafka-transactional
+            artifact: kafka_transactional
+            expect: "export wasi:cli/run"
+
+    defaults:
+      run:
+        working-directory: templates/kafka/rust/${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the wasm target
+        run: |
+          rustup update stable --no-self-update
+          rustup target add wasm32-wasip2
+
+      # `wash-version` defaults to `latest`. Deliberately not pinned: these
+      # templates track an evolving host interface, so CI finding out that a
+      # new wash no longer builds them is the point rather than the failure
+      # mode.
+      - uses: wasmCloud/setup-wash-action@v2.1.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: templates/kafka/rust/${{ matrix.name }}
+
+      # The whole reason `wit/deps/` is gitignored: the WIT comes from the
+      # registry, pinned by `wkg.lock`. Running it here is what keeps the
+      # documented first-build path honest — if the registry mapping or a
+      # pinned version rots, this fails rather than a user's first attempt.
+      - name: Fetch the WIT dependencies
+        env:
+          WKG_CONFIG_FILE: ${{ github.workspace }}/templates/kafka/wkg-registries.toml
+        run: wash wit fetch
+
+      - name: Build the component
+        run: cargo build --release
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      # The two checks a `cargo build` cannot make: that the output is a valid
+      # component at all, and that it still exports what a host looks for.
+      - name: Validate the component
+        run: |
+          artifact="target/wasm32-wasip2/release/${{ matrix.artifact }}.wasm"
+          test -f "$artifact" || {
+            echo "::error::no component at $artifact"
+            exit 1
+          }
+          wasm-tools validate --features all "$artifact"
+          wit=$(wasm-tools component wit "$artifact")
+          echo "$wit"
+          echo "$wit" | grep -q -- "${{ matrix.expect }}" || {
+            echo "::error::component no longer has '${{ matrix.expect }}'"
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: templates/kafka/rust/${{ matrix.name }}/target/wasm32-wasip2/release/${{ matrix.artifact }}.wasm
+          if-no-files-found: error
+
+      # Pull requests build and validate but never publish: a fork's token
+      # cannot write packages, and an unreviewed change should not become the
+      # image someone pulls.
+      - name: Publish to GHCR
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          artifact="target/wasm32-wasip2/release/${{ matrix.artifact }}.wasm"
+          image="ghcr.io/cosmonic-labs/kafka-templates/${{ matrix.name }}"
+
+          # A tag push is a release and carries the version it names; anything
+          # else is whatever main happens to be right now.
+          case "${GITHUB_REF}" in
+            refs/tags/kafka-templates/v*)
+              version="${GITHUB_REF#refs/tags/kafka-templates/v}"
+              tags="${version} latest"
+              ;;
+            *)
+              tags="sha-${GITHUB_SHA:0:12}"
+              ;;
+          esac
+
+          for tag in $tags; do
+            echo "pushing ${image}:${tag}"
+            wash oci push "${image}:${tag}" "$artifact" \
+              --user "$GHCR_USER" --password "$GHCR_TOKEN" --non-interactive
+          done

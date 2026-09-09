@@ -11,8 +11,16 @@ cargo build --release        # target defaults to wasm32-wasip2 (.cargo/config.t
 # component: target/wasm32-wasip2/release/kafka_pull_service.wasm
 ```
 
-The `cosmonic:kafka@0.3.0` WIT and its dependencies are vendored under
-`wit/deps/` — no registry fetch needed.
+The `cosmonic:kafka@0.3.0` WIT and its dependencies come from the registry
+rather than the repository, so fetch them once before the first build:
+
+```sh
+WKG_CONFIG_FILE=../../wkg-registries.toml wash wit fetch
+```
+
+`wkg.lock` pins the exact versions, `wit/deps/` is gitignored, and
+[`../../wkg-registries.toml`](../../wkg-registries.toml) is what maps the
+`cosmonic` namespace to the registry serving it.
 
 ## Deploy
 
