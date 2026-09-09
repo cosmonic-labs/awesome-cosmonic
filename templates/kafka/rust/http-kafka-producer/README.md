@@ -7,9 +7,13 @@ See `../../README.md` for when to choose this pattern over the others.
 Prereqs: Rust 1.85+, `rustup target add wasm32-wasip2`.
 
 ```sh
-cargo build --release        # target defaults to wasm32-wasip2 (.cargo/config.toml)
+wash build                   # runs the command in .wash/config.yaml
 # component: target/wasm32-wasip2/release/http_kafka_producer.wasm
 ```
+
+`cargo build --release` produces the same component — `.wash/config.yaml`
+just names that command and where its output lands, which is what lets
+tooling find the artifact without being told.
 
 The `cosmonic:kafka@0.3.0` WIT and its dependencies come from the registry
 rather than the repository, so fetch them once before the first build:

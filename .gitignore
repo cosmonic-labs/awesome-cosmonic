@@ -25,8 +25,12 @@ build/
 dist/
 **/*.wasm
 
-# wash
-.wash/
+# wash keeps local state here, but `config.yaml` is a project's source: it is
+# what names the build command and where the component lands, so `wash build`
+# and CI both need it. Matched as `.wash/*` rather than `.wash/` so git still
+# descends into the directory and the negation below can take effect.
+.wash/*
+!.wash/config.yaml
 
 # Go
 vendor/
