@@ -38,7 +38,9 @@ spec:
         # handler.batch.size: "100"
   components:
     - name: consumer
-      image: ghcr.io/CHANGEME/kafka-handler-consumer:0.1.0
+      # Prebuilt from this template on every push to main. Swap it for your
+      # own registry once you change the source.
+      image: ghcr.io/cosmonic-labs/kafka-templates/kafka-handler-consumer:latest
       # Dispatch runs one loop per assigned partition, so a replica handles
       # as many batches at once as it holds partitions. `poolSize` keeps
       # instances warm for those calls, and `maxConcurrency` bounds how many

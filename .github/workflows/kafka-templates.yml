@@ -13,13 +13,13 @@ on:
     branches: [main]
     tags: ["kafka-templates/v*"]
     paths:
-      - "templates/kafka/rust/**"
-      - "templates/kafka/wkg-registries.toml"
+      - "components/kafka/rust/**"
+      - "components/kafka/wkg-registries.toml"
       - ".github/workflows/kafka-templates.yml"
   pull_request:
     paths:
-      - "templates/kafka/rust/**"
-      - "templates/kafka/wkg-registries.toml"
+      - "components/kafka/rust/**"
+      - "components/kafka/wkg-registries.toml"
       - ".github/workflows/kafka-templates.yml"
   workflow_dispatch:
 
@@ -68,11 +68,11 @@ jobs:
     # Without it the build fails with `no registry configured for namespace
     # "cosmonic"` even though the dependencies are already on disk.
     env:
-      WKG_CONFIG_FILE: ${{ github.workspace }}/templates/kafka/wkg-registries.toml
+      WKG_CONFIG_FILE: ${{ github.workspace }}/components/kafka/wkg-registries.toml
 
     defaults:
       run:
-        working-directory: templates/kafka/rust/${{ matrix.name }}
+        working-directory: components/kafka/rust/${{ matrix.name }}
 
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: templates/kafka/rust/${{ matrix.name }}
+          workspaces: components/kafka/rust/${{ matrix.name }}
 
       # The whole reason `wit/deps/` is gitignored: the WIT comes from the
       # registry, pinned by `wkg.lock`. Running it here is what keeps the
@@ -106,7 +106,7 @@ jobs:
         id: build
         uses: wasmCloud/actions/wash-build@v2.0.0
         with:
-          working-directory: templates/kafka/rust/${{ matrix.name }}
+          working-directory: components/kafka/rust/${{ matrix.name }}
 
       - uses: taiki-e/install-action@v2
         with:
@@ -165,14 +165,18 @@ jobs:
           image="ghcr.io/cosmonic-labs/kafka-templates/${{ matrix.name }}"
 
           # A tag push is a release and carries the version it names; anything
-          # else is whatever main happens to be right now.
+          # else is whatever main happens to be right now. Both move `latest`,
+          # because that is the reference the templates' own manifests use —
+          # someone deploying one to try Kafka should get a component without
+          # first hunting for a tag that exists. The immutable `sha-` tag is
+          # what to pin to when that matters.
           case "${GITHUB_REF}" in
             refs/tags/kafka-templates/v*)
               version="${GITHUB_REF#refs/tags/kafka-templates/v}"
               tags="${version} latest"
               ;;
             *)
-              tags="sha-${GITHUB_SHA:0:12}"
+              tags="sha-${GITHUB_SHA:0:12} latest"
               ;;
           esac
 

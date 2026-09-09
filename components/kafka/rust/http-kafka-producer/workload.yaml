@@ -1,4 +1,4 @@
-# Cosmonic Desktop workload (apply with `cosmonic_apply_workload` or the API).
+# Cosmonic workload (apply with `cosmonic_apply_workload` or the API).
 # Reach it at http://http-kafka-producer.localhost:8200/
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: Workload
@@ -27,7 +27,9 @@ spec:
         topics: "demo.events"
   components:
     - name: producer
-      image: ghcr.io/CHANGEME/http-kafka-producer:0.1.0
+      # Prebuilt from this template on every push to main. Swap it for your
+      # own registry once you change the source.
+      image: ghcr.io/cosmonic-labs/kafka-templates/http-kafka-producer:latest
       poolSize: 4
       # Leave maxConcurrency at default (1): combining poolSize>1 with
       # maxConcurrency>1 on a client-per-request producer measured 14x slower.

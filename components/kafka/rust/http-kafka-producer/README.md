@@ -1,4 +1,4 @@
-# kafka-handler-consumer (Rust)
+# http-kafka-producer (Rust)
 
 See `../../README.md` for when to choose this pattern over the others.
 
@@ -14,7 +14,7 @@ prefixing a single `wash wit fetch` is not enough:
 ```sh
 export WKG_CONFIG_FILE="$PWD/../../wkg-registries.toml"
 wash build                   # fetches the WIT, then runs .wash/config.yaml
-# component: target/wasm32-wasip2/release/kafka_handler_consumer.wasm
+# component: target/wasm32-wasip2/release/http_kafka_producer.wasm
 ```
 
 `wkg.lock` pins the exact versions and `wit/deps/` is gitignored, so the
@@ -28,27 +28,17 @@ To stop passing the variable, merge the entries from
 
 ## Deploy
 
-- **Cosmonic Desktop**: push the component to a registry (or use the Desktop
-  local registry), set the image in `workload.yaml`, and apply it.
+- **Cosmonic**: apply `workload.yaml`.
 - **Kubernetes** (wasmCloud runtime-operator / Cosmonic Control):
   `deploy/workload-deployment.yaml`.
 
-Every `CHANGEME` in the manifests needs your registry/broker values. The
-kafka `hostInterfaces[].config` is **host-pinned**: whatever is set there
-(broker, credentials, the topic grant, `handler.group.id`) wins over anything
-the component passes to `open`.
+Both point at the component published from this template, so they run as
+they are. Once you change the source, build it, push it to your own
+registry, and set that reference instead.
 
-Some keys are the host's, and a workload setting one is refused. They are the
-ones that would hand the host process a capability: loading native code
-(`plugin.library.paths`, `ssl.engine.location`, `ssl.providers`), reading a
-host file by path (the `ssl.*.location` keys, `https.ca.location`,
-`sasl.kerberos.keytab`), running a host command or reaching a host-chosen URL
-(`sasl.kerberos.kinit.cmd`, `sasl.oauthbearer.token.endpoint.url`), or
-weakening and flooding the host (`enable.ssl.certificate.verification`,
-`ssl.endpoint.identification.algorithm`, `debug`, `statistics.interval.ms`).
-Credentials are not on that list: pass TLS material inline as `ssl.ca.pem`,
-`ssl.key.pem` and `ssl.certificate.pem` through `config`/`secretFrom` rather
-than as file paths.
+The broker address and topic names in the manifests are placeholders. The
+kafka `hostInterfaces[].config` is **host-pinned**: whatever is set there
+(broker, topics grant, group.id, ...) wins over anything the component passes.
 
 ## Tuning notes (measured, wasmCloud 2.8 / cosmonic:kafka 0.3.0)
 
