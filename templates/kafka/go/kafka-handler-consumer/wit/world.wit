@@ -1,9 +1,0 @@
-package cosmonic-templates:kafka-handler-consumer;
-
-// Push-mode consumer. The HOST owns the Kafka consumer: it subscribes to the
-// topics declared in the workload manifest and calls `handle` once per record
-// on a fresh instance. The component never touches consumer configuration.
-world kafka-handler-consumer {
-    import cosmonic:kafka/types@0.3.0;
-    export cosmonic:kafka/handler@0.3.0;
-}

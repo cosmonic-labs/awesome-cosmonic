@@ -3,15 +3,15 @@
 Clone-and-customize starting points for building Kafka workloads on Cosmonic
 (`cosmonic:kafka@0.3.0` on wasmCloud 2.8), in the style of
 [mcp-server-template-rs](https://github.com/cosmonic-labs/mcp-server-template-rs):
-each template is a self-contained project — source, vendored WIT, a Cosmonic
-Desktop `workload.yaml`, and a Kubernetes `deploy/workload-deployment.yaml`.
+each template is a self-contained project — source, a `wkg.lock` pinning the
+WIT it fetches, a Cosmonic Desktop `workload.yaml`, and a Kubernetes
+`deploy/workload-deployment.yaml`.
 
-The same four patterns exist in both languages:
+Four patterns, in Rust:
 
 ```
-templates/
+templates/kafka/
   rust/   http-kafka-producer | kafka-handler-consumer | kafka-pull-service | kafka-transactional
-  go/     http-kafka-producer | kafka-handler-consumer | kafka-pull-service | kafka-transactional
 ```
 
 Every design guideline and number cited below was measured in this repo's
@@ -88,18 +88,14 @@ k8s performance campaign (`../k8s-perf/RESULTS/REPORT.md`).
   group must agree on the strategy, so don't mix it across deployments that
   share a `handler.group.id`.
 
-## Go vs Rust
+## Toolchain
 
-Both languages were benchmarked pattern-by-pattern on Kubernetes — the comparison table
-(throughput, memory, trade-offs per template) lives in `../k8s-perf/RESULTS/REPORT.md`.
-Short version: pick by pattern first; Go is within ~30% of Rust for the service patterns and
-HTTP producers (budget 2–3× memory), while high-rate handler components (thousands of
-records/s on one component) need Rust.
+The templates use `wit-bindgen 0.58` async (WASI P3) and compile with stock
+`cargo build --target wasm32-wasip2`, which is also what each template's
+`.wash/config.yaml` runs under `wash build`.
 
-### Toolchains
-
-The Rust templates use `wit-bindgen 0.58` async (WASI P3) and compile with
-stock `cargo build --target wasm32-wasip2`. The Go templates target the same
-worlds via standard Go + `componentize-go` (TinyGo tops out at WASI P2 and
-cannot bind `cosmonic:kafka@0.3.0`'s async interfaces) — see `go/README.md`
-for toolchain status and versions.
+Rust only for now. `cosmonic:kafka@0.3.0` declares every function `async
+func`, which needs a toolchain that can bind the p3 async ABI — TinyGo tops
+out at WASI P2 and cannot. Go via `componentize-go` is the candidate; a Go
+set was started and removed here rather than shipped half-built, since a
+template that does not compile is worse than one that does not exist.
