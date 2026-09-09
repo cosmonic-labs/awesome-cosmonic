@@ -5,8 +5,13 @@ package cosmonic-templates:kafka-pull-service;
 // routes — full control over offsets, DLQ policy, and batching. The one
 // long-lived instance also holds one long-lived producer, which is what makes
 // consume-transform-produce fast (no per-record client bootstrap).
+//
+// Every import here is 0.3.0. Environment variables are read through
+// `std::env`, which the wasip2 target lowers to `wasi:cli/environment` on its
+// own — importing that interface explicitly would pin this world to
+// `wasi:cli@0.2.0`, since 0.3.0's `wasi:cli` carries only `run`, and a world
+// naming two versions of one package cannot be resolved from the registry.
 world kafka-pull-service {
-    import wasi:cli/environment@0.2.0;
     import cosmonic:kafka/types@0.3.0;
     import cosmonic:kafka/consumer@0.3.0;
     import cosmonic:kafka/producer@0.3.0;

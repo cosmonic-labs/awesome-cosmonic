@@ -6,25 +6,25 @@ See `../../README.md` for when to choose this pattern over the others.
 
 Prereqs: Rust 1.85+, `rustup target add wasm32-wasip2`.
 
+The `cosmonic:kafka@0.3.0` WIT comes from a registry rather than from this
+repository, and `wash` has to be told which registry serves the `cosmonic`
+namespace. Export that once per shell — `wash build` fetches too, so
+prefixing a single `wash wit fetch` is not enough:
+
 ```sh
-wash build                   # runs the command in .wash/config.yaml
+export WKG_CONFIG_FILE="$PWD/../../wkg-registries.toml"
+wash build                   # fetches the WIT, then runs .wash/config.yaml
 # component: target/wasm32-wasip2/release/kafka_pull_service.wasm
 ```
 
-`cargo build --release` produces the same component — `.wash/config.yaml`
-just names that command and where its output lands, which is what lets
-tooling find the artifact without being told.
+`wkg.lock` pins the exact versions and `wit/deps/` is gitignored, so the
+first build is what populates it. `cargo build --release` produces the same
+component; `.wash/config.yaml` just names that command and where its output
+lands, which is what lets tooling find the artifact without being told.
 
-The `cosmonic:kafka@0.3.0` WIT and its dependencies come from the registry
-rather than the repository, so fetch them once before the first build:
-
-```sh
-WKG_CONFIG_FILE=../../wkg-registries.toml wash wit fetch
-```
-
-`wkg.lock` pins the exact versions, `wit/deps/` is gitignored, and
-[`../../wkg-registries.toml`](../../wkg-registries.toml) is what maps the
-`cosmonic` namespace to the registry serving it.
+To stop passing the variable, merge the entries from
+[`../../wkg-registries.toml`](../../wkg-registries.toml) into
+`~/.config/wasm-pkg/config.toml` once.
 
 ## Deploy
 

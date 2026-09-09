@@ -31,17 +31,17 @@ use std::collections::BTreeMap;
 use bindings::cosmonic::kafka::consumer::Consumer;
 use bindings::cosmonic::kafka::producer::{Producer, Transaction};
 use bindings::cosmonic::kafka::types::{ConfigEntry, ConsumedRecord, PartitionOffset, ProduceRecord};
-use bindings::exports::wasi::cli0_3_0::run::Guest as RunGuest;
-use bindings::wasi::cli0_2_0::environment;
+use bindings::exports::wasi::cli::run::Guest as RunGuest;
 
 struct Component;
 
+/// Read one variable set by `localResources.environment.config`.
+///
+/// `std::env` rather than a generated `wasi:cli/environment` binding: the
+/// wasip2 target lowers it to the same interface, and keeping it out of the
+/// world is what lets every import there be 0.3.0.
 fn env(key: &str, default: &str) -> String {
-    environment::get_environment()
-        .into_iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v)
-        .unwrap_or_else(|| default.to_string())
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
 fn cfg(key: &str, value: &str) -> ConfigEntry {
