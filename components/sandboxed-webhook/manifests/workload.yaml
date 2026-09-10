@@ -1,0 +1,42 @@
+# Workload spec for the 'sandboxed-webhook' Launchpad entry.
+# A webhook receiver that verifies an HMAC-SHA256 signature, then forwards the
+# payload to exactly ONE host. The whole point is the egress policy below:
+# allowedHosts names the single forward target and denies everything else, so
+# even a compromised handler cannot exfiltrate the payload anywhere you did not
+# name. Digest-pinned; verified on Cosmonic Desktop (wash-runtime 2.7.0): a
+# valid signature forwards (downstream 200), a bad signature is rejected 401.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: sandboxed-webhook
+  namespace: default
+  annotations:
+    desktop.cosmonic.com/enabled: 'true'
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces:
+        - incoming-handler
+      config:
+        host: sandboxed-webhook.localhost
+  components:
+    - name: sandboxed-webhook
+      image: ghcr.io/cosmonic-labs/components/sandboxed-webhook:0.1.0@sha256:ec8dd21b9eae1bc20f8413b0e21c0db33a8114a2de4a326fb846b9ff116175e0
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # The single downstream. Its host MUST be in allowedHosts below.
+            WEBHOOK_FORWARD_URL: https://postman-echo.com/post
+          # The HMAC signing secret is a Cosmonic secret, never inline. Register it
+          # before launch (targeting WEBHOOK_SIGNING_SECRET); see the README.
+          secretFrom:
+            - name: webhook-signing-secret
+        # Outbound allow-list: the ONE host the webhook may forward to. Point
+        # WEBHOOK_FORWARD_URL at anything not listed here and the sandbox denies
+        # the send. That deny-all-except-one gate is the demo.
+        allowedHosts:
+          - postman-echo.com

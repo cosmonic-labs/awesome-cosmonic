@@ -46,7 +46,7 @@ wash build
 
 Reusable WebAssembly components that implement a WIT interface. Hosted projects live in [`components/`](components/).
 
-_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
+- [sandboxed-webhook](components/sandboxed-webhook/) (hosted): Receives a webhook, verifies its HMAC-SHA256 signature, then forwards the payload to exactly one host bounded by `allowedHosts`, so a compromised handler cannot exfiltrate anywhere else. Rust component over `wasi:http`, with a `GET /` info page that prints a ready-to-run signed `curl`.
 
 ### Kafka
 
