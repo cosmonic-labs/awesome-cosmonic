@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!-- Illustrator MCP Bridge — CEP panel UI. Logic in main.js. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Illustrator MCP Bridge</title>
+<style>
+  body {
+    margin: 0; padding: 10px;
+    background: #262626; color: #d6d6d6;
+    font: 12px/1.5 -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 13px; margin: 0 0 8px; color: #fff; }
+  .row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .row label { flex: none; }
+  input[type=text] {
+    flex: 1; background: #1a1a1a; color: #d6d6d6;
+    border: 1px solid #444; border-radius: 3px; padding: 4px 6px; font-size: 12px;
+  }
+  #status {
+    padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;
+    background: #3a3a3a;
+  }
+  #status.ok { background: #1e4620; color: #b5e8b7; }
+  #status.bad { background: #59262b; color: #f0b6bb; }
+  #log {
+    background: #1a1a1a; border: 1px solid #444; border-radius: 3px;
+    padding: 6px; height: 220px; overflow-y: auto;
+    font: 11px/1.5 Menlo, Consolas, monospace; white-space: pre-wrap;
+  }
+  button {
+    background: #3a3a3a; color: #d6d6d6; border: 1px solid #555;
+    border-radius: 3px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+  }
+  button:hover { background: #4a4a4a; }
+</style>
+</head>
+<body>
+  <h1>Illustrator MCP Bridge</h1>
+  <div id="status">starting…</div>
+  <div class="row">
+    <label for="server">Server:</label>
+    <input type="text" id="server" value="http://illustrator-mcp.localhost:8200">
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="autorun" checked> Auto-run commands</label>
+    <button id="checknow">Check now</button>
+  </div>
+  <div id="log"></div>
+  <script src="./main.js"></script>
+</body>
+</html>
