@@ -1,0 +1,50 @@
+# Cosmonic Desktop deployment manifest for the published web-fetch-mcp image.
+# Local iteration uses ../workload.yaml (Desktop's built-in registry); this
+# manifest deploys the released image. Docs: https://cosmonic.com/docs/desktop
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "web-fetch-mcp"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: "web-fetch-mcp"
+    app.kubernetes.io/version: "0.1.0"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "web-fetch"
+    "mcp.ai/function-type": tools
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "web-fetch-mcp.localhost.cosmonic.sh"
+  components:
+    - name: "web-fetch-mcp"
+      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # promoted build instead, use the digest-pinned
+      # oci-registry.localhost:8200 reference that promote returns.
+      image: "ghcr.io/cosmonic-labs/components/web-fetch-mcp:0.1.0@sha256:55213ade3c48459264fb2f4c780e7d22b695b3d42c7b73b4c613794543cbcdd1"
+      poolSize: 1
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host(s) above.
+            MCP_ALLOWED_HOSTS: "web-fetch-mcp.localhost.cosmonic.sh,web-fetch-mcp.localhost"
+        # Outbound allow-list — THE EGRESS BOUNDARY. The fetch_url tool reaches
+        # ONLY these hosts; empty = deny-all. Widen the list to grant more.
+        # These starter hosts are all HTTPS-capable.
+        allowedHosts:
+          - en.wikipedia.org
+          - raw.githubusercontent.com
+          - httpbin.org
