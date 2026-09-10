@@ -1,0 +1,8 @@
+package cosmonic:task-manager;
+
+// Only wasi:keyvalue/store (no /atomics — importing atomics stops the host from
+// routing the HTTP trigger). http 0.2.2 to match what the Desktop host binds.
+world task-manager {
+  import wasi:keyvalue/store@0.2.0-draft;
+  export wasi:http/incoming-handler@0.2.2;
+}
