@@ -62,6 +62,7 @@ Starting points for Kafka workloads on `cosmonic:kafka@0.3.0`, one per delivery 
 [Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).
 
 - [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
+- [md-html-sanitizer-mcp](components/mcp-servers/md-html-sanitizer-mcp) (hosted): Turn untrusted markdown or HTML into safe HTML. `sanitize_html` runs raw HTML through the [ammonia](https://docs.rs/ammonia) allowlist (dropping `<script>`/`<style>`/`<iframe>`, event-handler attributes, and `javascript:`/`data:` URLs), and `render_markdown` renders CommonMark with [pulldown-cmark](https://docs.rs/pulldown-cmark) and passes the result back through ammonia so embedded raw HTML is neutralized. Pure compute with **zero egress**: the workload's outbound `allowedHosts` is empty (deny-all), so the content it sees can never leave the sandbox. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 
 ## Host Plugins
 
