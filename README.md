@@ -61,6 +61,7 @@ Starting points for Kafka workloads on `cosmonic:kafka@0.3.0`, one per delivery 
 
 [Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).
 
+- [iss-mcp](components/mcp-servers/iss-mcp/) (hosted): MCP server in Rust that reports who is currently in space and the International Space Station's live position, calling the Open Notify APIs over `wasi:http`. Exports `wasi:http/handler@0.3.0`, built on the `rmcp` SDK with two no-argument tools.
 - [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
 
 ## Host Plugins
