@@ -1,0 +1,9 @@
+package cosmonic:fan-out@0.1.0;
+
+/// Fan-Out / Amplifier — Receive one message and republish it to many — the classic scatter pattern.
+world fan-out {
+  import wasmcloud:nats/types@0.1.0;
+  import wasmcloud:nats/core@0.1.0;
+
+  export wasmcloud:nats/core-handler@0.1.0;
+}

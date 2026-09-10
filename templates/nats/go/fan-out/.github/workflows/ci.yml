@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Install componentize-go
+        # Pinned by commit to main: the v0.4.1 release tag predates the current
+        # generator. main reports the same 0.4.1 version string but vendors
+        # wit-bindgen 0.61.1 — verify from a generated header, not --version.
+        run: go install github.com/bytecodealliance/componentize-go@20f3b0c2a4127a3efd0c4a00580dc0b409a2f91c
+      - name: Build component
+        run: make build
+
+      # The component must export the async WASI P3 interface. A component that
+      # builds but exports nothing is the classic failure here — the Go
+      # generator `wit-bindgen-go` silently drops every `async func`, producing
+      # exactly that. This check is what catches it.
+      - name: Verify wasmcloud:nats export
+        run: |
+          cargo install wasm-tools --locked || go install github.com/bytecodealliance/wasm-tools-go/cmd/wasm-tools@latest || true
+          wasm-tools component wit fan-out.wasm | tee /tmp/world.wit
+          grep -q 'export wasmcloud:nats/core-handler@0.1.0' /tmp/world.wit
+
+      - name: Verify the async canonical ABI is present
+        run: |
+          wasm-tools print fan-out.wasm | grep -qE 'async-lift|task-return' \
+            || (echo "component is not async-lifted — the build produced a sync component" && exit 1)
