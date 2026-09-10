@@ -62,6 +62,7 @@ Starting points for Kafka workloads on `cosmonic:kafka@0.3.0`, one per delivery 
 [Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).
 
 - [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
+- [github-mcp](components/mcp-servers/github-mcp) (hosted): Search and read GitHub for an agent — `search_repositories`, `get_repository`, `list_issues`, and `get_file_contents`. Outbound requests are bounded to `api.github.com` by the workload's `allowedHosts`, and an optional GitHub token (injected from a Cosmonic secret) raises the rate limit and enables private repositories. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 
 ## Host Plugins
 
