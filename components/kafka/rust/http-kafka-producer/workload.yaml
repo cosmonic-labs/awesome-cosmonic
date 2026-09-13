@@ -16,10 +16,10 @@ spec:
         host: http-kafka-producer.localhost
     - namespace: cosmonic
       package: kafka
-      version: 0.3.0
-      interfaces: [producer, types]
+      version: 0.5.0
+      interfaces: [producer]
       config:
-        # The host pins everything set here; the guest cannot override it.
+        # The binding fixes the producer's connection and policy.
         bootstrap.servers: 127.0.0.1:9092
         broker.address.family: v4
         # Grant: which topics this workload may produce to. Never "*" wider
@@ -31,7 +31,5 @@ spec:
       # own registry once you change the source.
       image: ghcr.io/cosmonic-labs/kafka-templates/http-kafka-producer:latest
       poolSize: 4
-      # Leave maxConcurrency at default (1): combining poolSize>1 with
-      # maxConcurrency>1 on a client-per-request producer measured 14x slower.
       localResources:
         allowedHosts: []

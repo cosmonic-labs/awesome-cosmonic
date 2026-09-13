@@ -11,7 +11,8 @@ Components serving a well-known protocol are grouped into a subdirectory:
 
 - [`mcp-servers/`](mcp-servers/): Model Context Protocol servers.
 - [`kafka/`](kafka/): Kafka workloads on `cosmonic:kafka`, one directory per
-  delivery pattern.
+  delivery pattern. Start with the handler template for serverless and elastic
+  event processing.
 
 Everything else lives directly in this directory.
 

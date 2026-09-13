@@ -7,9 +7,9 @@ name = "cosmonic:kafka"
 registry = "cosmonic.com"
 
 [[packages.versions]]
-requirement = "=0.3.0"
-version = "0.3.0"
-digest = "sha256:99868318291e8e01489ad9f0d4610d305210dd904a2ba89e538c722df9a5bc8c"
+requirement = "=0.5.0"
+version = "0.5.0"
+digest = "sha256:278f0e84f1d99829f1b057c4ecdbc26ae1b71bfaf0bcc28a4ed7cc488e6a8cce"
 
 [[packages]]
 name = "wasi:http"
