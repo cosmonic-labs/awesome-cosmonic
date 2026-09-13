@@ -34,10 +34,11 @@ wash build
 ## Contents
 
 - [Components](#components)
+  - [Kafka](#kafka)
   - [MCP Servers](#mcp-servers)
 - [Host Plugins](#host-plugins)
   - [Native Host Plugins](#native-host-plugins)
-  - [Component Host Plugins](#component-host-plugins)
+  - [Host Component Plugins](#host-component-plugins)
 - [Workload Examples](#workload-examples)
 - [Tools](#tools)
 - [Contributing](#contributing)
@@ -46,15 +47,13 @@ wash build
 
 Reusable WebAssembly components that implement a WIT interface. Hosted projects live in [`components/`](components/).
 
-_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
-
 ### Kafka
 
-Starting points for Kafka workloads on `cosmonic:kafka@0.3.0`, one per delivery pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/kafka/`](components/kafka/).
+Starting points for Kafka workloads on `cosmonic:kafka@0.5.0`, one per delivery pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/kafka/`](components/kafka/).
 
-- [http-kafka-producer](components/kafka/rust/http-kafka-producer/) (hosted): HTTP request in, Kafka record out, through `cosmonic:kafka/producer`. The ingest-gateway shape.
-- [kafka-handler-consumer](components/kafka/rust/kafka-handler-consumer/) (hosted): The host owns the consumer and pushes batches into an exported `cosmonic:kafka/handler`, so the component holds no offsets and can be per-request. Least code of the four.
-- [kafka-pull-service](components/kafka/rust/kafka-pull-service/) (hosted): A long-running service owning its own consumer and producer, for consume-transform-produce with your own batching and commit policy.
+- [kafka-handler-consumer](components/kafka/rust/kafka-handler-consumer/) (hosted, recommended): The serverless default. The host keeps Kafka group membership stable while elastic component instances process partition-ordered batches and can scale back to zero.
+- [http-kafka-producer](components/kafka/rust/http-kafka-producer/) (hosted): HTTP request in, Kafka record out, through a host-owned, binding-scoped `cosmonic:kafka/producer`. The ingest-gateway shape.
+- [kafka-pull-service](components/kafka/rust/kafka-pull-service/) (hosted): A long-running service owning a pull-consumer session, for workloads that need direct assignment, pause, seek, rebalance, or commit control.
 - [kafka-transactional](components/kafka/rust/kafka-transactional/) (hosted): The pull service plus transactions, so output records and input offsets commit atomically — exactly-once read-process-write.
 
 ### MCP Servers
@@ -73,9 +72,9 @@ Rust implementations of the [`HostPlugin` trait](https://wasmcloud.com/docs/runt
 
 _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
-### Component Host Plugins
+### Host Component Plugins
 
-Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-component-host-plugins) and deployed into a host at runtime as trigger services with a capability ingress, so you ship, version, and sandbox them like any other component. Currently opt-in via the `host-component-plugins` feature, so check the docs for the state of play before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
+Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-host-component-plugins/) and deployed into a host at runtime as trigger services with a capability ingress, so you ship, version, and sandbox them like any other component. Currently opt-in via the `host-component-plugins` feature, so check the docs for the state of play before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
 
 _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 

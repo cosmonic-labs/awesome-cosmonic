@@ -1,6 +1,6 @@
-# Component Host Plugins
+# Host Component Plugins
 
-Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-component-host-plugins)
+Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-host-component-plugins/)
 and deployed into a host at runtime as trigger services with a capability
 ingress, so you ship, version, and sandbox them like any other component.
 

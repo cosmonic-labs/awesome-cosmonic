@@ -7,45 +7,30 @@ spec:
   hostInterfaces:
     - namespace: cosmonic
       package: kafka
-      version: 0.3.0
-      interfaces: [handler, types]
+      version: 0.5.0
+      interfaces: [handler]
       config:
         bootstrap.servers: 127.0.0.1:9092
         broker.address.family: v4
-        # What the host subscribes to and dispatches from. Distinct from
-        # `topics`: a handler that reads one topic and produces to another
-        # cannot express that with a single key — put the input here and the
-        # output in the grant below.
+        # The host subscribes to and dispatches these topics.
         handler.topics: "demo.events"
-        # The grant: what this component's own producer/consumer calls may
-        # name. A pure handler imports neither and needs none, so it is left
-        # unset here. Add the output topic if you add `producer` to
-        # `interfaces` above.
-        # topics: "demo.enriched"
-        # Required, never derived. Nothing the host can see is scoped to an
-        # installation, so a derived group would be identical across two
-        # installations of this manifest and a shared broker would split the
-        # records between them. Not spelled `group.id`: that pins the group
-        # for a consumer the guest opens itself, which is a different thing.
+        # Grant the subscription and dead-letter topics.
+        topics: "demo.events,demo.events.dlq"
+        # This stable group resumes offsets across redeploys.
         handler.group.id: "demo-events-handler"
         auto.offset.reset: earliest
-        # Required. Past the redelivery cap a permanently failed record has
-        # to go somewhere; without this the partition stalls instead.
         dead-letter.topic: "demo.events.dlq"
-        # Records per `handle` call: 1 to 10000, and only as many as fit
-        # about 1 MiB. Default 100. The call deadline covers the whole
-        # batch, so lower it if you spend seconds per record.
+        # The host also caps a batch near 1 MiB.
         # handler.batch.size: "100"
   components:
-    - name: consumer
+    - name: processor
       # Prebuilt from this template on every push to main. Swap it for your
       # own registry once you change the source.
       image: ghcr.io/cosmonic-labs/kafka-templates/kafka-handler-consumer:latest
-      # Dispatch runs one loop per assigned partition, so a replica handles
-      # as many batches at once as it holds partitions. `poolSize` keeps
-      # instances warm for those calls, and `maxConcurrency` bounds how many
-      # share one instance. Total throughput is still capped by partitions x
-      # replicas.
-      poolSize: 4
+      # Instances scale with assigned partition work and return to zero.
+      poolSize: 32
+      maxConcurrency: 1
+      reclaimWindowSeconds: 30
+      reclaimMinInstances: 0
       localResources:
         allowedHosts: []

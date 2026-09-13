@@ -1,19 +1,11 @@
 package cosmonic-templates:kafka-pull-service;
 
-// Pull-mode consumer as a long-running Service (`wasi:cli/run`). The GUEST
-// owns the consumer: it opens, subscribes, drains `records()`, commits, and
-// routes — full control over offsets, DLQ policy, and batching. The one
-// long-lived instance also holds one long-lived producer, which is what makes
-// consume-transform-produce fast (no per-record client bootstrap).
+// A long-running service owns the pull-consumer session. The host owns the
+// binding-scoped producer.
 //
-// Every import here is 0.3.0. Environment variables are read through
-// `std::env`, which the wasip2 target lowers to `wasi:cli/environment` on its
-// own — importing that interface explicitly would pin this world to
-// `wasi:cli@0.2.0`, since 0.3.0's `wasi:cli` carries only `run`, and a world
-// naming two versions of one package cannot be resolved from the registry.
+// `std::env` supplies environment variables without a second wasi:cli version.
 world kafka-pull-service {
-    import cosmonic:kafka/types@0.3.0;
-    import cosmonic:kafka/consumer@0.3.0;
-    import cosmonic:kafka/producer@0.3.0;
+    import cosmonic:kafka/consumer@0.5.0;
+    import cosmonic:kafka/producer@0.5.0;
     export wasi:cli/run@0.3.0;
 }

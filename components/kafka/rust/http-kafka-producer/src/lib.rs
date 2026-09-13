@@ -5,16 +5,8 @@
 //! - `POST /produce-batch?topic=T&count=N&size=S` — N records via `send-batch`;
 //!   body is one line per record (`ok` or the error code).
 //!
-//! Performance notes (measured on wasmCloud 2.8 / cosmonic:kafka 0.3.0):
-//! - `Producer::open` builds a full Kafka client (DNS + TCP + metadata,
-//!   ~100 ms). One open per request caps a single instance near ~10 req/s;
-//!   `send-batch` amortizes it across the whole batch (30k+ records/s).
-//! - Keep `maxConcurrency` at its default (1) for this shape: combining
-//!   `poolSize > 1` with `maxConcurrency > 1` on a component that opens a
-//!   client per call measured 14x SLOWER than either knob alone. Scale with
-//!   `poolSize`, replicas, or batching instead.
-//! - The operator pins `bootstrap.servers` (and anything else set in the
-//!   workload's `hostInterfaces[].config`) — a guest cannot override it.
+//! The host owns and reuses the producer configured by the workload's Kafka
+//! binding. The component can use only the binding's brokers and topic grant.
 
 mod bindings {
     use super::Component;
@@ -24,13 +16,17 @@ mod bindings {
 
 use std::collections::BTreeMap;
 
-use bindings::cosmonic::kafka::producer::Producer;
+use bindings::cosmonic::kafka::producer;
 use bindings::cosmonic::kafka::types::ProduceRecord;
 use bindings::exports::wasi::http::handler;
 use bindings::wasi::http::types::{Headers, Method};
 use bindings::{wit_future, wit_stream};
 
 struct Component;
+
+const MAX_BATCH_RECORDS: usize = 10_000;
+const MAX_RECORD_BYTES: usize = 1024 * 1024;
+const MAX_BATCH_BYTES: usize = 16 * 1024 * 1024;
 
 impl handler::Guest for Component {
     async fn handle(req: handler::Request) -> Result<handler::Response, handler::ErrorCode> {
@@ -52,12 +48,6 @@ async fn produce(query: &str) -> handler::Response {
     else {
         return resp(400, "topic, key and value required");
     };
-    // The host merges the workload's kafka config over this empty list, so
-    // `bootstrap.servers` etc. come from the manifest, not the code.
-    let producer = match Producer::open(Vec::new()).await {
-        Ok(p) => p,
-        Err(e) => return resp(500, &format!("open failed: {:?}", e.code)),
-    };
     let record = ProduceRecord {
         partition: None,
         key: Some(key.as_bytes().to_vec()),
@@ -65,7 +55,7 @@ async fn produce(query: &str) -> handler::Response {
         headers: Vec::new(),
         timestamp: None,
     };
-    match producer.send(topic.to_string(), record).await {
+    match producer::send(topic.to_string(), record).await {
         Ok(ack) => resp(200, &format!("{}:{}", ack.partition, ack.offset)),
         Err(e) => resp(500, &format!("send failed: {:?}", e.code)),
     }
@@ -76,12 +66,23 @@ async fn produce_batch(query: &str) -> handler::Response {
     let Some(topic) = p.get("topic") else {
         return resp(400, "topic required");
     };
-    let count: usize = p.get("count").and_then(|c| c.parse().ok()).unwrap_or(100);
-    let size: usize = p.get("size").and_then(|s| s.parse().ok()).unwrap_or(64);
-    let producer = match Producer::open(Vec::new()).await {
-        Ok(p) => p,
-        Err(e) => return resp(500, &format!("open failed: {:?}", e.code)),
+    let count = match p.get("count") {
+        None => 100,
+        Some(value) => match value.parse::<usize>() {
+            Ok(count @ 1..=MAX_BATCH_RECORDS) => count,
+            _ => return resp(400, "count must be between 1 and 10000"),
+        },
     };
+    let size = match p.get("size") {
+        None => 64,
+        Some(value) => match value.parse::<usize>() {
+            Ok(size) if size <= MAX_RECORD_BYTES => size,
+            _ => return resp(400, "size must be between 0 and 1048576"),
+        },
+    };
+    if count.saturating_mul(size) > MAX_BATCH_BYTES {
+        return resp(400, "batch values must total at most 16777216 bytes");
+    }
     let records: Vec<ProduceRecord> = (0..count)
         .map(|i| ProduceRecord {
             partition: None,
@@ -91,7 +92,7 @@ async fn produce_batch(query: &str) -> handler::Response {
             timestamp: None,
         })
         .collect();
-    match producer.send_batch(topic.to_string(), records).await {
+    match producer::send_batch(topic.to_string(), records).await {
         Ok(outcomes) => {
             let lines: Vec<String> = outcomes
                 .into_iter()

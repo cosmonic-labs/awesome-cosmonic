@@ -1,7 +1,8 @@
 # Golden Kafka templates for Cosmonic
 
 Clone-and-customize starting points for building Kafka workloads on Cosmonic
-(`cosmonic:kafka@0.3.0` on wasmCloud 2.8), in the style of
+(`cosmonic:kafka@0.5.0` on Cosmonic Control 0.11.0 and wasmCloud 2.9), in the
+style of
 [mcp-server-template-rs](https://github.com/cosmonic-labs/mcp-server-template-rs):
 each template is a self-contained project — source, a `wkg.lock` pinning the
 WIT it fetches, a Cosmonic `workload.yaml`, and a Kubernetes
@@ -24,17 +25,36 @@ components/kafka/
   rust/   http-kafka-producer | kafka-handler-consumer | kafka-pull-service | kafka-transactional
 ```
 
-Every design guideline and number cited below was measured on Kubernetes
-against a real broker, not estimated.
+Start with **kafka-handler-consumer** for serverless event processing. The host
+keeps the Kafka consumer and group membership stable while component instances
+scale with assigned partition work and can return to zero when idle.
+
+Use a Service only when the component must own session state or a transaction.
+Do not choose the pull template just to publish output: a handler can import the
+binding-scoped producer without owning a Kafka client.
+
+The guidance below follows the 0.5.0 operator contract and broker-backed tests.
+The templates were built with `wash 2.7.0` and tested live against Control
+0.11.0. Use Rust 1.85 or newer to build them.
 
 ## Which pattern do I want?
 
 | Template | Shape | Delivery guarantee | Use when… | Don't use when… |
 |---|---|---|---|---|
-| **http-kafka-producer** | HTTP request → produce (`send` / `send-batch`) | broker ack per record (`acks` configurable) | An API, webhook, or UI event needs to land records on a topic; ingest gateways; request-scoped writes | You produce continuously at high rate — an open-per-request producer caps near ~10 req/s per instance; use batching (30k+ records/s measured) or a Service holding one producer |
-| **kafka-handler-consumer** | Host pushes each record to `handle` (push mode) | at-least-once; DLQ on `permanent` errors | Simple per-record processing with no cross-record state: filters, validators, notifiers, sinks. The host owns the consumer, offsets, retries, and DLQ — least code, hardest to hold wrong | The work per record must produce to Kafka (client bootstrap per record measured ~1200× a plain dispatch — use the pull service), you need batching, cross-record state, or your own commit policy |
-| **kafka-pull-service** | Long-running Service owns consumer + producer, batches, commits explicitly | at-least-once; your own DLQ routing | The workhorse: consume→transform→produce pipelines, aggregation windows, anything needing batching (`send-batch`), custom offset/commit policy, or a long-lived producer | You need exactly-once (see transactional) or truly trivial per-record work with no produce (handler is less code) |
+| **kafka-handler-consumer** (recommended) | Host pushes partition-ordered batches to elastic component instances | at-least-once; DLQ on `permanent` errors | Serverless event processing, including consume→transform→produce. The host owns polling, offsets, retries, DLQ delivery, and stable group membership while guest instances scale independently | You need direct session control such as assign, pause, seek, rebalance events, or arbitrary commits; or output and offsets must commit in one Kafka transaction |
+| **http-kafka-producer** | HTTP request → binding-scoped `send` / `send-batch` | broker ack per record (`acks` configurable) | An API, webhook, or UI event needs to publish records; ingest gateways; request-scoped writes | The workload is driven by Kafka records rather than HTTP |
+| **kafka-pull-service** | Long-running Service owns a pull-consumer session and uses a host-owned producer | at-least-once; your own DLQ routing | You need subscribe/assign control, rebalance events, pause/resume/seek, guest-controlled pull pace, or explicit commits | Ordinary elastic event processing; the handler is less stateful and scales without changing group membership |
 | **kafka-transactional** | Pull service + transactions: outputs and input offsets commit atomically | exactly-once (read-process-write) | Money, inventory, dedup-sensitive enrichment — anywhere a replayed or half-applied batch is unacceptable and downstream reads `read_committed` | Throughput matters more than duplicates (txn round trips cost); side effects leave Kafka (a DB write isn't covered by the transaction — then at-least-once + idempotent writes is the honest design) |
+
+## What changed in 0.5.0
+
+Kafka clients are binding-scoped capabilities. Producer functions are called
+directly; there is no guest-owned producer resource or `open`. A pull consumer
+uses `consumer.open()` with no arguments. Broker, credential, group, limits,
+and topic policy come only from `hostInterfaces` and cannot be selected by the
+guest. Transactional publishing now uses the separate `transaction` interface,
+and its sends and offset enlistment run through the returned transaction
+resource.
 
 ## Where the broker and credentials are configured
 
@@ -44,10 +64,9 @@ what every manifest here shows. That entry is the binding: `bootstrap.servers`,
 handler keys all live there, and the component never sees a broker address in
 its code.
 
-The plugin claims none of those keys deliberately. It owns the ones that would
-hand the *host process* a capability (see the rule below), and leaves the
-connection, the credential and the topics to the workload — which is what lets
-two workloads on one host reach different clusters as different principals.
+The binding is also the security boundary. Properties that load host code,
+read host files, run commands, or disable transport protections remain
+host-owned and are rejected in workload configuration.
 
 Secrets do not belong inline. `config` is for plain values, `configFrom` pulls
 a ConfigMap, and `secretFrom` pulls a Secret; the three merge in that order,
@@ -57,43 +76,27 @@ so a password reaches librdkafka without appearing in the manifest:
 hostInterfaces:
   - namespace: cosmonic
     package: kafka
-    version: 0.3.0
-    interfaces: [producer, types]
+    version: 0.5.0
+    interfaces: [producer]
     config:
       bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
       security.protocol: SASL_SSL
       sasl.mechanism: SCRAM-SHA-512
       topics: "demo.events"
     secretFrom:
-      - kafka-credentials      # sasl.username, sasl.password, ssl.ca.pem, ...
+      - name: kafka-credentials # sasl.username, sasl.password, ssl.ca.pem, ...
 ```
 
-Whatever that entry sets wins over anything the component passes to
-`producer.open`/`consumer.open`, so a guest cannot redirect itself at another
-broker or substitute its own credential. A guest's own config is only consulted
-for keys the entry leaves unset.
-
-**An operator can take this over.** A host's plugin configuration accepts the
-same `config`/`configFrom`/`secretFrom`, plus named `bindings` a workload
-selects by label. Two settings decide how much a workload may still say:
-`hostOwnedKeys` claims additional keys for the host, and `workloadConfig`
-(`deny` by default) fails the deploy of a workload that sets a host-owned key
-or widens a grant declared for it. A platform team that owns the cluster puts
-the broker and credentials there once, and workloads name only the label and
-the topics they need. These templates take the self-contained route instead,
-so each runs on its own.
+The component cannot pass connection or client properties at runtime, so it
+cannot redirect itself to another broker or substitute another credential.
 
 ### Rules that apply to every pattern
 
-- **`handler.topics` and `topics` are different keys.** `handler.topics` is
-  what the host subscribes to and dispatches from; `topics` is the grant for
-  the component's own `producer`/`consumer` calls. They are separate because a
-  handler that reads one topic and writes another cannot express that with one
-  key. Grant exactly what the workload touches; a pure handler needs no
-  `topics` at all.
-- **The binding entry beats the guest** (`bootstrap.servers`, creds, the topic
-  grant, `handler.group.id`, `transactional.id`) — a component cannot override
-  what the manifest sets. Put policy in the manifest, not the code.
+- **`handler.topics` selects the subscription; `topics` grants access.** The
+  grant must contain every subscription, dead-letter topic, and topic named by
+  producer calls. Grant exactly what the workload touches.
+- **The binding fixes Kafka authority.** Broker, credentials, groups, client
+  policy, transaction IDs, and topic grants are unavailable as guest inputs.
 - **Some keys are the host's and are refused to a workload:** anything that
   loads native code (`plugin.library.paths`, `ssl.engine.location`,
   `ssl.providers`), reads a host file by path (the `ssl.*.location` keys,
@@ -108,26 +111,21 @@ so each runs on its own.
   host can see is scoped to an installation, so a derived group would be
   identical across two installations of the same manifest and a shared broker
   would split the records between them. The deploy fails without it. Note it
-  is not spelled `group.id`: that key pins the group for a consumer the guest
-  opens itself, which is a different thing.
+  is not spelled `consumer.group.id`, which configures a pull consumer.
 - **Handlers: always configure `dead-letter.topic`.** It is required, for the
   same reason: past the redelivery cap a permanently failed record has to go
   somewhere, and the alternative is stalling the partition. Treat malformed
   input as `permanent`, never panic.
-- **Never open a Kafka client per record.** ~100 ms each (DNS + TCP +
-  metadata), measured ~1200× the cost of a plain handler dispatch — and at
-  high concurrency client churn can exhaust host fds/threads
-  (`CritSysRes`), affecting neighbor workloads.
-- **On Kubernetes, add `broker.address.family: v4`** (and check cluster DNS
-  health): a degraded AAAA path silently added 12 s to every client
-  bootstrap in testing.
-- **Scaling:** handler & pull throughput scale with partitions × replicas —
-  that product is the ceiling, since a partition is only ever assigned to one
-  group member. Handler dispatch runs one loop per assigned partition, so
-  `poolSize` and `maxConcurrency` do matter there now: they decide how many of
-  those concurrent calls land on warm instances and how many share one. Don't
-  combine them on client-per-request producers (measured 14× regression);
-  prefer `poolSize` + batching.
+- **Producer calls reuse the binding's native client.** Do not open a pull
+  consumer per invocation; a pull consumer is a stateful session intended for
+  a long-lived Service.
+- **Scale handler compute with the component pool.** Per replica, useful
+  concurrency is `min(assigned partitions, 64, poolSize × maxConcurrency)`.
+  Growing the pool does not add group members or rebalance Kafka. Increase
+  workload replicas for availability or to place group members on more hosts.
+- **Do not keep required state in a handler instance.** Calls may land on
+  different instances, and idle instances may be reclaimed. Store durable
+  state externally and make side effects idempotent.
 - **Handlers get a batch, not a record.** `handle` is called with up to
   `handler.batch.size` records (default 100, max 10000) from one partition,
   in offset order, capped around 1 MiB. Process in order and return
@@ -145,13 +143,35 @@ so each runs on its own.
   group must agree on the strategy, so don't mix it across deployments that
   share a `handler.group.id`.
 
+## Operational limits
+
+Native Kafka allocations live outside a component's Wasm memory limit. The
+plugin therefore bounds clients, queues, streams, and handler buffers. Notable
+defaults and ceilings are:
+
+| Resource | Limit |
+|---|---|
+| Producer clients | 64 ordinary or transactional clients |
+| Handler calls | 64 in flight per component |
+| Handler batch | 100 records by default; configurable from 1 to 10,000 |
+| Handler record buffers | 128 MiB shared across partitions |
+| Pull consumers | 64 per component |
+| Pull-consumer buffer | 64 MiB and 512 records |
+| Concurrent producer streams | 32 per component |
+| Producer stream buffer | 64 MiB and 256 records; about 1 MiB per record |
+| Producer queue | 32,768 KiB by default; 102,400 KiB maximum per client property |
+
+Queue limits are not eager allocations, but many bindings can still reserve a
+large possible footprint. Grant only the interfaces a workload needs and use
+smaller queue limits on high-density hosts.
+
 ## Toolchain
 
 The templates use `wit-bindgen 0.58` async (WASI P3) and compile with stock
 `cargo build --target wasm32-wasip2`, which is also what each template's
 `.wash/config.yaml` runs under `wash build`.
 
-Rust only for now. `cosmonic:kafka@0.3.0` declares every function `async
+Rust only for now. `cosmonic:kafka@0.5.0` declares every function `async
 func`, which needs a toolchain that can bind the p3 async ABI — TinyGo tops
 out at WASI P2 and cannot. Go via `componentize-go` is the candidate; a Go
 set was started and removed here rather than shipped half-built, since a

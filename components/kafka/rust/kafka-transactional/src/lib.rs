@@ -1,24 +1,24 @@
 //! Exactly-once consume → transform → produce (read-process-write).
 //!
-//! Per batch: `Transaction::begin` → produce outputs → `send-offsets` (the
+//! Per batch: `transaction::begin` → produce outputs → `send-offsets` (the
 //! input positions, one past the last processed record) → `commit`. Output
 //! records and input offsets commit atomically; a crash anywhere replays the
 //! batch and downstream `read_committed` readers never see the aborted half.
 //!
 //! Requirements:
 //! - `transactional.id` in the workload's kafka `hostInterfaces[].config`
-//!   (host-pinned; implies `enable.idempotence`). One STABLE id per logical
+//!   (host-pinned; implies `enable.idempotence`). One stable ID per logical
 //!   pipeline — it is what fences a restarted instance.
 //! - Consumer `enable.auto.commit=false` (offsets travel in the transaction).
+//! - `transaction.group.id` matches `consumer.group.id`.
 //! - Downstream consumers set `isolation.level=read_committed`.
 //!
-//! Error handling: on any produce/commit failure check
-//! `error.txn-requires-abort` — when set, `abort` and reprocess the batch.
-//! When `error.fatal` is set the producer is finished: reopen it (a fresh
-//! `begin` re-fences).
+//! A failed batch is aborted and the service restarts from committed offsets.
+//! The host retires a native client after a fatal error.
 //!
 //! Environment (via `localResources.environment.config`): IN_TOPIC, OUT_TOPIC,
-//! GROUP_ID, BATCH_SIZE.
+//! BATCH_SIZE (default 1).
+//! Batches larger than one wait for the batch to fill or the stream to end.
 
 mod bindings {
     use super::Component;
@@ -29,23 +29,24 @@ mod bindings {
 use std::collections::BTreeMap;
 
 use bindings::cosmonic::kafka::consumer::Consumer;
-use bindings::cosmonic::kafka::producer::{Producer, Transaction};
-use bindings::cosmonic::kafka::types::{ConfigEntry, ConsumedRecord, PartitionOffset, ProduceRecord};
+use bindings::cosmonic::kafka::types::{ConsumedRecord, PartitionOffset, ProduceRecord};
 use bindings::exports::wasi::cli::run::Guest as RunGuest;
+use bindings::transaction::{self, Transaction};
 
 struct Component;
 
 /// Read one variable set by `localResources.environment.config`.
-///
-/// `std::env` rather than a generated `wasi:cli/environment` binding: the
-/// wasip2 target lowers it to the same interface, and keeping it out of the
-/// world is what lets every import there be 0.3.0.
 fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-fn cfg(key: &str, value: &str) -> ConfigEntry {
-    ConfigEntry { key: key.into(), value: value.into() }
+fn batch_size() -> usize {
+    env("BATCH_SIZE", "1")
+        .parse()
+        .ok()
+        .filter(|size| *size > 0)
+        .unwrap_or(1)
+        .min(100)
 }
 
 /// Your transform — pure function of the input record.
@@ -64,7 +65,9 @@ fn transform(rec: &ConsumedRecord) -> ProduceRecord {
 fn commit_positions(batch: &[ConsumedRecord]) -> Vec<PartitionOffset> {
     let mut latest: BTreeMap<(String, i32), &ConsumedRecord> = BTreeMap::new();
     for rec in batch {
-        let entry = latest.entry((rec.topic.clone(), rec.partition)).or_insert(rec);
+        let entry = latest
+            .entry((rec.topic.clone(), rec.partition))
+            .or_insert(rec);
         if rec.offset > entry.offset {
             *entry = rec;
         }
@@ -85,61 +88,41 @@ impl RunGuest for Component {
     async fn run() -> Result<(), ()> {
         let in_topic = env("IN_TOPIC", "input");
         let out_topic = env("OUT_TOPIC", "output");
-        let group_id = env("GROUP_ID", "txn-pipeline-g1");
-        let batch_size: usize = env("BATCH_SIZE", "100").parse().unwrap_or(100);
+        let batch_size = batch_size();
 
-        let consumer = Consumer::open(vec![
-            cfg("group.id", &group_id),
-            cfg("auto.offset.reset", "earliest"),
-            cfg("enable.auto.commit", "false"),
-        ])
-        .await
-        .map_err(|_| ())?;
+        let consumer = Consumer::open().await.map_err(|_| ())?;
         consumer.subscribe(vec![in_topic]).await.map_err(|_| ())?;
-        let (mut records, _terminal) = consumer.records().await.map_err(|_| ())?;
-        // `transactional.id` arrives via the host-side config merge.
-        let producer = Producer::open(Vec::new()).await.map_err(|_| ())?;
-
+        let (mut records, terminal) = consumer.records().await.map_err(|_| ())?;
         let mut batch: Vec<ConsumedRecord> = Vec::with_capacity(batch_size);
         while let Some(rec) = records.next().await {
             batch.push(rec);
             if batch.len() >= batch_size {
-                process_batch(&producer, &out_topic, &group_id, &batch).await?;
+                process_batch(&out_topic, &batch).await?;
                 batch.clear();
             }
         }
         if !batch.is_empty() {
-            process_batch(&producer, &out_topic, &group_id, &batch).await?;
+            process_batch(&out_topic, &batch).await?;
         }
+        terminal.await.map_err(|_| ())?;
         Ok(())
     }
 }
 
-async fn process_batch(
-    producer: &Producer,
-    out_topic: &str,
-    group_id: &str,
-    batch: &[ConsumedRecord],
-) -> Result<(), ()> {
-    let txn = Transaction::begin(producer).await.map_err(|_| ())?;
-    // Records are produced through the producer while the transaction is
-    // open; the transaction object carries begin/send-offsets/commit/abort.
+async fn process_batch(out_topic: &str, batch: &[ConsumedRecord]) -> Result<(), ()> {
+    let txn: Transaction = transaction::begin().await.map_err(|_| ())?;
     let outputs: Vec<ProduceRecord> = batch.iter().map(transform).collect();
-    let sent = producer.send_batch(out_topic.to_string(), outputs).await;
-    let offsets_ok = match sent {
-        Ok(_) => txn
-            .send_offsets(commit_positions(batch), group_id.to_string())
-            .await
-            .is_ok(),
-        Err(_) => false,
-    };
-    if offsets_ok {
-        txn.commit().await.map_err(|_| ())?;
-        Ok(())
-    } else {
-        // Aborting keeps the pipeline consistent; the uncommitted input
-        // offsets mean this batch is redelivered and reprocessed.
+    let outputs_ok = txn
+        .send_batch(out_topic.to_string(), outputs)
+        .await
+        .is_ok_and(|outcomes| outcomes.into_iter().all(|outcome| outcome.is_ok()));
+    if !outputs_ok || txn.send_offsets(commit_positions(batch)).await.is_err() {
         let _ = txn.abort().await;
-        Ok(())
+        return Err(());
     }
+    if txn.commit().await.is_err() {
+        let _ = txn.abort().await;
+        return Err(());
+    }
+    Ok(())
 }

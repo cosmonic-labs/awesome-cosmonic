@@ -4,8 +4,8 @@ metadata:
   name: kafka-transactional
   namespace: default
 spec:
-  replicas: 1   # NOTE: >1 replica needs distinct transactional.id per member;
-                # keep 1 until the driver exposes per-instance ids.
+  # Each live replica needs a distinct stable transactional.id.
+  replicas: 1
   template:
     spec:
       service:
@@ -13,13 +13,32 @@ spec:
         # change the source. Pin a `sha-<commit>` tag if you need one image.
         image: ghcr.io/cosmonic-labs/kafka-templates/kafka-transactional:latest
         maxRestarts: 100
+        localResources:
+          environment:
+            config:
+              IN_TOPIC: demo.events
+              OUT_TOPIC: demo.enriched
+              BATCH_SIZE: "1"
       hostInterfaces:
         - namespace: cosmonic
           package: kafka
-          version: 0.3.0
-          interfaces: [consumer, producer, types]
+          version: 0.5.0
+          interfaces: [consumer]
+          config:
+            bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
+            broker.address.family: v4
+            topics: "demo.events"
+            consumer.group.id: "demo-txn-g1"
+            auto.offset.reset: earliest
+            enable.auto.commit: "false"
+        - name: transaction
+          namespace: cosmonic
+          package: kafka
+          version: 0.5.0
+          interfaces: [transaction]
           config:
             bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
             broker.address.family: v4
             topics: "demo.events,demo.enriched"
             transactional.id: "demo-pipeline-txn-1"
+            transaction.group.id: "demo-txn-g1"

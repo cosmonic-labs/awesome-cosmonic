@@ -1,7 +1,7 @@
 build:
   # The target is spelled out rather than left to `.cargo/config.toml`, so
   # this still builds a component if that file is edited or dropped.
-  # wasm32-wasip2 is required: `cosmonic:kafka@0.3.0`'s functions are all
+  # wasm32-wasip2 is required: `cosmonic:kafka@0.5.0`'s functions are all
   # `async func`, which needs the p3 bindings wit-bindgen generates on top of
   # a p2 core module.
   command: cargo build --target wasm32-wasip2 --release
