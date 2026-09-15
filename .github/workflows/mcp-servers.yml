@@ -12,7 +12,7 @@ name: mcp-servers
 on:
   push:
     branches: [main]
-    tags: ["mcp-servers/v*"]
+    tags: ["*-v*"]
     paths:
       - "components/mcp-servers/**"
       - ".github/workflows/mcp-servers.yml"
@@ -153,27 +153,45 @@ jobs:
         id: publish
         if: >-
           github.event_name != 'pull_request' &&
-          github.repository == 'cosmonic-labs/awesome-cosmonic'
+          github.repository == 'cosmonic-labs/awesome-cosmonic' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         env:
           COMPONENT: ${{ steps.build.outputs.component_path }}
+          NAME: ${{ matrix.name }}
         run: |
           # Matches what is already published and what the Launchpad catalog
-          # pins, so this workflow republishes those names rather than starting
-          # a parallel set under a different prefix.
-          image="ghcr.io/cosmonic-labs/components/${{ matrix.name }}"
+          # pins, so this republishes those names rather than starting a
+          # parallel set under a different prefix.
+          image="ghcr.io/cosmonic-labs/components/${NAME}"
 
-          # A tag push is a release and carries the version it names; anything
-          # else is whatever main happens to be right now.
+          # A release tag names ONE component, `<name>-v<version>`, matching the
+          # tags this repository already uses. A tag for some other component is
+          # not this job's release, so it builds, validates, and stops.
           #
-          # Note that `latest` moves on every push to main, while the catalog
-          # pins each entry by digest. That is the intended split: `latest` is
-          # for someone trying a server, the digest is what a deployment gets.
+          # This matters because these components carry independent versions. A
+          # shared tag namespace would republish every component in the matrix
+          # under a version only one of them had bumped, overwriting version
+          # tags that the catalog pins by digest and leaving tag and pin
+          # disagreeing about what that version is.
           case "${GITHUB_REF}" in
-            refs/tags/mcp-servers/v*)
-              version="${GITHUB_REF#refs/tags/mcp-servers/v}"
-              tags="${version} latest"
+            refs/tags/*)
+              tag_name="${GITHUB_REF#refs/tags/}"
+              case "${tag_name}" in
+                "${NAME}-v"*)
+                  tags="${tag_name#${NAME}-v} latest"
+                  ;;
+                *)
+                  echo "tag ${tag_name} does not name ${NAME}; nothing to publish"
+                  echo "published=false" >> "$GITHUB_OUTPUT"
+                  exit 0
+                  ;;
+              esac
               ;;
             *)
+              # A push to main. Note that `latest` then tracks main, while the
+              # catalog pins each entry by digest, so the two deliberately do
+              # not have to agree: `latest` is for someone trying a component,
+              # the digest is what a deployment gets.
               tags="sha-${GITHUB_SHA:0:12} latest"
               ;;
           esac
@@ -191,13 +209,12 @@ jobs:
           # Every tag carries the same bytes, so one digest describes them all.
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       # Provenance for something a reader is told to pull and run: it ties the
       # published bytes back to this workflow and this commit.
       - name: Attest the published component
-        if: >-
-          github.event_name != 'pull_request' &&
-          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        if: steps.publish.outputs.published == 'true'
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ steps.publish.outputs.image }}
