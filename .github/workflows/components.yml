@@ -18,11 +18,13 @@ on:
     paths:
       - "components/sandboxed-webhook/**"
       - "workload-examples/task-manager/**"
+      - "workload-examples/first-flight/**"
       - ".github/workflows/components.yml"
   pull_request:
     paths:
       - "components/sandboxed-webhook/**"
       - "workload-examples/task-manager/**"
+      - "workload-examples/first-flight/**"
       - ".github/workflows/components.yml"
   workflow_dispatch:
 
@@ -56,14 +58,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - name: first-flight
+            path: workload-examples/first-flight
+            # Published under a bare name rather than the components/ prefix
+            # the others use, and the Launchpad catalog pins that path.
+            image: ghcr.io/cosmonic-labs/first-flight
+            expect: "export wasi:http/incoming-handler"
           - name: sandboxed-webhook
             path: components/sandboxed-webhook
+            image: ghcr.io/cosmonic-labs/components/sandboxed-webhook
             # Losing this export is a deployment failure with an opaque
             # message, so it is worth catching as a build failure with an
             # obvious one.
             expect: "export wasi:http/incoming-handler"
           - name: task-manager
             path: workload-examples/task-manager
+            image: ghcr.io/cosmonic-labs/components/task-manager
             expect: "export wasi:http/incoming-handler"
 
     defaults:
@@ -137,11 +147,13 @@ jobs:
         env:
           COMPONENT: ${{ steps.build.outputs.component_path }}
           NAME: ${{ matrix.name }}
+          IMAGE: ${{ matrix.image }}
         run: |
-          # Matches what is already published and what the Launchpad catalog
-          # pins, so this republishes those names rather than starting a
-          # parallel set under a different prefix.
-          image="ghcr.io/cosmonic-labs/components/${NAME}"
+          # Each entry carries its own image, because these do not share a
+          # prefix: first-flight publishes to a bare name and the catalog pins
+          # it there. Republishes existing names rather than starting a
+          # parallel set.
+          image="${IMAGE}"
 
           # A release tag names ONE component, `<name>-v<version>`, matching the
           # tags this repository already uses. A tag for some other component is
