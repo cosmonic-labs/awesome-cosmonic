@@ -23,22 +23,13 @@ spec:
         - namespace: cosmonic
           package: kafka
           version: 0.5.0
-          interfaces: [consumer]
-          config:
-            bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
-            broker.address.family: v4
-            topics: "demo.events"
-            consumer.group.id: "demo-txn-g1"
-            auto.offset.reset: earliest
-            enable.auto.commit: "false"
-        - name: transaction
-          namespace: cosmonic
-          package: kafka
-          version: 0.5.0
-          interfaces: [transaction]
+          interfaces: [consumer, transaction]
           config:
             bootstrap.servers: my-kafka.kafka.svc.cluster.local:9092
             broker.address.family: v4
             topics: "demo.events,demo.enriched"
+            consumer.group.id: "demo-txn-g1"
+            auto.offset.reset: earliest
+            enable.auto.commit: "false"
             transactional.id: "demo-pipeline-txn-1"
             transaction.group.id: "demo-txn-g1"
