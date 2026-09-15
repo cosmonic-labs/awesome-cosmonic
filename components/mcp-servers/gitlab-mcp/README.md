@@ -6,6 +6,10 @@ HTTPS request** to the GitLab REST API v4, and the workload's `allowedHosts`
 policy grants exactly **one** host, `gitlab.com`. The tool can reach nothing
 else; that allowlist is the egress boundary.
 
+It talks to **gitlab.com only**. The API base URL is a constant in the source,
+so a self-hosted or dedicated GitLab instance needs both that constant and the
+`allowedHosts` entry changed, then a rebuild.
+
 Authentication is **optional**. With no token the server works against public
 projects at GitLab's unauthenticated rate limit. Provide a token (see
 [below](#optional-authenticate-with-a-token)) to raise the limit and reach
