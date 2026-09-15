@@ -21,13 +21,72 @@ mod bindings {
     export!(Component);
 }
 
+use std::cell::RefCell;
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
+
 use bindings::cosmonic::kafka::types::ConsumedRecord;
 use bindings::exports::cosmonic::kafka::handler::{Guest as Handler, HandlerError};
 
 struct Component;
 
+const HEARTBEAT_INTERVAL_MS: i64 = 10_000;
+
+struct InstanceMetrics {
+    id: u64,
+    batches: u64,
+    records: u64,
+    started: bool,
+    last_record_time_ms: Option<i64>,
+}
+
+impl InstanceMetrics {
+    fn new() -> Self {
+        Self {
+            id: RandomState::new().hash_one(()),
+            batches: 0,
+            records: 0,
+            started: false,
+            last_record_time_ms: None,
+        }
+    }
+}
+
+thread_local! {
+    static METRICS: RefCell<InstanceMetrics> = RefCell::new(InstanceMetrics::new());
+}
+
+fn observe_batch(records: &[ConsumedRecord]) {
+    let record_time_ms = records.iter().filter_map(|rec| rec.timestamp).max();
+    METRICS.with_borrow_mut(|metrics| {
+        metrics.batches += 1;
+        metrics.records += records.len() as u64;
+
+        let heartbeat_due = !metrics.started
+            || match (record_time_ms, metrics.last_record_time_ms) {
+                (Some(now), Some(previous)) => {
+                    now < previous || now.saturating_sub(previous) >= HEARTBEAT_INTERVAL_MS
+                }
+                (Some(_), None) => true,
+                _ => false,
+            };
+        if heartbeat_due {
+            metrics.started = true;
+            if record_time_ms.is_some() {
+                metrics.last_record_time_ms = record_time_ms;
+            }
+            eprintln!(
+                "kafka handler heartbeat instance={:016x} batches={} records={} record_time_ms={:?}",
+                metrics.id, metrics.batches, metrics.records, record_time_ms
+            );
+        }
+    });
+}
+
 impl Handler for Component {
     async fn handle(records: Vec<ConsumedRecord>) -> Result<Option<i64>, HandlerError> {
+        observe_batch(&records);
+
         // Preserve progress when a later record fails.
         let mut handled: Option<i64> = None;
 

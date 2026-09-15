@@ -7,7 +7,27 @@ build:
   command: cargo build --target wasm32-wasip2 --release
   component_path: target/wasm32-wasip2/release/kafka_pull_service.wasm
 
-# No `dev:` block. `wash dev` would have to serve `cosmonic:kafka` itself,
-# and the implementation this template is written against is a native plugin
-# inside Cosmonic Control's host rather than a component plugin `wash dev`
-# can load from a path. Deploy to a Control host instead — see the README.
+dev:
+  # wasi:cli/run components must be driven as services.
+  service: true
+
+workload:
+  environment:
+    config:
+      IN_TOPIC: demo.events
+      OUT_TOPIC: demo.enriched
+      DLQ_TOPIC: demo.events.dlq
+      BATCH_SIZE: "1"
+  allowedHosts: []
+  hostInterfaces:
+    - namespace: cosmonic
+      package: kafka
+      version: 0.5.0
+      interfaces: [consumer, producer]
+      config:
+        bootstrap.servers: 127.0.0.1:9092
+        broker.address.family: v4
+        topics: "demo.events,demo.enriched,demo.events.dlq"
+        consumer.group.id: "demo-pipeline-g1"
+        auto.offset.reset: earliest
+        enable.auto.commit: "false"
