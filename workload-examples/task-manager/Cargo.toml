@@ -2,7 +2,7 @@
 name = "task-manager"
 edition = "2024"
 version = "0.1.3"
-description = "A to-do list that persists to the host key-value store — a stateful Wasm component for Cosmonic Desktop."
+description = "A to-do list that persists to the host key-value store: a stateful Wasm component for Cosmonic Desktop."
 
 [lib]
 crate-type = ["cdylib"]

@@ -40,7 +40,7 @@ impl FetchError {
         let text = match self {
             FetchError::BadRequest(detail) => detail,
             FetchError::Egress { host, detail } => format!(
-                "Couldn't reach {host} — it may not be in this workload's egress allowlist \
+                "Couldn't reach {host}. It may not be in this workload's egress allowlist \
                  (allowedHosts). Add it to the manifest to grant access. (details: {detail})"
             ),
             FetchError::Transport(detail) => {

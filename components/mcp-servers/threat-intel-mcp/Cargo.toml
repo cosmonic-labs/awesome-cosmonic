@@ -44,7 +44,7 @@ bytes = "1"
 
 # rmcp drives its session/dispatch machinery with tokio primitives; on
 # wasm32-wasip2 we run a single-threaded runtime. Outbound I/O goes through
-# the wasi:http bindings (see src/bridge.rs), not tokio::net — if you add the
+# the wasi:http bindings (see src/bridge.rs), not tokio::net. If you add the
 # `net` feature for raw TCP, the `tokio_unstable` cfg in .cargo/config.toml
 # already enables its wasm support.
 tokio = { version = "1.50", features = ["rt", "macros", "sync", "time", "io-util"] }

@@ -54,7 +54,7 @@ allowedHosts:
 Ask for a URL on any other host and the tool returns a friendly error rather
 than data:
 
-> Couldn't reach `example.org` — it may not be in this workload's egress
+> Couldn't reach `example.org`. It may not be in this workload's egress
 > allowlist (allowedHosts). Add it to the manifest to grant access.
 
 Widen the list in [`workload.yaml`](workload.yaml) /
