@@ -10,8 +10,10 @@ workload:
   environment:
     config:
       RUST_LOG: info
-  # Outbound HTTP allowlist. Egress is deny-by-default, so an empty list and an
-  # omitted key both mean the component reaches nothing. List every host your
-  # tools dial out to.
+  # Outbound HTTP allowlist for `wash dev`. Read the default carefully: an
+  # explicit `allowedHosts: []` is deny-all, but OMITTING the key entirely
+  # means allow-all here (wash substitutes `Any`). That is the opposite of the
+  # deployed manifest, where an absent key denies everything. Keep the key
+  # present and list every host your tools dial out to.
   allowedHosts:
     - api.open-notify.org

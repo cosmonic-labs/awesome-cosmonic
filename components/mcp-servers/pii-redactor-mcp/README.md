@@ -108,8 +108,10 @@ Its work is pure compute, so the workload's outbound allowlist is empty:
 allowedHosts: []
 ```
 
-Egress is deny-by-default, so an empty list and an omitted key both mean the
-component reaches nothing. The stronger guarantee is in the code rather than the
+In a deployed Workload egress is deny-by-default, so an empty list and an
+absent key both mean the component reaches nothing. Note that `wash dev` reads
+the opposite default from `.wash/config.yaml`, where omitting the key means
+allow-all, so keep it present there. The stronger guarantee is in the code rather than the
 manifest: this component never constructs an outbound request, so there is no
 host to add here and none should be added.
 
