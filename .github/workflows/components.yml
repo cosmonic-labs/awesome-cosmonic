@@ -1,16 +1,20 @@
 # Builds the standalone Rust components and publishes them to GHCR.
 #
 # The companion to mcp-servers.yml, for projects that are not MCP servers and
-# do not sit under a single directory. Unlike the MCP servers, these resolve
-# their bindings from a `wit/` tree pinned by `wkg.lock`, so the WIT fetch that
-# a reader runs is run here too: if a pinned version rots, this fails rather
-# than the reader's first build.
+# do not sit under a single directory. Unlike the MCP servers, these carry a
+# `wit/` tree, so the fetch a reader runs is run here too.
+#
+# It resolves to very little today: sandboxed-webhook's world is empty because
+# wstd carries its bindings, and task-manager's `wit/deps` is committed. The
+# step is here so that the day one of these does depend on a fetched package,
+# CI exercises the same path the README tells a reader to take, rather than
+# quietly passing on a vendored copy.
 name: components
 
 on:
   push:
     branches: [main]
-    tags: ["components/v*"]
+    tags: ["*-v*"]
     paths:
       - "components/sandboxed-webhook/**"
       - "workload-examples/task-manager/**"
@@ -30,10 +34,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Pinned for the same reason as mcp-servers.yml: for a wasm32-wasip2 build
-  # the WASI import versions come from the toolchain rather than from
-  # Cargo.lock, so floating it silently changes what a published component
-  # asks the host for. Bump deliberately.
+  # Pinned for the same reason as mcp-servers.yml, with one nuance. Where a
+  # component's WASI version comes from a crate (sandboxed-webhook pins
+  # `wasip2` in Cargo.lock, and sits at 0.2.12 either way), the toolchain does
+  # not move the version. It still moves the *set*: building on 1.97.1 adds
+  # seven `wasi:cli` stdio and terminal imports that the published builds never
+  # requested. That list is what an operator reviews before granting anything,
+  # so it should move when someone decides it moves. Bump deliberately.
   RUST_VERSION: "1.97.1"
 
 jobs:
@@ -125,20 +132,45 @@ jobs:
         id: publish
         if: >-
           github.event_name != 'pull_request' &&
-          github.repository == 'cosmonic-labs/awesome-cosmonic'
+          github.repository == 'cosmonic-labs/awesome-cosmonic' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         env:
           COMPONENT: ${{ steps.build.outputs.component_path }}
+          NAME: ${{ matrix.name }}
         run: |
-          # Matches the names already published and pinned by the Launchpad
-          # catalog, rather than starting a parallel set under a new prefix.
-          image="ghcr.io/cosmonic-labs/components/${{ matrix.name }}"
+          # Matches what is already published and what the Launchpad catalog
+          # pins, so this republishes those names rather than starting a
+          # parallel set under a different prefix.
+          image="ghcr.io/cosmonic-labs/components/${NAME}"
 
+          # A release tag names ONE component, `<name>-v<version>`, matching the
+          # tags this repository already uses. A tag for some other component is
+          # not this job's release, so it builds, validates, and stops.
+          #
+          # This matters because these components carry independent versions. A
+          # shared tag namespace would republish every component in the matrix
+          # under a version only one of them had bumped, overwriting version
+          # tags that the catalog pins by digest and leaving tag and pin
+          # disagreeing about what that version is.
           case "${GITHUB_REF}" in
-            refs/tags/components/v*)
-              version="${GITHUB_REF#refs/tags/components/v}"
-              tags="${version} latest"
+            refs/tags/*)
+              tag_name="${GITHUB_REF#refs/tags/}"
+              case "${tag_name}" in
+                "${NAME}-v"*)
+                  tags="${tag_name#${NAME}-v} latest"
+                  ;;
+                *)
+                  echo "tag ${tag_name} does not name ${NAME}; nothing to publish"
+                  echo "published=false" >> "$GITHUB_OUTPUT"
+                  exit 0
+                  ;;
+              esac
               ;;
             *)
+              # A push to main. Note that `latest` then tracks main, while the
+              # catalog pins each entry by digest, so the two deliberately do
+              # not have to agree: `latest` is for someone trying a component,
+              # the digest is what a deployment gets.
               tags="sha-${GITHUB_SHA:0:12} latest"
               ;;
           esac
@@ -153,13 +185,13 @@ jobs:
             }
             echo "pushed ${image}:${tag} ($digest)"
           done
+          # Every tag carries the same bytes, so one digest describes them all.
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Attest the published component
-        if: >-
-          github.event_name != 'pull_request' &&
-          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        if: steps.publish.outputs.published == 'true'
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ steps.publish.outputs.image }}
