@@ -9,7 +9,12 @@
 set -euo pipefail
 
 INGRESS="${INGRESS:-http://127.0.0.1:8200/}"
-HOST="${HOST:-iss-mcp.localhost}"
+# The ingress routes on this Host header, so it has to match the `host` of the
+# manifest you actually applied: deploy/workload.yaml (the published image)
+# routes on iss-mcp.localhost.cosmonic.sh, and the top-level workload.yaml (a
+# local promote) routes on iss-mcp.localhost. Override for the latter:
+#   HOST=iss-mcp.localhost ./scripts/smoke.sh
+HOST="${HOST:-iss-mcp.localhost.cosmonic.sh}"
 META='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
 
 call() {

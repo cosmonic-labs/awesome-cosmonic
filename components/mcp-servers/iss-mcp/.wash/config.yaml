@@ -10,7 +10,8 @@ workload:
   environment:
     config:
       RUST_LOG: info
-  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). List every
-  # host your tools dial out to.
+  # Outbound HTTP allowlist. Egress is deny-by-default, so an empty list and an
+  # omitted key both mean the component reaches nothing. List every host your
+  # tools dial out to.
   allowedHosts:
     - api.open-notify.org
