@@ -10,7 +10,8 @@ workload:
   environment:
     config:
       RUST_LOG: info
-  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). This is the
+  # Outbound HTTP allowlist. Egress is deny-by-default, so an empty list and an
+  # omitted key both mean the component reaches nothing. This is the
   # egress boundary: the fetch_url tool reaches ONLY these hosts. Widen the
   # list to grant more.
   allowedHosts:
