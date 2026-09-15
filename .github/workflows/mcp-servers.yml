@@ -1,0 +1,205 @@
+# Builds the Rust MCP servers and publishes them to GHCR.
+#
+# These are handed to someone wiring a sandboxed tool server into an agent, so
+# the useful gate is not "does it compile" but "does it still export the
+# interface a host will look for when it loads it". Publishing means that
+# person can apply a manifest without building anything at all.
+#
+# Shaped after .github/workflows/kafka-templates.yml, with one deliberate
+# difference: see the toolchain pin below.
+name: mcp-servers
+
+on:
+  push:
+    branches: [main]
+    tags: ["mcp-servers/v*"]
+    paths:
+      - "components/mcp-servers/**"
+      - ".github/workflows/mcp-servers.yml"
+  pull_request:
+    paths:
+      - "components/mcp-servers/**"
+      - ".github/workflows/mcp-servers.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes this run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned on purpose, and this is the one place this workflow departs from the
+  # Kafka one, which floats on `rustup update stable`.
+  #
+  # For `cargo build --target wasm32-wasip2` the WASI import versions come from
+  # the standard library shipped with rustc, not from Cargo.lock. A floating
+  # toolchain therefore silently changes a published component's import
+  # surface. Measured on this repository: the components published at 0.1.0 in
+  # August import `wasi:*@0.2.6`, while the same sources built on 1.97.1 import
+  # `wasi:*@0.2.9` and additionally request seven `wasi:cli` stdio and terminal
+  # interfaces the earlier build never asked for. On a capability-driven host
+  # that list is what an operator reviews before granting anything, so it should
+  # move when someone decides it moves. Bump this deliberately, and expect the
+  # imports in the published components to change when you do.
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `wash oci push` authenticates to GHCR as the workflow.
+      packages: write
+      # For the build provenance attached to each published component.
+      attestations: write
+      id-token: write
+    strategy:
+      # Each server is independent, so one failing should not hide the others.
+      fail-fast: false
+      matrix:
+        name:
+          - github-mcp
+          - gitlab-mcp
+          - iss-mcp
+          - md-html-sanitizer-mcp
+          - pii-redactor-mcp
+          - threat-intel-mcp
+          - web-fetch-mcp
+
+    defaults:
+      run:
+        working-directory: components/mcp-servers/${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain and the wasm target
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target wasm32-wasip2
+          rustup default "$RUST_VERSION"
+          rustc --version
+
+      # `wash-version` defaults to `latest`. Deliberately not pinned: these
+      # servers track an evolving host interface, so CI finding out that a new
+      # wash no longer builds them is the point rather than the failure mode.
+      - uses: wasmCloud/setup-wash-action@v2.1.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: components/mcp-servers/${{ matrix.name }}
+
+      # No `wash wit fetch` step: unlike the Kafka templates, these servers get
+      # their bindings from the `wasip3` and `rmcp` crates rather than from a
+      # `wit/` tree, so there is no registry mapping to configure and no
+      # `wkg.lock` to honour. Adding one here would be a no-op that fails
+      # confusingly the day a server does grow a `wit/` directory.
+
+      # Runs each server's own `.wash/config.yaml`, so CI builds the way the
+      # READMEs tell a reader to and reports back where the component landed.
+      - name: Build the component
+        id: build
+        uses: wasmCloud/actions/wash-build@v2.0.0
+        with:
+          working-directory: components/mcp-servers/${{ matrix.name }}
+
+      - name: Run the unit tests
+        # Host target, because the test binaries have to actually execute. The
+        # redactor and the sanitizer carry tests that pin documented behaviour,
+        # including the limitations their READMEs promise readers.
+        run: cargo test --release --target x86_64-unknown-linux-gnu
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      # The two checks a build cannot make: that the output is a valid
+      # component at all, and that it still exports what a host looks for.
+      - name: Validate the component
+        env:
+          COMPONENT: ${{ steps.build.outputs.component_path }}
+        run: |
+          wasm-tools validate --features all "$COMPONENT"
+          wit=$(wasm-tools component wit "$COMPONENT")
+          echo "$wit"
+          echo "$wit" | grep -q -- "export wasi:http/handler" || {
+            echo "::error::component no longer exports wasi:http/handler"
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.build.outputs.component_path }}
+          if-no-files-found: error
+
+      # Pull requests build and validate but never publish: a fork's token
+      # cannot write packages, and an unreviewed change should not become the
+      # image someone pulls.
+      - name: Log in to GHCR
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GHCR
+        id: publish
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        env:
+          COMPONENT: ${{ steps.build.outputs.component_path }}
+        run: |
+          # Matches what is already published and what the Launchpad catalog
+          # pins, so this workflow republishes those names rather than starting
+          # a parallel set under a different prefix.
+          image="ghcr.io/cosmonic-labs/components/${{ matrix.name }}"
+
+          # A tag push is a release and carries the version it names; anything
+          # else is whatever main happens to be right now.
+          #
+          # Note that `latest` moves on every push to main, while the catalog
+          # pins each entry by digest. That is the intended split: `latest` is
+          # for someone trying a server, the digest is what a deployment gets.
+          case "${GITHUB_REF}" in
+            refs/tags/mcp-servers/v*)
+              version="${GITHUB_REF#refs/tags/mcp-servers/v}"
+              tags="${version} latest"
+              ;;
+            *)
+              tags="sha-${GITHUB_SHA:0:12} latest"
+              ;;
+          esac
+
+          digest=""
+          for tag in $tags; do
+            echo "pushing ${image}:${tag}"
+            pushed=$(wash oci push --output json "${image}:${tag}" "$COMPONENT")
+            digest=$(echo "$pushed" | jq -er .data.digest) || {
+              echo "::error::push reported no digest: $pushed"
+              exit 1
+            }
+            echo "pushed ${image}:${tag} ($digest)"
+          done
+          # Every tag carries the same bytes, so one digest describes them all.
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      # Provenance for something a reader is told to pull and run: it ties the
+      # published bytes back to this workflow and this commit.
+      - name: Attest the published component
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
