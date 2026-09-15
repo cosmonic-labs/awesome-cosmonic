@@ -23,8 +23,6 @@ metadata:
     "mcp.ai/spec-version": "2026-07-28"
     mcp.ai/statefulness: stateless
     mcp.ai/transport: "streamable-http"
-  annotations:
-    desktop.cosmonic.com/source: mcp
 spec:
   hostInterfaces:
     - namespace: wasi

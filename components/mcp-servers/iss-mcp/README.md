@@ -52,10 +52,11 @@ Deployment is via [Cosmonic Desktop](https://cosmonic.com/docs/desktop): apply
 promote a local build and apply [`workload.yaml`](workload.yaml). Then call it
 through the ingress. In the stateless 2026-07-28 transport, each request stands
 alone, so `tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name`
-headers and a `_meta` block:
+headers and a `_meta` block. The host below is the one `deploy/workload.yaml`
+routes on; the local manifest routes on `iss-mcp.localhost` instead:
 
 ```console
-$ curl -X POST http://iss-mcp.localhost:8200/ \
+$ curl -X POST http://iss-mcp.localhost.cosmonic.sh:8200/ \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
     -H 'MCP-Protocol-Version: 2026-07-28' \
@@ -71,5 +72,7 @@ Outbound requests are governed by the workload's `allowedHosts` policy
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`iss-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host`, which differs between the two manifests. |
+| `MCP_OUTBOUND_MAX_BYTES` | Cap on an outbound response body (default 4 MiB). |
+| `MCP_OUTBOUND_TIMEOUT_MS` | Timeout for a single outbound exchange (default 30000). |
 | `OPEN_NOTIFY_BASE_URL` | Override the Open Notify base URL (testing only). |
