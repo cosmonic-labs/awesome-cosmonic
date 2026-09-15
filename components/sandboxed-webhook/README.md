@@ -4,8 +4,8 @@ A webhook (a public HTTP endpoint something calls when an event happens: a git p
 
 The point of the example is the host's egress policy, not the code. The workload's `allowedHosts` names the single forward target and denies every other destination, so even a fully compromised handler physically cannot exfiltrate the payload anywhere you did not name. Least-privilege egress, enforced by the sandbox.
 
-- `GET /` renders an info page and a ready-to-run `curl` with a valid signature for the configured secret.
-- `POST /` verifies `X-Hub-Signature-256: sha256=<hex>` over the raw body, then forwards the body to `WEBHOOK_FORWARD_URL`. A missing or wrong signature gets `401` and never reaches out.
+- `GET /` renders an info page. Once a secret is configured it prints a ready-to-run `curl` carrying a valid signature; until then it reports what is missing and returns `503`.
+- `POST /` verifies `X-Hub-Signature-256: sha256=<hex>` over the raw body, then forwards the body to `WEBHOOK_FORWARD_URL`. A missing or wrong signature gets `401` and never reaches out. Bodies over 1 MiB get `413`.
 
 ## Configuration
 
@@ -13,7 +13,7 @@ Read from the workload environment:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WEBHOOK_SIGNING_SECRET` | a Cosmonic secret (see below) | HMAC key. Registered as a Cosmonic secret, never inline. Falls back to a built-in dev default under local `wash dev`. |
+| `WEBHOOK_SIGNING_SECRET` | none, required | HMAC key. Registered as a Cosmonic secret, never inline. Unset, every `POST` is refused with `503` and nothing is forwarded. |
 | `WEBHOOK_FORWARD_URL` | `https://postman-echo.com/post` | The single downstream. Its host **must** be in the workload's `allowedHosts`. |
 
 ## Set the signing secret
@@ -36,7 +36,7 @@ The webhook verifies its caller with an HMAC signature, so it needs a signing se
      - name: webhook-signing-secret
    ```
 
-This is a required step before launch, not a one-click default: a webhook that verifies its callers needs a real secret. (For local `wash dev`, where no secret is injected, the component falls back to a built-in dev default so the example still runs.)
+This is a required step before launch, including under local `wash dev`. There is deliberately no fallback secret: a default written into this file would be published with it, and anyone reading the repository could sign a request that a deployment which skipped this step would accept as genuine. Without the variable set, the receiver refuses every `POST` and says so.
 
 ## Prerequisites
 
@@ -57,11 +57,14 @@ The component is written to `target/wasm32-wasip2/release/sandboxed_webhook.wasm
 wash dev
 ```
 
-`wash dev` runs deny-all, so the forward is denied there by design (proof the gate is real). To see a forward succeed, deploy with an allow-list: apply [`manifests/workload.yaml`](manifests/workload.yaml) on Cosmonic Desktop, which sets `allowedHosts: [postman-echo.com]`:
+`wash dev` runs deny-all, so the forward is denied there by design (proof the gate is real). Set `WEBHOOK_SIGNING_SECRET` in that environment too, or the receiver returns `503` before it gets as far as the egress check. To see a forward succeed, deploy with an allow-list: apply [`manifests/workload.yaml`](manifests/workload.yaml) on Cosmonic Desktop, which sets `allowedHosts: [postman-echo.com]`:
+
+Sign with the same secret you registered above. `$WEBHOOK_SECRET` here is that
+value, in your shell rather than in the manifest:
 
 ```shell
 BODY='{"event":"ping","from":"cosmonic"}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "cosmonic-demo-secret" | sed 's/^.*= //')
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.*= //')
 curl -H 'Host: sandboxed-webhook.localhost' -X POST http://127.0.0.1:8200/ \
   -H 'content-type: application/json' \
   -H "x-hub-signature-256: sha256=$SIG" \
@@ -69,7 +72,7 @@ curl -H 'Host: sandboxed-webhook.localhost' -X POST http://127.0.0.1:8200/ \
 # {"verified":true,"forwarded_to":"https://postman-echo.com/post","downstream_status":200}
 ```
 
-Change one byte of the body and the signature no longer matches: `401`, no egress.
+Or open `GET /` in a browser, which prints the same `curl` with the signature already computed. Change one byte of the body and the signature no longer matches: `401`, no egress.
 
 ## License
 
