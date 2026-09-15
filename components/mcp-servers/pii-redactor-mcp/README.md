@@ -1,12 +1,19 @@
 # pii-redactor-mcp
 
-An MCP server that **strips personally identifiable information (PII) from
-text**, built as a WebAssembly component for Cosmonic Desktop. It is
-**pure-compute and zero-egress**: the single `redact` tool does all its work
-on-device, and the workload's outbound `allowedHosts` list is **empty
-(deny-all)**. The sandbox holds no network at all, so the text the tool sees
-physically cannot be exfiltrated. That empty allowlist is the whole security
-story.
+An MCP server that finds and replaces **six specific patterns of sensitive
+value** in text (email addresses, US Social Security numbers, North American
+phone numbers, Luhn-valid payment card numbers, IPv4 addresses, and AWS access
+key IDs), built as a WebAssembly component for Cosmonic Desktop.
+
+It is **pure-compute and zero-egress**: the single `redact` tool does all its
+work on-device and the component makes no outbound calls anywhere in its source,
+so text handed to it cannot be exfiltrated.
+
+Those are two different guarantees, and only the first is complete. Containment
+is a property of the sandbox and holds absolutely. Detection is a property of
+six regular expressions and does not. Read [What it does not
+catch](#what-it-does-not-catch) before treating this tool's output as safe to
+share.
 
 No authentication and no configuration are required.
 
@@ -45,6 +52,36 @@ so an address's own digits are not re-hit as a phone number or card. Patterns
 use the [`regex`](https://docs.rs/regex) crate, which runs in guaranteed linear
 time (no catastrophic backtracking / ReDoS), compiled once behind a `OnceLock`.
 
+### What it does not catch
+
+Six regular expressions are not a PII classifier. The categories above are the
+whole of what this tool detects, and the gaps below are the ones most likely to
+matter if you point it at real data. Every example here passes through
+**unredacted**:
+
+| Not detected | Example |
+|---|---|
+| Names, dates of birth, postal addresses | `Margaret Chen, DOB 1974-03-11, 42 Alder Lane` |
+| Phone numbers outside North America | `+44 20 7946 0958`, `+33 1 42 68 53 00`, `+91 98765 43210` |
+| IPv6 addresses | `2001:0db8:85a3::8a2e:0370:7334` |
+| AWS **secret** access keys (only the `AKIA` id half is caught) | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+| Credentials that are not AWS key IDs | GitHub `ghp_…`, Slack `xoxb-…`, Google `AIzaSy…`, `-----BEGIN RSA PRIVATE KEY-----` |
+| Bank and government identifiers outside the US 3-2-4 SSN shape | `IBAN GB29 NWBK 6016 1331 9268 19`, passport numbers |
+| Email addresses containing non-ASCII characters | `josé.álvarez@exämple.de` |
+
+It also over-matches in the other direction, rewriting text that is not
+sensitive at all:
+
+| Over-matched | Becomes |
+|---|---|
+| `version 1.2.3.4` | `version [REDACTED_IP]` |
+| `netmask is 255.255.255.0` | `[REDACTED_IP]` |
+| Three space-separated numeric columns, `100 20 3000` | `[REDACTED_SSN]` |
+| Any 13 to 19 digit run that happens to pass the Luhn check, including one embedded in an API token or an order id | `[REDACTED_CC]` |
+
+Use this as a first pass that removes the obvious things, not as the control
+that decides whether text is safe to publish.
+
 Every call returns structured JSON, for example:
 
 ```json
@@ -71,9 +108,10 @@ Its work is pure compute, so the workload's outbound allowlist is empty:
 allowedHosts: []
 ```
 
-Empty is deny-all (fail-closed). Because the component has no network access,
-the sensitive text it processes cannot leave the sandbox. There is no host to
-add here, and none should be added.
+Egress is deny-by-default, so an empty list and an omitted key both mean the
+component reaches nothing. The stronger guarantee is in the code rather than the
+manifest: this component never constructs an outbound request, so there is no
+host to add here and none should be added.
 
 ## Build
 
