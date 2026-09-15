@@ -8,8 +8,13 @@ build:
 # durable Workload draft when you promote this project. Keep it in step with
 # manifests/workload.yaml.
 workload:
-  # No allowedHosts key: egress is deny-by-default and this example makes no
-  # outbound calls. The task list persists to the host key-value store.
+  # Explicit empty list: deny-all. This example makes no outbound calls at all,
+  # because the task list persists to the host key-value store.
+  #
+  # The key has to be written out. Once a `workload:` block exists, omitting
+  # allowedHosts makes `wash dev` substitute allow-all, which is the opposite of
+  # the deployed manifest, where an absent key denies everything.
+  allowedHosts: []
   environment:
     config:
       RUST_LOG: info
