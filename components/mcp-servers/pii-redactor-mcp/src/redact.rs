@@ -159,12 +159,16 @@ fn patterns() -> &'static [Pattern] {
             },
             // NANP phone numbers: (555) 123-4567, 555-123-4567, 555.123.4567,
             // +1 555 123 4567, +1-555-123-4567. A separator is required between
-            // groups so a bare 10-digit run is not swept up.
+            // groups so a bare 10-digit run is not swept up. The `\b` on the
+            // bare-digit branch is load-bearing: without it the pattern matches
+            // partway into a longer digit run, so an identifier like
+            // 9876543-210-1234 was rewritten to 9876[REDACTED_PHONE], mangling
+            // the value while leaving the first digits exposed.
             Pattern {
                 category: "phone",
                 precedence: 5,
                 re: Regex::new(
-                    r"(?:\+?1[ .\-]?)?(?:\(\d{3}\)[ ]?|\d{3}[ .\-])\d{3}[ .\-]\d{4}\b",
+                    r"(?:\+?1[ .\-]?)?(?:\(\d{3}\)[ ]?|\b\d{3}[ .\-])\d{3}[ .\-]\d{4}\b",
                 )
                 .unwrap(),
                 group: 0,
@@ -351,6 +355,18 @@ mod tests {
         }
     }
 
+    /// A phone number has to start at a digit-run boundary. Without the `\b`,
+    /// the pattern matched partway into a longer identifier and rewrote it to
+    /// `9876[REDACTED_PHONE]`, corrupting the value and leaving a prefix.
+    #[test]
+    fn phone_does_not_match_inside_a_longer_digit_run() {
+        for s in ["9876543-210-1234", "12345-678-9012"] {
+            let r = all(s);
+            assert_eq!(r.counts["phone"], 0, "false positive on {s}");
+            assert_eq!(r.redacted, s, "text was rewritten: {s}");
+        }
+    }
+
     #[test]
     fn ssn_dashed_and_context_bare() {
         assert_eq!(all("123-45-6789").counts["us_ssn"], 1);
@@ -420,5 +436,60 @@ mod tests {
             redact(&big, None).unwrap_err(),
             RedactError::TooLarge { .. }
         ));
+    }
+}
+
+/// Pins the README's "What it does not catch" table to real behaviour.
+///
+/// These assert the tool's *limitations*, which is unusual, and deliberate: the
+/// README tells readers these values survive unredacted, and a reader deciding
+/// whether output is safe to share is relying on that being true. If you widen
+/// a pattern so one of these is caught, that is an improvement, and the fix is
+/// to update the table and this test together rather than to delete the case.
+#[cfg(test)]
+mod readme_claims {
+    use super::*;
+    fn all(t: &str) -> RedactionResult { redact(t, None).unwrap() }
+
+    /// The credential-shaped rows are assembled from fragments rather than
+    /// written as literals. A whole token on one line is what secret scanners
+    /// look for, and a test fixture that trips push protection (or that someone
+    /// copies believing it is a working example) is not worth the readability.
+    #[test]
+    fn documented_gaps_pass_through_unredacted() {
+        // Digits chosen to fail the Luhn check. An all-zero run passes it, and
+        // a Slack token's 13-digit segment is inside the 13-19 digit card
+        // window, so a zero-filled fixture gets rewritten to [REDACTED_CC] and
+        // tests the wrong thing.
+        let slack = format!("xoxb-{}-{}-{}", "123456789012", "1234567890123", "a".repeat(24));
+        let github = format!("ghp_{}", "0".repeat(36));
+        let google = format!("AIzaSy{}", "0".repeat(33));
+        // AWS's own documented placeholder secret key, safe to write out.
+        let aws_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+
+        let cases: [&str; 12] = [
+            "Margaret Chen, DOB 1974-03-11, 42 Alder Lane",
+            "+44 20 7946 0958",
+            "+33 1 42 68 53 00",
+            "+91 98765 43210",
+            "2001:0db8:85a3::8a2e:0370:7334",
+            aws_secret,
+            &github,
+            &slack,
+            &google,
+            "-----BEGIN RSA PRIVATE KEY-----",
+            "IBAN GB29 NWBK 6016 1331 9268 19",
+            "jos\u{e9}.\u{e1}lvarez@ex\u{e4}mple.de",
+        ];
+        for s in cases {
+            assert_eq!(all(s).redacted, s, "UNEXPECTEDLY REDACTED: {s}");
+        }
+    }
+
+    #[test]
+    fn documented_over_matches_really_over_match() {
+        assert_eq!(all("version 1.2.3.4").redacted, "version [REDACTED_IP]");
+        assert_eq!(all("netmask is 255.255.255.0").redacted, "netmask is [REDACTED_IP]");
+        assert_eq!(all("100 20 3000").redacted, "[REDACTED_SSN]");
     }
 }
