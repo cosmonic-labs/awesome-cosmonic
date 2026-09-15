@@ -1,0 +1,19 @@
+# wash v2 project configuration — used by `wash dev`, `wash build`, and
+# Cosmonic Desktop's project mode alike.
+#
+# The registry is a single reactor component exporting wasi:http/incoming-handler.
+# It scales to zero: the host instantiates it per request and tears it down;
+# all state lives on the disk volume mounted at /data, so nothing is resident
+# when idle.
+version: "0.1.0"
+
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: ../../target/wasm32-wasip2/release/oci_registry.wasm
+
+dev:
+  address: 127.0.0.1:8080
+  # Persist registry content on the host so pushed images survive restarts.
+  volumes:
+    - host_path: ../../.cache/registry-data
+      guest_path: /data

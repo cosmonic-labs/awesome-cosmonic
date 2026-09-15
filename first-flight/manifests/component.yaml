@@ -1,0 +1,17 @@
+apiVersion: control.cosmonic.io/v1alpha1
+kind: HTTPTrigger
+metadata:
+  name: first-flight
+  namespace: default
+spec:
+  replicas: 1
+  ingress:
+    host: "first-flight.localhost.cosmonic.sh"
+    paths:
+      - path: /
+        pathType: Prefix
+  template:
+    spec:
+      components:
+        - name: http
+          image: ghcr.io/cosmonic-labs/first-flight:0.1.0
