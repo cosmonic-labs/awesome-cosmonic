@@ -8,15 +8,15 @@
 //! did not name. Least-privilege egress, enforced by the sandbox rather than by
 //! the code.
 //!
-//! - `GET  /` renders an info page (and a ready-to-run `curl` with a valid
-//!   signature for the configured secret), so the entry shows something the
-//!   moment it launches.
+//! - `GET  /` renders an info page. Once a secret is configured it prints a
+//!   ready-to-run `curl` carrying a valid signature; until then it says what is
+//!   missing and returns 503, matching what `POST /` would do.
 //! - `POST /` verifies `X-Hub-Signature-256: sha256=<hex>` over the raw body,
 //!   then forwards the body to `WEBHOOK_FORWARD_URL`.
 //!
 //! Config (workload environment):
-//! - `WEBHOOK_SIGNING_SECRET`: HMAC key. Defaults to a well-known demo secret
-//!   so the example runs one-click; move it to a Cosmonic secret for real use.
+//! - `WEBHOOK_SIGNING_SECRET`: HMAC key. Required. There is no default, so
+//!   until it is set every POST is refused with 503 and nothing is forwarded.
 //! - `WEBHOOK_FORWARD_URL`: the single downstream URL. Its host MUST be listed
 //!   in the workload's `allowedHosts`, or the forward is denied by the sandbox.
 
@@ -26,14 +26,29 @@ use wstd::http::{Body, Client, Method, Request, Response, StatusCode};
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Well-known demo secret so the example works the instant it launches. Replace
-/// it (via `WEBHOOK_SIGNING_SECRET`, ideally a Cosmonic secret) for real use.
-const DEFAULT_SECRET: &str = "cosmonic-demo-secret";
 /// Default downstream. Its host is the single entry in `allowedHosts`.
 const DEFAULT_FORWARD_URL: &str = "https://postman-echo.com/post";
 const SIG_HEADER: &str = "x-hub-signature-256";
 /// Sample body the info page signs, so the shown `curl` actually succeeds.
 const SAMPLE_BODY: &str = r#"{"event":"ping","from":"cosmonic"}"#;
+/// Largest body this receiver will accept. A webhook is an internet-facing
+/// endpoint, so it should refuse rather than buffer whatever it is handed.
+const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+/// The HMAC key, or `None` when it is unset or empty.
+///
+/// There is deliberately no default. An earlier version fell back to a secret
+/// written in this file, which meant a deployment that skipped the setup step
+/// kept verifying signatures against a value published in a public repository:
+/// anyone could forge a valid header, and nothing in the response said so. For
+/// an example whose entire subject is signature verification, failing closed is
+/// the only defensible default.
+fn signing_secret() -> Option<String> {
+    match std::env::var("WEBHOOK_SIGNING_SECRET") {
+        Ok(s) if !s.is_empty() => Some(s),
+        _ => None,
+    }
+}
 
 #[wstd::http_server]
 async fn main(req: Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
@@ -52,10 +67,33 @@ async fn main(req: Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
 
 /// Verify the signature, then forward the raw body to the one allow-listed host.
 async fn handle_webhook(req: Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
-    let secret = env_or(SecretVar, DEFAULT_SECRET);
+    let Some(secret) = signing_secret() else {
+        return reply(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &Outcome::error(
+                "WEBHOOK_SIGNING_SECRET is not set, so no signature can be verified \
+                 and nothing will be forwarded",
+            ),
+        );
+    };
     let forward_url = env_or(ForwardVar, DEFAULT_FORWARD_URL);
 
     let (parts, mut body) = req.into_parts();
+
+    // Refuse an oversized body before reading it, when the client declares one.
+    if let Some(declared) = parts
+        .headers
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        if declared > MAX_BODY_BYTES {
+            return reply(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &Outcome::error("body exceeds the 1 MiB limit"),
+            );
+        }
+    }
 
     let provided_sig = parts
         .headers
@@ -73,6 +111,14 @@ async fn handle_webhook(req: Request<Body>) -> Result<Response<Body>, wstd::http
         Ok(b) => b.to_vec(),
         Err(_) => return text(StatusCode::BAD_REQUEST, "Could not read request body.\n"),
     };
+    // A client that lied about (or omitted) content-length still gets refused,
+    // after the fact rather than before it.
+    if payload.len() > MAX_BODY_BYTES {
+        return reply(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            &Outcome::error("body exceeds the 1 MiB limit"),
+        );
+    }
 
     match verify(&secret, &payload, provided_sig.as_deref()) {
         SigResult::Missing => {
@@ -105,7 +151,10 @@ async fn handle_webhook(req: Request<Body>) -> Result<Response<Body>, wstd::http
         Err(_) => {
             return reply(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &Outcome::error("WEBHOOK_FORWARD_URL is not a valid URL"),
+                &Outcome::error(
+                    "could not build the outbound request: check WEBHOOK_FORWARD_URL \
+                     and the inbound content-type header",
+                ),
             );
         }
     };
@@ -199,15 +248,9 @@ fn text(status: StatusCode, msg: &str) -> Result<Response<Body>, wstd::http::Err
 }
 
 /// Marker types so `env_or` reads self-documenting at the call site.
-struct SecretVar;
 struct ForwardVar;
 trait EnvVar {
     fn key(&self) -> &'static str;
-}
-impl EnvVar for SecretVar {
-    fn key(&self) -> &'static str {
-        "WEBHOOK_SIGNING_SECRET"
-    }
 }
 impl EnvVar for ForwardVar {
     fn key(&self) -> &'static str {
@@ -220,7 +263,6 @@ fn env_or<V: EnvVar>(v: V, default: &str) -> String {
 
 /// GET landing page: explains the sandbox story and prints a `curl` that works.
 fn info_page(req: &Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
-    let secret = env_or(SecretVar, DEFAULT_SECRET);
     let forward_url = env_or(ForwardVar, DEFAULT_FORWARD_URL);
 
     let host = req
@@ -229,6 +271,30 @@ fn info_page(req: &Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost:8200")
         .to_owned();
+
+    // With no secret configured the receiver rejects every POST, so say that
+    // instead of printing a curl that cannot work.
+    let Some(secret) = signing_secret() else {
+        let page = format!(
+            "Sandboxed Webhook (not configured)\n\
+             ==================================\n\n\
+             WEBHOOK_SIGNING_SECRET is not set, so every POST is refused with 503\n\
+             and nothing is forwarded. There is no default secret: one written in\n\
+             the source would be public, and anyone could sign a request with it.\n\n\
+             To finish setup, register a secret with Cosmonic Desktop and reference\n\
+             it from the workload:\n\n\
+             \x20 cosmonic secret set webhook-signing-secret\n\n\
+             then apply manifests/workload.yaml, which maps that secret to\n\
+             WEBHOOK_SIGNING_SECRET. Reload this page and it will print a signed\n\
+             curl you can run.\n\n\
+             Forward target : {forward_url}\n"
+        );
+        return Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header("content-type", "text/plain; charset=utf-8")
+            .body(Body::from(page))
+            .map_err(Into::into);
+    };
 
     // Sign the sample body with the configured secret so the shown curl succeeds.
     let sig = match HmacSha256::new_from_slice(secret.as_bytes()) {
@@ -257,8 +323,8 @@ fn info_page(req: &Request<Body>) -> Result<Response<Body>, wstd::http::Error> {
          You get back the forward target and the downstream status. Now change one\n\
          byte of the body (so the signature no longer matches) and you get 401.\n\
          The request never leaves the sandbox.\n\n\
-         To make it yours: set WEBHOOK_SIGNING_SECRET (ideally a Cosmonic secret)\n\
-         and WEBHOOK_FORWARD_URL, and put the new host in allowedHosts.\n"
+         To point it somewhere else: set WEBHOOK_FORWARD_URL and put the new host\n\
+         in allowedHosts, or the forward is denied by the sandbox.\n"
     );
 
     Response::builder()
