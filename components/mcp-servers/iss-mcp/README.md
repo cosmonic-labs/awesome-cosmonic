@@ -20,11 +20,11 @@ Both tools take **no parameters**.
 
 ## Endpoints & `allowedHosts`
 
-Open Notify is **HTTP-only** — it has no HTTPS endpoint — so the outbound calls
+Open Notify is **HTTP-only**, with no HTTPS endpoint, so the outbound calls
 go over plain `http://`.
 
-- `http://api.open-notify.org/astros.json` — people currently in space
-- `http://api.open-notify.org/iss-now.json` — ISS latitude/longitude
+- `http://api.open-notify.org/astros.json` returns people currently in space
+- `http://api.open-notify.org/iss-now.json` returns the ISS latitude and longitude
 
 The workload's outbound allow-list must contain exactly this one host:
 

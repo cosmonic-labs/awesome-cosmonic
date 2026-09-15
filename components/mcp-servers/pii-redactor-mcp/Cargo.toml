@@ -3,7 +3,7 @@ name = "pii-redactor-mcp"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
-description = "PII redactor MCP server: strip emails, SSNs, phone numbers, Luhn-valid credit cards, IPv4 addresses, and AWS access key IDs from text — pure-compute, zero egress (WebAssembly component, wasi:http@0.3.0)"
+description = "PII redactor MCP server: strip emails, SSNs, phone numbers, Luhn-valid credit cards, IPv4 addresses, and AWS access key IDs from text; pure-compute, zero egress (WebAssembly component, wasi:http@0.3.0)"
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
 
@@ -22,7 +22,7 @@ rmcp = { version = "3.1.1", default-features = false, features = [
 
 # WASI 0.3 bindings: exports the `wasi:http@0.3.0` service world and bridges
 # to hyperium `http` types via `http_compat`. Needed for the MCP server
-# transport (ingress) — this component performs NO outbound HTTP.
+# transport (ingress). This component performs NO outbound HTTP.
 wasip3 = { version = "0.7.0", features = ["http-compat"] }
 
 # The bridge parks tasks on Rust-only events (the request-lock mutex, the
@@ -50,7 +50,7 @@ regex = "1"
 
 # rmcp drives its session/dispatch machinery with tokio primitives; on
 # wasm32-wasip2 we run a single-threaded runtime. This component has no
-# outbound I/O — all tool work is pure compute.
+# outbound I/O. All tool work is pure compute.
 tokio = { version = "1.50", features = ["rt", "macros", "sync", "time", "io-util"] }
 
 serde = { version = "1", features = ["derive"] }

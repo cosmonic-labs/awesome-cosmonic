@@ -3,7 +3,7 @@ name = "md-html-sanitizer-mcp"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
-description = "Markdown/HTML sanitizer MCP server: turn untrusted markdown or HTML into safe HTML (allowlist-based, strips scripts/handlers/dangerous URLs) — pure-compute, zero egress (WebAssembly component, wasi:http@0.3.0)"
+description = "Markdown/HTML sanitizer MCP server: turn untrusted markdown or HTML into safe HTML (allowlist-based, strips scripts/handlers/dangerous URLs); pure-compute, zero egress (WebAssembly component, wasi:http@0.3.0)"
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
 
@@ -22,7 +22,7 @@ rmcp = { version = "3.1.1", default-features = false, features = [
 
 # WASI 0.3 bindings: exports the `wasi:http@0.3.0` service world and bridges
 # to hyperium `http` types via `http_compat`. Needed for the MCP server
-# transport (ingress) — this component performs NO outbound HTTP.
+# transport (ingress). This component performs NO outbound HTTP.
 wasip3 = { version = "0.7.0", features = ["http-compat"] }
 
 # The bridge parks tasks on Rust-only events (the request-lock mutex, the
@@ -46,21 +46,21 @@ bytes = "1"
 # HTML sanitization. `ammonia` is the standard allowlist-based sanitizer: it
 # parses with html5ever, keeps only a safe subset of tags/attributes, and drops
 # <script>/<style>/<iframe>/<object>/<embed>, event-handler attributes, and
-# `javascript:`/`data:` URLs. Battle-tested — do NOT hand-roll HTML sanitizing.
+# `javascript:`/`data:` URLs. Battle-tested; do NOT hand-roll HTML sanitizing.
 # Compiles to wasm32-wasip2 (pulls in html5ever/markup5ever/tendril/url, all
 # wasm-clean).
 ammonia = "4"
 
 # CommonMark -> HTML rendering, pure Rust and wasm-clean. Rendered output is
 # passed BACK through ammonia so any inline/raw HTML in the markdown is also
-# sanitized (CommonMark permits raw HTML — this is the safe path).
+# sanitized (CommonMark permits raw HTML, so this is the safe path).
 pulldown-cmark = { version = "0.13", default-features = false, features = [
     "html",
 ] }
 
 # rmcp drives its session/dispatch machinery with tokio primitives; on
 # wasm32-wasip2 we run a single-threaded runtime. This component has no
-# outbound I/O — all tool work is pure compute.
+# outbound I/O. All tool work is pure compute.
 tokio = { version = "1.50", features = ["rt", "macros", "sync", "time", "io-util"] }
 
 serde = { version = "1", features = ["derive"] }
