@@ -93,6 +93,7 @@ End-to-end applications demonstrating how components compose into a running syst
 
 For starting points maintained by Cosmonic rather than the community, see the [Template Catalog](https://cosmonic.com/docs/template-catalog/).
 
+- [first-flight](workload-examples/first-flight/) (hosted): The single `wasi:http` component behind the **First Flight** entry in the Cosmonic Desktop Launchpad, serving one self-contained page that reports the workload name, the host it answered on, and a live round-trip counter. The smallest thing that proves a workload is running rather than a static file. Rust, exports `wasi:http/incoming-handler@0.2.2`.
 - [task-manager](workload-examples/task-manager/) (hosted): A stateful to-do list served over HTTP that persists to the host key-value store, so the list survives a restart with no database to run and no outbound network. A compact example of declaring a non-ambient import (`wasi:keyvalue/store`) alongside an HTTP trigger. Rust, exports `wasi:http/incoming-handler@0.2.2`.
 - [control-demos](https://github.com/cosmonic-labs/control-demos) (linked): Reference components and demos for Cosmonic Control on Kubernetes, spanning Rust, Go, and TypeScript: a NATS-backed blobstore fileserver, HTTP servers, a Hono and Swagger UI API explorer, and an Argo CD GitOps integration. Ships Helm charts and a `kind` config for running the whole set locally.
 

@@ -1,0 +1,29 @@
+# Cosmonic Desktop Workload spec for first-flight, matching the Launchpad entry.
+#
+# This is the manifest to apply if you arrived here from the Launchpad card and
+# want to reproduce what it launched. The sibling component.yaml is the Cosmonic
+# Control CRD for the same component on Kubernetes.
+#
+# There is deliberately no allowedHosts key. Egress is deny-by-default and this
+# component makes no outbound calls: it serves a page and reports the host it is
+# running on.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: first-flight
+  namespace: default
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces:
+        - incoming-handler
+      config:
+        host: first-flight.localhost
+  components:
+    - name: first-flight
+      # The published image, pinned by digest. To run your own build instead,
+      # `wash build`, promote it, and swap in the reference promote returns.
+      image: ghcr.io/cosmonic-labs/first-flight:0.1.2@sha256:6fffe71f9bab84fc09303868661f4b4a06da0b2ab1a8116b731dce545a3fd18d
+      poolSize: 1
+      maxInvocations: 0
