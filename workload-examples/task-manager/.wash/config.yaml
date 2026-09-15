@@ -1,0 +1,15 @@
+# wash v2 project configuration, used by Cosmonic Desktop's project mode
+# (build, dev loop, promote) and by the `wash` CLI alike.
+version: "0.1.3"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/task_manager.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into the
+# durable Workload draft when you promote this project. Keep it in step with
+# manifests/workload.yaml.
+workload:
+  # No allowedHosts key: egress is deny-by-default and this example makes no
+  # outbound calls. The task list persists to the host key-value store.
+  environment:
+    config:
+      RUST_LOG: info
