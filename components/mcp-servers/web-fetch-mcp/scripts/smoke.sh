@@ -9,7 +9,12 @@
 set -euo pipefail
 
 INGRESS="${INGRESS:-http://127.0.0.1:8200/}"
-HOST="${HOST:-web-fetch-mcp.localhost}"
+# The ingress routes on this Host header, so it has to match the `host` of the
+# manifest you actually applied: deploy/workload.yaml (the published image)
+# routes on web-fetch-mcp.localhost.cosmonic.sh, and the top-level workload.yaml
+# (a local promote) routes on web-fetch-mcp.localhost. Override for the latter:
+#   HOST=web-fetch-mcp.localhost ./scripts/smoke.sh
+HOST="${HOST:-web-fetch-mcp.localhost.cosmonic.sh}"
 ALLOWED_URL="${ALLOWED_URL:-https://httpbin.org/get}"
 BLOCKED_URL="${BLOCKED_URL:-https://example.org/}"
 META='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'

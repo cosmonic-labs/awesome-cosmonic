@@ -79,7 +79,7 @@ alone, so `tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name`
 headers and a `_meta` block:
 
 ```console
-$ curl -X POST http://web-fetch-mcp.localhost:8200/ \
+$ curl -X POST http://web-fetch-mcp.localhost.cosmonic.sh:8200/ \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
     -H 'MCP-Protocol-Version: 2026-07-28' \
