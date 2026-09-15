@@ -77,8 +77,22 @@ fn encode(value: &str) -> String {
 }
 
 /// Percent-encodes a URL path, preserving `/` segment separators.
+///
+/// `.` is left literal because owner, repository and file names legitimately
+/// contain it, but a segment that is exactly `.` or `..` is encoded instead.
+/// `http::Uri` does not normalize dot segments and the URL is built by
+/// concatenation, so an untrusted tool argument carrying `../` would otherwise
+/// reshape the request into a REST endpoint this server does not advertise.
 fn encode_path(value: &str) -> String {
-    encode_with(value, true)
+    value
+        .split('/')
+        .map(|segment| match segment {
+            "." => "%2E".to_string(),
+            ".." => "%2E%2E".to_string(),
+            other => encode_with(other, false),
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn encode_with(value: &str, keep_slash: bool) -> String {

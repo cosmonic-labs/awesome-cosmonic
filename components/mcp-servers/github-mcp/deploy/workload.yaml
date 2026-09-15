@@ -1,6 +1,7 @@
 # Cosmonic Desktop deployment manifest for the published github-mcp image.
-# Local iteration uses ../workload.yaml (Desktop's built-in registry); this
-# manifest deploys the released image. Docs: https://cosmonic.com/docs/desktop
+# Local iteration uses .wash/config.yaml (build, dev loop, then promote into
+# Desktop's built-in registry); this manifest deploys the released image.
+# Docs: https://cosmonic.com/docs/desktop
 #
 # Runs unauthenticated by default (public GitHub data, 60 requests/hour). To
 # raise the rate limit and reach private repositories, register a GitHub token
@@ -21,8 +22,6 @@ metadata:
     "mcp.ai/spec-version": "2026-07-28"
     mcp.ai/statefulness: stateless
     mcp.ai/transport: "streamable-http"
-  annotations:
-    desktop.cosmonic.com/source: mcp
 spec:
   hostInterfaces:
     - namespace: wasi
