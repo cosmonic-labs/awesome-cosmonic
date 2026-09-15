@@ -135,3 +135,27 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod readme_claims {
+    use super::*;
+
+    /// The README tells readers this is CommonMark, not GFM. Pin that.
+    #[test]
+    fn gfm_only_syntax_is_not_recognized() {
+        let out = render_markdown("| a | b |\n|---|---|\n| 1 | 2 |")
+            .unwrap()
+            .html;
+        assert!(!out.contains("<table"), "GFM tables now render: {out}");
+        let strike = render_markdown("~~gone~~").unwrap().html;
+        assert!(!strike.contains("<del"), "strikethrough now renders: {strike}");
+    }
+
+    /// `removed` is a "was rewritten" flag, not a "was hostile" flag.
+    #[test]
+    fn removed_is_true_for_benign_normalization() {
+        let r = sanitize_html("<p>hi").unwrap();
+        assert_eq!(r.sanitized, "<p>hi</p>");
+        assert!(r.removed, "benign normalization should still set removed");
+    }
+}

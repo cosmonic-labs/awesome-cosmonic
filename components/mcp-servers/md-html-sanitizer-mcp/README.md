@@ -1,11 +1,17 @@
 # md-html-sanitizer-mcp
 
 An MCP server that **turns untrusted markdown or HTML into safe HTML**, built as
-a WebAssembly component for Cosmonic Desktop. It is **pure-compute and
-zero-egress**: both tools do all their work on-device, and the workload's
-outbound `allowedHosts` list is **empty (deny-all)**. The sandbox holds no
-network at all, so the content the tools see physically cannot be exfiltrated.
-That empty allowlist is the whole security story.
+a WebAssembly component for Cosmonic Desktop.
+
+It is **pure-compute and zero-egress**: both tools do all their work on-device
+and the component makes no outbound calls anywhere in its source, so content
+handed to it cannot be exfiltrated.
+
+Sanitizing is delegated to [ammonia](https://docs.rs/ammonia), which parses the
+markup with html5ever and re-serializes from the parsed tree against an
+allowlist. That is the part worth trusting: hand-rolled sanitizers that strip
+tags with string matching lose to markup a browser parses differently than they
+do.
 
 No authentication and no configuration are required.
 
@@ -61,6 +67,16 @@ here.
 through ammonia**. CommonMark permits raw inline HTML, so this second pass is
 what neutralizes an embedded `<script>` in the markdown. It is the safe path.
 
+It renders **CommonMark, not GitHub Flavored Markdown**. The parser runs with
+default options, so GFM-only syntax is not recognized and comes through as
+literal text: a pipe table renders as a paragraph of pipes rather than a
+`<table>`, and the same goes for strikethrough, task lists, and footnotes.
+
+One note on the `removed` flag: it reports that the output differs from the
+input, which includes harmless normalization. Feeding it `<p>hi` returns
+`<p>hi</p>` with `removed` set to `true`. Treat it as "this markup was
+rewritten", not as "this markup was hostile".
+
 ## `allowedHosts`: zero egress by design
 
 Unlike an MCP server that reaches an upstream API, this tool reaches **nothing**.
@@ -70,9 +86,10 @@ Its work is pure compute, so the workload's outbound allowlist is empty:
 allowedHosts: []
 ```
 
-Empty is deny-all (fail-closed). Because the component has no network access,
-the content it processes cannot leave the sandbox. There is no host to add here,
-and none should be added.
+Egress is deny-by-default, so an empty list and an omitted key both mean the
+component reaches nothing. The stronger guarantee is in the code rather than the
+manifest: this component never constructs an outbound request, so there is no
+host to add here and none should be added.
 
 ## Build
 
