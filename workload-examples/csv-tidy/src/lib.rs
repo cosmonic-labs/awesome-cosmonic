@@ -17,6 +17,7 @@
 //!   POST /api/tidy   body = CSV text; returns { headers, rows, issues, stats }
 //!   GET  /healthz    "ok"
 
+use std::collections::{HashMap, HashSet};
 use wasip3::http::types::{ErrorCode, Fields, Request, Response};
 use wasip3::http_compat::{http_from_wasi_request, BodyWriter};
 use http_body_util::BodyExt;
@@ -37,7 +38,12 @@ const MAX_ROWS_OUT: usize = 2000;
 /// as an escaped quote. Accepts CRLF, LF and CR line endings. A quote appearing
 /// inside an unquoted field is kept literally rather than treated as an error —
 /// `O"Brien` in a hand-edited file should survive, not abort the parse.
-fn parse_csv(input: &str, delim: char) -> Vec<Vec<String>> {
+/// Returns the rows and whether the input ended inside an open quote. An
+/// unterminated quote is the most common way a CSV is corrupted, and it is
+/// silent: the rest of the file is swallowed into one field, which then looks
+/// like a short row. Reporting it is the whole point of this tool, so the
+/// parser has to say so rather than leave the caller to misdiagnose it.
+fn parse_csv(input: &str, delim: char) -> (Vec<Vec<String>>, bool) {
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
     let mut field = String::new();
@@ -90,7 +96,7 @@ fn parse_csv(input: &str, delim: char) -> Vec<Vec<String>> {
         row.push(field);
         rows.push(row);
     }
-    rows
+    (rows, in_quotes)
 }
 
 /// Guess the delimiter by which candidate yields the most CONSISTENT column
@@ -104,7 +110,7 @@ fn sniff_delimiter(sample: &str) -> char {
     const CANDIDATES: [char; 4] = [',', ';', '\t', '|'];
     let mut best = (',', 0usize, usize::MAX);
     for &d in &CANDIDATES {
-        let rows = parse_csv(sample, d);
+        let (rows, _) = parse_csv(sample, d);
         let counts: Vec<usize> = rows.iter().filter(|r| !is_blank(r)).map(|r| r.len()).take(20).collect();
         if counts.is_empty() {
             continue;
@@ -179,17 +185,32 @@ fn tidy(input: &str) -> Tidy {
         issues.push(format!("Detected a {name}-delimited file, not comma-delimited."));
     }
 
-    let raw = parse_csv(input, delimiter);
+    let (raw, unterminated_quote) = parse_csv(input, delimiter);
     let before = raw.len();
     /* Keep each row's ORIGINAL line number. The issues below name the rows that
        need looking at, and the whole value of naming one is that the reader can
        go and find it — so the number has to be the line in THEIR file, not the
        index after blank rows were dropped. A single blank line above a ragged
        row was enough to send them to the wrong place. */
+    // Trimming is a change to the caller's data, so it is counted and reported
+    // like every other repair rather than applied silently.
+    let mut trimmed_fields = 0usize;
     let mut numbered: Vec<(usize, Vec<String>)> = raw
         .into_iter()
         .enumerate()
-        .map(|(i, r)| (i + 1, r.into_iter().map(|f| f.trim().to_string()).collect::<Vec<_>>()))
+        .map(|(i, r)| {
+            let fields = r
+                .into_iter()
+                .map(|f| {
+                    let t = f.trim();
+                    if t.len() != f.len() {
+                        trimmed_fields += 1;
+                    }
+                    t.to_string()
+                })
+                .collect::<Vec<_>>();
+            (i + 1, fields)
+        })
         .filter(|(_, r)| !is_blank(r))
         .collect();
     let blank_rows = before - numbered.len();
@@ -199,6 +220,23 @@ fn tidy(input: &str) -> Tidy {
             if blank_rows == 1 { "row" } else { "rows" }
         ));
     }
+    if trimmed_fields > 0 {
+        issues.push(format!(
+            "Trimmed whitespace from {trimmed_fields} {}.",
+            if trimmed_fields == 1 { "value" } else { "values" }
+        ));
+    }
+    // Said first, because every other issue below it is downstream of this one:
+    // an open quote swallows the rest of the file into a single field, which
+    // then presents as a short row and invites exactly the wrong fix.
+    if unterminated_quote {
+        issues.insert(
+            0,
+            "A quoted field was never closed, so everything after it was read as one value. \
+             Check for a stray \" in the file."
+                .to_string(),
+        );
+    }
 
     if numbered.is_empty() {
         return Tidy { headers: vec![], rows: vec![], issues, total_rows: 0, delimiter, blank_rows };
@@ -207,7 +245,15 @@ fn tidy(input: &str) -> Tidy {
     // Header repair. An empty or duplicated name is the thing that breaks a
     // downstream import, and both are common in exports.
     let (_, mut headers) = numbered.remove(0);
-    let mut seen: Vec<String> = Vec::new();
+    /* Case-insensitive dedup, in a set rather than a scan of a Vec. The obvious
+       version (`seen.iter().any(...)` inside the rename loop) is cubic in the
+       column count: each duplicate restarts the scan, and each scan grows. A
+       file with repeated header names, which is exactly the file this tool
+       exists for, took over seven seconds at 3,000 columns and did not return
+       at all near the body limit. The per-base counter is kept across columns
+       so the search never restarts from _2 either. */
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut next_suffix: HashMap<String, usize> = HashMap::new();
     let mut renamed = 0usize;
     let mut filled = 0usize;
     for (i, h) in headers.iter_mut().enumerate() {
@@ -216,13 +262,20 @@ fn tidy(input: &str) -> Tidy {
             filled += 1;
         }
         let base = h.clone();
-        let mut n = 2;
-        while seen.iter().any(|s| s.eq_ignore_ascii_case(h)) {
-            *h = format!("{base}_{n}");
-            n += 1;
+        if seen.contains(&h.to_ascii_lowercase()) {
+            let mut n = *next_suffix.get(&base).unwrap_or(&2);
+            loop {
+                let candidate = format!("{base}_{n}");
+                n += 1;
+                if !seen.contains(&candidate.to_ascii_lowercase()) {
+                    *h = candidate;
+                    break;
+                }
+            }
+            next_suffix.insert(base, n);
             renamed += 1;
         }
-        seen.push(h.clone());
+        seen.insert(h.to_ascii_lowercase());
     }
     if filled > 0 {
         issues.push(format!("Named {filled} empty header {}.", if filled == 1 { "column" } else { "columns" }));

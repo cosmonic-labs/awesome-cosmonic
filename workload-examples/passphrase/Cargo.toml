@@ -1,7 +1,7 @@
 [package]
 name = "passphrase"
 edition = "2021"
-version = "0.1.0"
+version = "0.1.1"
 # p3 build floor: wasip3 0.7.x's component-type section needs wasm-component-ld
 # >= 0.5.20 (which ships bundled with Rust >= 1.94); older toolchains fail in the
 # wasm-component-ld link step with a component encode/decode error. rustc uses its

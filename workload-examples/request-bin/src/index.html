@@ -117,8 +117,12 @@
 
     const hdrs = document.createElement("div");
     hdrs.className = "hdrs";
+    // Each header name maps to an ARRAY of values, because a header can repeat
+    // and collapsing those would hide exactly what this tool exists to show.
+    // One line per occurrence, the way the sender wrote them.
     hdrs.textContent = Object.entries(r.headers)
-      .map(([k, v]) => `${k}: ${v}`).join("\n") || "(no headers)";
+      .flatMap(([k, v]) => (Array.isArray(v) ? v : [v]).map((one) => `${k}: ${one}`))
+      .join("\n") || "(no headers)";
 
     const pre = document.createElement("pre");
     let body = r.body;

@@ -31,8 +31,10 @@ $ curl -s http://request-bin.localhost:8200/api/bins/$ID
 [{"receivedAt":…,"method":"POST","path":"/b/…","headers":{…},"body":"{\"event\":\"ping\"}"}]
 ```
 
-A binary body is reported as `<N bytes of binary data>` rather than mangled into
-the JSON, and `bodyIsText` says which you got.
+Each header name maps to an array of values, so a repeated `Set-Cookie` or
+`X-Forwarded-For` is recorded in full rather than collapsed to one. A binary body
+is reported as `<N bytes of binary data>` rather than mangled into the JSON, and
+`bodyIsText` says which you got.
 
 ## Build
 

@@ -144,12 +144,37 @@ fn record_json(
     headers: &[(String, Vec<u8>)],
     body: &[u8],
 ) -> String {
-    let hdrs = headers
+    /* One JSON array per header NAME, not one key per occurrence. A header can
+       legitimately repeat (Set-Cookie, X-Forwarded-For, Via), and emitting the
+       name twice produces a duplicate key: JSON.parse keeps the last, so the UI
+       silently showed one of them. For a tool whose promise is recording
+       exactly what was sent, quietly dropping a repeated header is the one
+       failure it cannot afford. Insertion order is preserved. */
+    let mut order: Vec<&str> = Vec::new();
+    let mut grouped: Vec<(&str, Vec<String>)> = Vec::new();
+    for (k, v) in headers {
+        let val = q(&String::from_utf8_lossy(v));
+        match order.iter().position(|n| n == k) {
+            Some(i) => grouped[i].1.push(val),
+            None => {
+                order.push(k);
+                grouped.push((k, vec![val]));
+            }
+        }
+    }
+    let hdrs = grouped
         .iter()
-        .map(|(k, v)| format!("{}:{}", q(k), q(&String::from_utf8_lossy(v))))
+        .map(|(k, vals)| format!("{}:[{}]", q(k), vals.join(",")))
         .collect::<Vec<_>>()
         .join(",");
-    let kept = &body[..body.len().min(MAX_BODY_KEPT)];
+    // Cut on a character boundary. Slicing at a fixed byte offset can land in
+    // the middle of a multi-byte character, and the resulting invalid UTF-8 was
+    // then reported as "binary data" for a body that was perfectly good text.
+    let mut cut = body.len().min(MAX_BODY_KEPT);
+    while cut > 0 && cut < body.len() && (body[cut] & 0xC0) == 0x80 {
+        cut -= 1;
+    }
+    let kept = &body[..cut];
     let (repr, is_text) = body_repr(kept);
     format!(
         "{{\"receivedAt\":{},\"method\":{},\"path\":{},\"headers\":{{{}}},\

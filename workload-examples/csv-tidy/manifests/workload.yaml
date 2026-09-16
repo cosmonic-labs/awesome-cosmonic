@@ -22,6 +22,6 @@ spec:
         host: csv-tidy.localhost
   components:
     - name: csv-tidy
-      image: ghcr.io/cosmonic-labs/components/csv-tidy:0.1.0@sha256:846791ac078c92089dbb9af9b1786575981eac99e8b571612b00b9ec480e9a21
+      image: ghcr.io/cosmonic-labs/components/csv-tidy:0.1.1@sha256:a34f7f8523b4af207979e959bdb3aa9eb18c31471a98e436552f4aab78786c51
       poolSize: 1
       maxInvocations: 0
