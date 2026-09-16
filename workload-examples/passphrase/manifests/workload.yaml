@@ -1,0 +1,27 @@
+# Cosmonic Desktop Workload spec for passphrase, matching the Launchpad entry.
+#
+# A WASI p3 component: it exports wasi:http/handler (not the p2
+# incoming-handler), and imports only ambient WASI beyond that.
+#
+# There is deliberately no allowedHosts key. Egress is deny-by-default on this
+# path, and this component makes no outbound calls: it reads the host's
+# cryptographic RNG and returns passwords. For a password generator, "this
+# cannot phone home" is the property worth enforcing rather than promising.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: passphrase
+  namespace: default
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces:
+        - handler
+      config:
+        host: passphrase.localhost
+  components:
+    - name: passphrase
+      image: ghcr.io/cosmonic-labs/components/passphrase:0.1.0@sha256:7884375925276006dcb0a16f066618e533f06368565e4ecdfcdf723230a5a868
+      poolSize: 1
+      maxInvocations: 0

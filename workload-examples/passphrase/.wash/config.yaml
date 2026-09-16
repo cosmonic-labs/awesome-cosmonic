@@ -1,0 +1,15 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/passphrase.wasm
+# Mirrors WorkloadDeployment components[].localResources; carried over into the
+# durable Workload draft when you promote this project. The component exports
+# the WASI p3 wasi:http@0.3.0 `handler`, so Cosmonic Desktop wires the ingress
+# to `handler` (not the p2 `incoming-handler`) and the workload lands on the
+# host's warm-instance pool, where poolSize/maxConcurrency/maxInvocations apply.
+workload:
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed). Omitting
+  # the key entirely means allow-all in dev (`wash dev` semantics).
+  allowedHosts: []

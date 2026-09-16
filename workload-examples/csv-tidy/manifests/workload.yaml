@@ -1,0 +1,27 @@
+# Cosmonic Desktop Workload spec for csv-tidy, matching the Launchpad entry.
+#
+# A WASI p3 component: it exports wasi:http/handler (not the p2
+# incoming-handler), and imports only ambient WASI beyond that.
+#
+# There is deliberately no allowedHosts key. Egress is deny-by-default on this
+# path, and this component makes no outbound calls. That matters for this tool
+# in particular: the files people want to tidy are customer lists and bank
+# exports, and the host enforces that none of it can leave.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: csv-tidy
+  namespace: default
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces:
+        - handler
+      config:
+        host: csv-tidy.localhost
+  components:
+    - name: csv-tidy
+      image: ghcr.io/cosmonic-labs/components/csv-tidy:0.1.0@sha256:846791ac078c92089dbb9af9b1786575981eac99e8b571612b00b9ec480e9a21
+      poolSize: 1
+      maxInvocations: 0

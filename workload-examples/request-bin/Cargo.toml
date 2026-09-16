@@ -1,0 +1,23 @@
+[package]
+name = "request-bin"
+edition = "2021"
+version = "0.1.0"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# p2 (wasi:http/incoming-handler@0.2.2 + wasi:keyvalue/store@0.2.0-draft), combined
+# via the vendored wit/world.wit. Raw wit-bindgen rather than the p3 `wasip3`
+# crate: the p3 HTTP surface does not compose with an extra wasi:keyvalue import.
+# The cost is that p2 `incoming-handler` is served one-shot per request, so the
+# warm-pool knobs (poolSize/maxConcurrency) are inert here — fine for a bin whose
+# work is a single store round-trip.
+wit-bindgen = "0.60.0"
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
