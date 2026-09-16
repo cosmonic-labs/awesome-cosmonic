@@ -1,0 +1,29 @@
+# Cosmonic Desktop Workload spec for qrcode, matching the Launchpad entry.
+#
+# The component exports wasi:http/incoming-handler (WASI p2) and imports only
+# ambient WASI, so there is no non-ambient interface to declare beyond the HTTP
+# trigger.
+#
+# There is deliberately no allowedHosts key. Egress is deny-by-default on this
+# path, and this component makes no outbound calls: it encodes text into a PNG
+# and returns it.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: qrcode
+  namespace: default
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces:
+        - incoming-handler
+      config:
+        host: qrcode.localhost
+  components:
+    - name: qrcode
+      # The published image, pinned by digest. To run your own build instead,
+      # `wash build`, promote it, and swap in the reference promote returns.
+      image: ghcr.io/cosmonic-labs/components/qrcode:0.2.1@sha256:56d3b04f6115ff8a394dd9090767465b45930176d2a23d1bd84164dc80ca65a5
+      poolSize: 1
+      maxInvocations: 0

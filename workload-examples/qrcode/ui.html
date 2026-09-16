@@ -1,0 +1,256 @@
+<!doctype html>
+<!--
+  The whole UI, served inline by the component. Everything here is
+  self-contained on purpose: no webfont, no CDN, no external stylesheet. The
+  component is meant to run on a laptop with the network denied, and a page that
+  silently loses its styling in that case would undercut the point of it.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QR Code Generator</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --ink: #1a1d21;
+        --muted: #5c6470;
+        --line: #dfe3e8;
+        --accent: #564ca5;
+        --accent-ink: #ffffff;
+        --danger: #8c2f22;
+        --danger-bg: #fdf1ef;
+        --danger-line: #f0cec7;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16181c;
+          --card: #1e2126;
+          --ink: #e8eaed;
+          --muted: #9aa3af;
+          --line: #2f343b;
+          --accent: #8f86df;
+          --accent-ink: #14161a;
+          --danger: #f0b4a8;
+          --danger-bg: #2a1d1a;
+          --danger-line: #4a2a23;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--ink);
+        font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+          Roboto, Helvetica, Arial, sans-serif;
+      }
+      .card {
+        width: 100%;
+        max-width: 420px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 28px;
+      }
+      h1 { margin: 0 0 4px; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+      .sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+      label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; }
+      .row { display: flex; gap: 8px; }
+      input {
+        flex: 1;
+        min-width: 0;
+        padding: 9px 11px;
+        font: inherit;
+        color: var(--ink);
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      input:focus-visible, button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      button {
+        padding: 9px 16px;
+        font: inherit;
+        font-weight: 500;
+        color: var(--accent-ink);
+        background: var(--accent);
+        border: 1px solid transparent;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) { filter: brightness(1.08); }
+      button:disabled { opacity: 0.55; cursor: default; }
+      .out { margin-top: 20px; }
+      .frame {
+        display: grid;
+        place-items: center;
+        min-height: 220px;
+        padding: 16px;
+        background: var(--bg);
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
+      }
+      .frame img {
+        display: block;
+        width: 100%;
+        max-width: 220px;
+        height: auto;
+        image-rendering: pixelated;
+        border-radius: 4px;
+        /* The code is generated as black-on-white and must stay that way to
+           scan; a dark-mode inversion would break it. */
+        background: #fff;
+      }
+      .err {
+        margin-top: 12px;
+        padding: 10px 12px;
+        font-size: 13px;
+        color: var(--danger);
+        background: var(--danger-bg);
+        border: 1px solid var(--danger-line);
+        border-radius: 8px;
+      }
+      .save {
+        display: inline-block;
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--accent);
+      }
+      [hidden] { display: none !important; }
+      @media (prefers-reduced-motion: reduce) {
+        * { transition: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>QR Code Generator</h1>
+      <p class="sub">Runs as a sandboxed WebAssembly component with no network access of its own.</p>
+
+      <form id="form" novalidate>
+        <label for="text">Text or URL</label>
+        <div class="row">
+          <input id="text" name="text" type="text" value="Hello, World!"
+                 autocomplete="off" spellcheck="false" />
+          <button id="go" type="submit">Generate</button>
+        </div>
+      </form>
+
+      <div class="out">
+        <div class="frame" id="frame">
+          <span id="placeholder">Your code will appear here.</span>
+        </div>
+        <div class="err" id="error" role="alert" hidden></div>
+        <a class="save" id="save" download="qrcode.png" hidden>Save PNG</a>
+      </div>
+
+      <p class="sub" id="status" aria-live="polite" style="margin: 12px 0 0"></p>
+    </main>
+
+    <script>
+      const form = document.getElementById("form");
+      const input = document.getElementById("text");
+      const go = document.getElementById("go");
+      const frame = document.getElementById("frame");
+      const placeholder = document.getElementById("placeholder");
+      const errorBox = document.getElementById("error");
+      const save = document.getElementById("save");
+      const status = document.getElementById("status");
+
+      // Object URLs are revoked when replaced; without this every generation
+      // leaks the previous image for the life of the page.
+      let currentUrl = null;
+
+      function showError(message) {
+        errorBox.textContent = message;
+        errorBox.hidden = false;
+        save.hidden = true;
+        status.textContent = "";
+        // Clear any previous code: leaving it on screen above the message reads
+        // as though the stale image is the result of this attempt.
+        if (currentUrl) {
+          URL.revokeObjectURL(currentUrl);
+          currentUrl = null;
+        }
+        frame.replaceChildren(placeholder);
+      }
+
+      function clearError() {
+        errorBox.hidden = true;
+        errorBox.textContent = "";
+      }
+
+      // The server answers every failure as JSON {"error": "..."}; fall back to
+      // the status line if a proxy or the runtime returns something else.
+      async function errorFrom(response) {
+        try {
+          const data = await response.json();
+          if (data && typeof data.error === "string") return data.error;
+        } catch (_) {
+          /* not JSON */
+        }
+        return `Request failed (${response.status} ${response.statusText}).`;
+      }
+
+      async function generate(event) {
+        event.preventDefault();
+        const text = input.value;
+
+        clearError();
+        go.disabled = true;
+        status.textContent = "Generating…";
+
+        try {
+          const response = await fetch("/qrcode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payload: text }),
+          });
+
+          // The original page called response.blob() unconditionally, so an
+          // error response was rendered as a broken image. Check first.
+          if (!response.ok) {
+            showError(await errorFrom(response));
+            return;
+          }
+
+          const blob = await response.blob();
+          if (currentUrl) URL.revokeObjectURL(currentUrl);
+          currentUrl = URL.createObjectURL(blob);
+
+          const img = new Image();
+          img.src = currentUrl;
+          img.alt = `QR code encoding: ${text}`;
+          frame.replaceChildren(img);
+          placeholder.remove();
+
+          save.href = currentUrl;
+          save.hidden = false;
+          const counted = [...text.trim()].length;
+          status.textContent = `Encoded ${counted} character${counted === 1 ? "" : "s"}.`;
+        } catch (e) {
+          // A network-level failure: the workload stopped, or the host denied
+          // the request before it was answered.
+          showError("Could not reach the service. Is the workload still running?");
+        } finally {
+          go.disabled = false;
+        }
+      }
+
+      form.addEventListener("submit", generate);
+      input.addEventListener("input", clearError);
+    </script>
+  </body>
+</html>

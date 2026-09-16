@@ -1,0 +1,5 @@
+package cosmonic:qrcode;
+
+world qrcode {
+   export wasi:http/incoming-handler@0.2.9;
+}

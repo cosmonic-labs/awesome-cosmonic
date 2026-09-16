@@ -1,0 +1,16 @@
+# wash v2 project configuration, used by Cosmonic Desktop's project mode
+# (build, dev loop, promote) and by the `wash` CLI alike.
+version: 2.0.0
+
+build:
+  command: cargo build --target wasm32-wasip2 --release --locked
+  component_path: target/wasm32-wasip2/release/qrcode.wasm
+
+workload:
+  # Explicit empty list: deny-all. This component encodes text into a PNG and
+  # makes no outbound calls at all.
+  #
+  # The key has to be written out. Once a `workload:` block exists, omitting
+  # allowedHosts makes `wash dev` substitute allow-all, which is the opposite of
+  # the deployed manifest, where an absent key denies everything.
+  allowedHosts: []
