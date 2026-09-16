@@ -1,0 +1,11 @@
+# wash v2 project configuration — used by Cosmonic Desktop's project mode
+# (build + dev loop + promote) and by the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/request_bin.wasm
+workload:
+  # Outbound HTTP allowlist. Explicit [] is deny-all (fail-closed): this bin
+  # receives requests and writes to its bucket, and reaches nothing.
+  allowedHosts: []
+

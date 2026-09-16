@@ -1,0 +1,32 @@
+# Cosmonic Desktop Workload spec for request-bin, matching the Launchpad entry.
+#
+# Stateful: it exports wasi:http/incoming-handler (WASI p2) and imports
+# wasi:keyvalue/store, which Desktop provides with no configuration. Both are
+# declared below, because a non-ambient import that is not declared fails to
+# link rather than failing at first use.
+#
+# There is deliberately no allowedHosts key. Egress is deny-by-default on this
+# path, and this component makes no outbound calls: it can be reached, and it
+# can write to its bucket, and that is the whole of it.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: request-bin
+  namespace: default
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces:
+        - incoming-handler
+      config:
+        host: request-bin.localhost
+    - namespace: wasi
+      package: keyvalue
+      interfaces:
+        - store
+  components:
+    - name: request-bin
+      image: ghcr.io/cosmonic-labs/components/request-bin:0.1.0@sha256:ff95ac9ae2fbd07dbad4badbad41a59a514d882b3851b8404fc169ea067d72a7
+      poolSize: 1
+      maxInvocations: 0

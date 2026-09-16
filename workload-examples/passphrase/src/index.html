@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Password Generator</title>
+<style>
+  :root {
+    --bg:#f6f7f9; --card:#fff; --ink:#151a21; --muted:#5d6874; --line:#e3e7ec;
+    --accent:#5b4bd6; --accent-ink:#fff; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1319; --card:#161b23; --ink:#e8ecf1; --muted:#98a3b0;
+            --line:#252c36; --accent:#8b7cf0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); min-height:100vh;
+         font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
+         display:flex; align-items:flex-start; justify-content:center; padding:40px 20px; }
+  main { width:100%; max-width:680px; }
+  h1 { margin:0 0 4px; font-size:22px; letter-spacing:-.01em; }
+  .sub { margin:0 0 22px; color:var(--muted); font-size:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px; }
+  label { font-size:13px; color:var(--muted); display:inline-flex; align-items:center; gap:7px; }
+  input[type=number] { width:74px; background:transparent; color:var(--ink);
+    border:1px solid var(--line); border-radius:7px; padding:5px 8px; font:inherit; }
+  input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; }
+  button { font:inherit; font-weight:600; border:0; border-radius:8px; cursor:pointer;
+    background:var(--accent); color:var(--accent-ink); padding:8px 16px; }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  ul { list-style:none; margin:16px 0 0; padding:0; display:flex; flex-direction:column; gap:7px; }
+  li { display:flex; align-items:center; gap:10px; background:var(--bg);
+       border:1px solid var(--line); border-radius:8px; padding:9px 11px; }
+  code { font-family:var(--mono); font-size:14px; word-break:break-all; flex:1; }
+  .copy { background:transparent; color:var(--muted); border:1px solid var(--line);
+          padding:4px 10px; font-size:12px; font-weight:600; }
+  .copy:hover { color:var(--ink); }
+  .meta { margin-top:14px; font-size:12.5px; color:var(--muted); }
+  .meta b { color:var(--ink); font-weight:600; }
+  .note { margin-top:20px; font-size:12.5px; color:var(--muted); line-height:1.6; }
+  .note code { font-size:12px; flex:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Password Generator</h1>
+  <p class="sub">Generated on this machine, by the sandbox's own random source. Nothing is sent anywhere.</p>
+
+  <div class="card">
+    <div class="row">
+      <label>Length <input id="length" type="number" min="4" max="128" value="20"></label>
+      <label>How many <input id="count" type="number" min="1" max="20" value="5"></label>
+      <button id="go" type="button">Generate</button>
+    </div>
+    <div class="row">
+      <label><input id="lower" type="checkbox" checked> lowercase</label>
+      <label><input id="upper" type="checkbox" checked> uppercase</label>
+      <label><input id="digits" type="checkbox" checked> digits</label>
+      <label><input id="symbols" type="checkbox" checked> symbols</label>
+      <label><input id="avoidAmbiguous" type="checkbox" checked> skip look-alikes</label>
+    </div>
+    <ul id="out" aria-live="polite"></ul>
+    <p class="meta" id="meta"></p>
+  </div>
+
+  <p class="note">
+    Every password is drawn from <code>wasi:random</code>, the host's cryptographic
+    random source, using rejection sampling so each character is equally likely.
+    This component declares no outbound network access at all &mdash; check its card in
+    the Launchpad, or its manifest: the allow-list is empty, and the host enforces that.
+  </p>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fields = ["lower", "upper", "digits", "symbols", "avoidAmbiguous"];
+
+  async function generate() {
+    const q = new URLSearchParams({
+      length: $("length").value || 20,
+      count: $("count").value || 5,
+    });
+    for (const f of fields) q.set(f, $(f).checked ? "1" : "0");
+
+    const out = $("out");
+    try {
+      const res = await fetch(`/api?${q}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      out.replaceChildren(...data.passwords.map(makeRow));
+      $("meta").innerHTML =
+        `<b>${data.entropyBits.toFixed(1)} bits</b> of entropy each ` +
+        `&mdash; ${data.length} characters from an alphabet of ${data.alphabetSize}.`;
+    } catch (err) {
+      out.replaceChildren();
+      $("meta").textContent = `Couldn't generate: ${err.message}`;
+    }
+  }
+
+  function makeRow(pw) {
+    const li = document.createElement("li");
+    const code = document.createElement("code");
+    code.textContent = pw;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "copy";
+    btn.textContent = "Copy";
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(pw);
+        btn.textContent = "Copied";
+        setTimeout(() => { btn.textContent = "Copy"; }, 1200);
+      } catch {
+        btn.textContent = "Press ⌘C";
+      }
+    });
+    li.append(code, btn);
+    return li;
+  }
+
+  $("go").addEventListener("click", generate);
+  for (const id of ["length", "count", ...fields]) {
+    $(id).addEventListener("change", generate);
+  }
+  generate();
+</script>
+</body>
+</html>
