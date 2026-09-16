@@ -5,10 +5,10 @@
 # `wit/` tree, so the fetch a reader runs is run here too.
 #
 # It resolves to very little today: sandboxed-webhook's world is empty because
-# wstd carries its bindings, and task-manager's `wit/deps` is committed. The
-# step is here so that the day one of these does depend on a fetched package,
-# CI exercises the same path the README tells a reader to take, rather than
-# quietly passing on a vendored copy.
+# wstd carries its bindings, task-manager's `wit/deps` is committed, and the p3
+# components have no `wit/` tree at all. The step is here so that the day one of
+# these does depend on a fetched package, CI exercises the same path the README
+# tells a reader to take, rather than quietly passing on a vendored copy.
 name: components
 
 on:
@@ -19,12 +19,20 @@ on:
       - "components/sandboxed-webhook/**"
       - "workload-examples/task-manager/**"
       - "workload-examples/first-flight/**"
+      - "workload-examples/qrcode/**"
+      - "workload-examples/csv-tidy/**"
+      - "workload-examples/passphrase/**"
+      - "workload-examples/request-bin/**"
       - ".github/workflows/components.yml"
   pull_request:
     paths:
       - "components/sandboxed-webhook/**"
       - "workload-examples/task-manager/**"
       - "workload-examples/first-flight/**"
+      - "workload-examples/qrcode/**"
+      - "workload-examples/csv-tidy/**"
+      - "workload-examples/passphrase/**"
+      - "workload-examples/request-bin/**"
       - ".github/workflows/components.yml"
   workflow_dispatch:
 
@@ -75,6 +83,23 @@ jobs:
             path: workload-examples/task-manager
             image: ghcr.io/cosmonic-labs/components/task-manager
             expect: "export wasi:http/incoming-handler"
+          - name: qrcode
+            path: workload-examples/qrcode
+            image: ghcr.io/cosmonic-labs/components/qrcode
+            expect: "export wasi:http/incoming-handler"
+          - name: request-bin
+            path: workload-examples/request-bin
+            image: ghcr.io/cosmonic-labs/components/request-bin
+            expect: "export wasi:http/incoming-handler"
+          # WASI p3: these export `handler`, not the p2 `incoming-handler`.
+          - name: csv-tidy
+            path: workload-examples/csv-tidy
+            image: ghcr.io/cosmonic-labs/components/csv-tidy
+            expect: "export wasi:http/handler"
+          - name: passphrase
+            path: workload-examples/passphrase
+            image: ghcr.io/cosmonic-labs/components/passphrase
+            expect: "export wasi:http/handler"
 
     defaults:
       run:
@@ -95,10 +120,18 @@ jobs:
         with:
           workspaces: ${{ matrix.path }}
 
-      # `wit/deps/` is gitignored and the WIT comes from the registry, pinned by
-      # `wkg.lock`. Running it here keeps the documented first-build path honest.
+      # Only for projects that actually carry a `wit/` tree. The p3 components
+      # here (csv-tidy, passphrase) take their bindings from the `wasip3` crate
+      # and have no `wit/` directory at all, and `wash wit fetch` exits 1 on
+      # those rather than no-opping. Guarding is what lets one matrix cover both
+      # shapes; the alternative is a second workflow that differs by one step.
       - name: Fetch the WIT dependencies
-        run: wash wit fetch
+        run: |
+          if [ -d wit ]; then
+            wash wit fetch
+          else
+            echo "no wit/ directory; bindings come from the crate"
+          fi
 
       - name: Build the component
         id: build
