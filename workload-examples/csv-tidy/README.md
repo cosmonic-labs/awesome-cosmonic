@@ -26,12 +26,14 @@ $ printf 'name, age\n Alice ,30\n\nBob,25\n' \
     | curl -X POST --data-binary @- http://csv-tidy.localhost:8200/api/tidy
 {"headers":["name","age"],
  "rows":[{"name":"Alice","age":"30"},{"name":"Bob","age":"25"}],
- "issues":["Dropped 1 blank row."],
+ "issues":["Dropped 1 blank row.","Trimmed whitespace from 2 values."],
  "stats":{"columns":2,"rows":2,...}}
 ```
 
-Header whitespace is trimmed, values are trimmed, blank rows are dropped, and
-each of those is reported in `issues` rather than applied silently.
+Header whitespace is trimmed, values are trimmed, and blank rows are dropped,
+and each of those is reported in `issues` rather than applied silently. An
+unterminated quote is reported first, because everything after it is read as one
+value and the resulting short row invites exactly the wrong fix.
 
 ## Build
 

@@ -27,6 +27,6 @@ spec:
         - store
   components:
     - name: request-bin
-      image: ghcr.io/cosmonic-labs/components/request-bin:0.1.0@sha256:ff95ac9ae2fbd07dbad4badbad41a59a514d882b3851b8404fc169ea067d72a7
+      image: ghcr.io/cosmonic-labs/components/request-bin:0.1.1@sha256:717e82d702ba460080e9f95cc88bb85f811fe9b0d5fd07034abf972812ba0de1
       poolSize: 1
       maxInvocations: 0

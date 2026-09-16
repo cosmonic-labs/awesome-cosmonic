@@ -162,10 +162,49 @@ fn generate(opts: &Opts) -> Vec<String> {
         .collect()
 }
 
-/// log2(alphabet^length), to one decimal place, without pulling in floats-as-a-
-/// dependency. Reported so the UI can say something true instead of "strong".
-fn entropy_bits(alphabet_len: usize, length: usize) -> f64 {
-    (alphabet_len as f64).log2() * length as f64
+/// Entropy of the passwords this generator actually produces, in bits.
+///
+/// NOT `log2(alphabet) * length`. That is the entropy of a free choice at every
+/// position, and `generate` does not make one: it plants a character from each
+/// enabled class first, so strings missing a class are never produced. Counting
+/// the smaller space matters most exactly where a user is most exposed, at short
+/// lengths: for a 4-character password over 4 classes the free-choice figure
+/// overstates by ~4 bits, a guess space 15x larger than the real one. At the
+/// default length the two agree to within a third of a bit, but a number on a
+/// password tool should be right at both ends.
+///
+/// Counted by inclusion-exclusion over the enabled classes: start from every
+/// string, subtract those missing class A, missing B, ... add back those missing
+/// two, and so on. At most four classes, so at most sixteen terms.
+fn entropy_bits(class_sizes: &[usize], length: usize) -> f64 {
+    let alphabet_len: usize = class_sizes.iter().sum();
+    if alphabet_len == 0 || length == 0 {
+        return 0.0;
+    }
+    // A password shorter than the class count cannot hold one of each; generate
+    // stops planting when it runs out of room, so the space is the free one.
+    if length < class_sizes.len() {
+        return (alphabet_len as f64).log2() * length as f64;
+    }
+    let k = class_sizes.len();
+    let mut total = 0f64;
+    for mask in 0u32..(1u32 << k) {
+        let excluded: usize = (0..k)
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| class_sizes[i])
+            .sum();
+        let remaining = alphabet_len - excluded;
+        let term = (remaining as f64).powi(length as i32);
+        if (mask.count_ones() % 2) == 0 {
+            total += term;
+        } else {
+            total -= term;
+        }
+    }
+    if total <= 0.0 {
+        return 0.0;
+    }
+    total.log2()
 }
 
 fn json_escape(s: &str) -> String {
@@ -185,7 +224,8 @@ fn json_escape(s: &str) -> String {
 }
 
 fn api_json(opts: &Opts) -> String {
-    let alphabet_len: usize = opts.classes.iter().map(|c| c.chars().count()).sum();
+    let class_sizes: Vec<usize> = opts.classes.iter().map(|c| c.chars().count()).collect();
+    let alphabet_len: usize = class_sizes.iter().sum();
     let pws = generate(opts);
     let list = pws
         .iter()
@@ -198,7 +238,7 @@ fn api_json(opts: &Opts) -> String {
         opts.length,
         opts.count,
         alphabet_len,
-        entropy_bits(alphabet_len, opts.length),
+        entropy_bits(&class_sizes, opts.length),
         opts.avoid_ambiguous
     )
 }
