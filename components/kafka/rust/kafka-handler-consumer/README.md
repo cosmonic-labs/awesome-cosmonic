@@ -83,6 +83,11 @@ Delivery is at least once. A crash can repeat a side effect before its offset
 is committed, so handlers must be idempotent. Do not rely on instance-local
 state: calls can land on different instances and idle instances are reclaimed.
 
+The sample logs a per-instance heartbeat after each ten seconds of Kafka
+record time. Its random ID and counters make pool growth and reclamation
+visible during development; they reset with the instance and are not durable
+application metrics.
+
 The sample treats tombstones as handled and sends invalid UTF-8 values to the
 dead-letter topic. Replace the marked block in `src/lib.rs` with application
 logic while preserving its partial-progress behavior.
