@@ -1,0 +1,13 @@
+package cosmonic:nats-mcp@0.1.0;
+
+/// The NATS capability surface this MCP server imports.
+///
+/// Imports only: the `wasi:http@0.3.0` handler export comes from the `wasip3`
+/// crate's own bindings (see `src/lib.rs`), so this world must not re-export
+/// it — two generators emitting the same export would collide at link time.
+world nats-client {
+  import wasmcloud:nats/types@0.1.0;
+  import wasmcloud:nats/core@0.1.0;
+  import wasmcloud:nats/jetstream@0.1.0;
+  import wasmcloud:nats/kv@0.1.0;
+}
