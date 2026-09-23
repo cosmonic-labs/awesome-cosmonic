@@ -1,0 +1,21 @@
+[package]
+name = "fan-out"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+name = "fan_out"
+
+[workspace]
+
+[dependencies]
+# 0.60+ with async-spawn is required: every function in wasmcloud:nats@0.1.0
+# is an `async func`, and a sync-signature function cannot be lifted with the
+# async canonical ABI.
+wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true

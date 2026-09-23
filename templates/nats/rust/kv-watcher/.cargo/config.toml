@@ -1,0 +1,5 @@
+# wasmcloud:nats@0.1.0 is async-only WASI P3. Build for wasip1 and let
+# `wash build` lift it to a component with the async canonical ABI —
+# wit-bindgen's async-spawn/inter-task-wakeup features do the heavy lifting.
+[build]
+target = "wasm32-wasip1"
