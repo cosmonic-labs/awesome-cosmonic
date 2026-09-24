@@ -1,0 +1,6 @@
+/target
+**/target
+.cache/
+*.wasm
+.DS_Store
+.wash/dev
