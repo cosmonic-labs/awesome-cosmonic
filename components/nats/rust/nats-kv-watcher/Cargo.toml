@@ -1,0 +1,23 @@
+[package]
+name = "nats-kv-watcher"
+version = "0.1.0"
+edition = "2024"
+# let-chains and edition 2024 need 1.85; the async wit-bindgen features
+# below need 1.88. Without the floor a too-old toolchain reports a
+# syntax error rather than saying which release is required.
+rust-version = "1.88"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# 0.60+ with async-spawn is required: every function in
+# wasmcloud:nats@0.1.0 is an `async func`, and a sync-signature
+# function cannot be lifted with the async canonical ABI.
+wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true

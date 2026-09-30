@@ -1,0 +1,45 @@
+# Cosmonic Control / Kubernetes.
+#
+# Same spec as ../workload.yaml, wrapped for Control: replicas are the
+# operator's, and the workload spec moves under .spec.template.spec.
+#
+# The grants below stay in the manifest. The `wasmcloud-nats` host
+# plugin defaults to `workload_config: deny`, which means a workload
+# may only NARROW the ceiling the operator declares in the hostgroup's
+# `hostPlugins: [{id: wasmcloud-nats, config: {...}}]` — widening a
+# grant, or setting a host-owned connection key (servers, credentials,
+# TLS), is what gets refused.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: nats-kv-watcher
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    spec:
+      components:
+        - name: kv-watcher
+          # Prebuilt from this template on every push to main. Swap it
+          # for your own registry once you change the source.
+          image: ghcr.io/cosmonic-labs/nats-templates/nats-kv-watcher:latest
+          # Warm instances reused across deliveries. Reuse is a state
+          # contract: package-level state survives, so treat it as a
+          # cache. 0 or unset declares state ephemeral instead.
+          poolSize: 1
+          # Calls one instance serves before it is retired. 0 = unlimited.
+          maxInvocations: 0
+          localResources:
+            # This component's own outbound-HTTP allowlist. Empty denies
+            # every host; NATS flows through the binding, not HTTP.
+            allowedHosts: []
+      hostInterfaces:
+        - namespace: wasmcloud
+          package: nats
+          version: "0.1.0"
+          interfaces: [types, kv, jetstream, kv-handler]
+          config:
+            subject-allow: done.demo.>
+            bucket-allow: demo
+            kv-watches: demo:>
+            max-in-flight: "8"
