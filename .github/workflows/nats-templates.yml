@@ -185,10 +185,10 @@ jobs:
           case "${GITHUB_REF}" in
             refs/tags/nats-templates/v*)
               version="${GITHUB_REF#refs/tags/nats-templates/v}"
-              tags="${version} latest"
+              tags="${version} latest"   # latest last: it is what gets attested
               ;;
             *)
-              tags="sha-${GITHUB_SHA:0:12} latest"
+              tags="sha-${GITHUB_SHA:0:12} latest"   # latest last: it is what gets attested
               ;;
           esac
 
@@ -202,7 +202,13 @@ jobs:
             }
             echo "pushed ${image}:${tag} ($digest)"
           done
-          # Every tag carries the same bytes, so one digest describes them all.
+          # The tags carry identical component bytes but NOT a shared manifest
+          # digest: `wash oci push` builds a fresh, non-reproducible manifest
+          # per push, so pushing the same file twice yields two digests
+          # (measured). `latest` is pushed last on purpose — it is the
+          # reference every shipped manifest uses, so it is the one worth
+          # attesting, and this carries its digest to the attest step. The
+          # immutable `sha-` tag is the same bytes under its own manifest.
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
 
