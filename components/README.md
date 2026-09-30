@@ -13,6 +13,9 @@ Components serving a well-known protocol are grouped into a subdirectory:
 - [`kafka/`](kafka/): Kafka workloads on `cosmonic:kafka`, one directory per
   delivery pattern. Start with the handler template for serverless and elastic
   event processing.
+- [`nats/`](nats/): NATS workloads on `wasmcloud:nats`, one directory per
+  messaging pattern. Start with the core subscriber when losing a message is
+  survivable, and the JetStream consumer when it is not.
 
 Everything else lives directly in this directory.
 

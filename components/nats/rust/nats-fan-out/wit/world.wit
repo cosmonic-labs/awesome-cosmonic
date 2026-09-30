@@ -1,0 +1,9 @@
+package cosmonic:fan-out@0.1.0;
+
+/// Fan-out — Take one event and publish it to several downstream subjects.
+world fan-out {
+  import wasmcloud:nats/types@0.1.0;
+  import wasmcloud:nats/core@0.1.0;
+
+  export wasmcloud:nats/core-handler@0.1.0;
+}

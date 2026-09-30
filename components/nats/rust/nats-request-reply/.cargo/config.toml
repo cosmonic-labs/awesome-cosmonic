@@ -1,0 +1,7 @@
+# wasmcloud:nats@0.1.0 is async-only. The async canonical ABI comes from
+# wit-bindgen's generated lift/lower code (features async-spawn +
+# inter-task-wakeup), not from the compile target. wasm32-wasip2 is the
+# target Cosmonic Desktop's Preflight doctor provisions, and the only
+# one these templates are built and published against.
+[build]
+target = "wasm32-wasip2"

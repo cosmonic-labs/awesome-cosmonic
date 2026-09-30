@@ -1,0 +1,9 @@
+package cosmonic:request-reply@0.1.0;
+
+/// Request/reply — Answer NATS requests on a subject, one reply per request.
+world request-reply {
+  import wasmcloud:nats/types@0.1.0;
+  import wasmcloud:nats/core@0.1.0;
+
+  export wasmcloud:nats/core-handler@0.1.0;
+}

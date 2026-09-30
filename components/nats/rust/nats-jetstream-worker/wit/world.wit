@@ -1,0 +1,9 @@
+package cosmonic:jetstream-worker@0.1.0;
+
+/// JetStream pull worker — Pull batches from a JetStream consumer at a pace the guest sets.
+world jetstream-worker {
+  import wasmcloud:nats/types@0.1.0;
+  import wasmcloud:nats/jetstream@0.1.0;
+
+  export wasmcloud:nats/core-handler@0.1.0;
+}

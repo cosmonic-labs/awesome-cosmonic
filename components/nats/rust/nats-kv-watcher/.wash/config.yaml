@@ -1,0 +1,41 @@
+# wash v2 project configuration — the `wash` CLI and Cosmonic Desktop
+# project mode (build, dev loop, publish).
+version: "0.1.0"
+build:
+  # The target is spelled out rather than left to `.cargo/config.toml`,
+  # so this still builds a component if that file is edited or dropped.
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/nats_kv_watcher.wasm
+
+# Unlike the Kafka templates, this set carries a `workload:` block:
+# `wasmcloud:nats` is a built-in Cosmonic Desktop plugin, so the dev loop
+# can serve the binding locally and needs to know what to bind. It mirrors
+# workload.yaml's spec.hostInterfaces, and Desktop carries it onto the dev
+# workload and onto the draft `cosmonic publish` prints.
+workload:
+  environment:
+    config:
+      RUST_LOG: info
+  # This pattern reaches NATS through the host binding, not the network.
+  # Outbound HTTP stays deny-all unless the handler genuinely dials out.
+  allowedHosts: []
+  hostInterfaces:
+    - namespace: wasmcloud
+      package: nats
+      version: "0.1.0"
+      interfaces:
+        - types
+        - kv
+        - jetstream
+        - kv-handler
+      # Grants are deny-by-default ceilings, checked by containment.
+      # subject-allow covers publish, request, core subscriptions, the
+      # filter on a JetStream subscription or pull consumer, and stored
+      # messages. stream-allow names the stream and bucket-allow the
+      # bucket — but stream-allow ALONE reaches nothing readable: grant
+      # the subjects the stream stores alongside the stream itself.
+      config:
+        subject-allow: done.demo.>
+        bucket-allow: demo
+        kv-watches: demo:>
+        max-in-flight: "8"

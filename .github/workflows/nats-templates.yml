@@ -1,0 +1,219 @@
+# Builds the Rust NATS templates and publishes them to GHCR.
+#
+# Same shape as kafka-templates.yml next door, and for the same reason: the
+# useful gate is not "does it compile" but "does the documented path still
+# work end to end" — fetch the WIT from the registry, build a component, and
+# check it still exports what a host will look for when it loads it.
+# Publishing means someone can deploy a manifest without building anything.
+#
+# One difference from the Kafka workflow: no WKG_CONFIG_FILE. `wasmcloud:nats`
+# is served by a registry wash already knows, so there is no mapping to pass.
+name: nats-templates
+
+on:
+  push:
+    branches: [main]
+    tags: ["nats-templates/v*"]
+    paths:
+      - "components/nats/rust/**"
+      - ".github/workflows/nats-templates.yml"
+  pull_request:
+    paths:
+      - "components/nats/rust/**"
+      - ".github/workflows/nats-templates.yml"
+  workflow_dispatch:
+
+# Publishing needs more than `contents`, and attestation more again: the
+# provenance is signed with a workflow identity (`id-token`) and recorded
+# against the repository (`attestations`).
+permissions:
+  contents: read
+
+# A newer push to the same branch makes this run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned, following mcp-servers.yml rather than the Kafka workflow, which
+  # floats on `rustup update stable`.
+  #
+  # For `cargo build --target wasm32-wasip2` the WASI import versions come from
+  # the standard library shipped with rustc, not from Cargo.lock, so a floating
+  # toolchain silently changes a published component's import surface —
+  # measured on this repository as `wasi:*@0.2.6` to `@0.2.9` plus seven extra
+  # `wasi:cli` interfaces the earlier build never asked for. These templates
+  # are published as attested components that their own manifests pull by
+  # `:latest`, and their whole subject is deny-by-default grants an operator
+  # reviews. That import list should move when someone decides it moves.
+  # Bump deliberately, and expect the published imports to change when you do.
+  RUST_VERSION: "1.97.1"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `wash oci push` authenticates to GHCR as the workflow.
+      packages: write
+      # For the build provenance attached to each published component.
+      attestations: write
+      id-token: write
+    strategy:
+      # Each template is independent, so one failing should not hide the others.
+      fail-fast: false
+      matrix:
+        include:
+          # Losing an export is a deployment failure with an opaque message,
+          # so it is worth catching as a build failure with an obvious one.
+          - name: nats-core-subscriber
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-request-reply
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-fan-out
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-jetstream-consumer
+            expect: "export wasmcloud:nats/jetstream-handler"
+          - name: nats-jetstream-worker
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-kv-store
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-kv-watcher
+            expect: "export wasmcloud:nats/kv-handler"
+
+    defaults:
+      run:
+        working-directory: components/nats/rust/${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain and the wasm target
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target wasm32-wasip2
+          rustup default "$RUST_VERSION"
+          rustc --version
+
+      # `wash-version` defaults to `latest`. Deliberately not pinned: these
+      # templates track an evolving host interface, so CI finding out that a
+      # new wash no longer builds them is the point rather than the failure
+      # mode.
+      - uses: wasmCloud/setup-wash-action@v2.1.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: components/nats/rust/${{ matrix.name }}
+
+      # The whole reason `wit/deps/` is gitignored: the WIT comes from the
+      # registry, pinned by `wkg.lock`. Running it here is what keeps the
+      # documented first-build path honest — if a pinned version rots, this
+      # fails rather than a user's first attempt.
+      - name: Fetch the WIT dependencies
+        run: wash wit fetch
+
+      # Runs each template's own `.wash/config.yaml`, so CI builds the way the
+      # READMEs tell a reader to and reports back where the component landed
+      # rather than this workflow reconstructing the path per template.
+      - name: Build the component
+        id: build
+        uses: wasmCloud/actions/wash-build@v2.0.0
+        with:
+          working-directory: components/nats/rust/${{ matrix.name }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      # The two checks a build cannot make: that the output is a valid
+      # component at all, and that it still exports what a host looks for.
+      - name: Validate the component
+        env:
+          COMPONENT: ${{ steps.build.outputs.component_path }}
+        run: |
+          wasm-tools validate --features all "$COMPONENT"
+          wit=$(wasm-tools component wit "$COMPONENT")
+          echo "$wit"
+          echo "$wit" | grep -q -- "${{ matrix.expect }}" || {
+            echo "::error::component no longer has '${{ matrix.expect }}'"
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.build.outputs.component_path }}
+          if-no-files-found: error
+
+      # Pull requests build and validate but never publish: a fork's token
+      # cannot write packages, and an unreviewed change should not become the
+      # image someone pulls.
+      # `wasmCloud/actions/wash-oci-publish` does this job upstream and this
+      # mirrors its shape — log in with `docker/login-action`, then let
+      # `wash oci push` read those credentials. It is the one action here not
+      # used directly, because it derives the image name from
+      # `$GITHUB_REPOSITORY` with no way to override it, which would push all
+      # seven templates to one `awesome-cosmonic` package separated only by
+      # tag. A repository that collects many unrelated examples needs a name
+      # per component.
+      - name: Log in to GHCR
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GHCR
+        id: publish
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        env:
+          COMPONENT: ${{ steps.build.outputs.component_path }}
+        run: |
+          image="ghcr.io/cosmonic-labs/nats-templates/${{ matrix.name }}"
+
+          # A tag push is a release and carries the version it names; anything
+          # else is whatever main happens to be right now. Both move `latest`,
+          # because that is the reference the templates' own manifests use —
+          # someone deploying one to try NATS should get a component without
+          # first hunting for a tag that exists. The immutable `sha-` tag is
+          # what to pin to when that matters.
+          case "${GITHUB_REF}" in
+            refs/tags/nats-templates/v*)
+              version="${GITHUB_REF#refs/tags/nats-templates/v}"
+              tags="${version} latest"
+              ;;
+            *)
+              tags="sha-${GITHUB_SHA:0:12} latest"
+              ;;
+          esac
+
+          digest=""
+          for tag in $tags; do
+            echo "pushing ${image}:${tag}"
+            pushed=$(wash oci push --output json "${image}:${tag}" "$COMPONENT")
+            digest=$(echo "$pushed" | jq -er .data.digest) || {
+              echo "::error::push reported no digest: $pushed"
+              exit 1
+            }
+            echo "pushed ${image}:${tag} ($digest)"
+          done
+          # Every tag carries the same bytes, so one digest describes them all.
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      # Provenance for something a newcomer is told to pull and run: it ties
+      # the published bytes back to this workflow and this commit.
+      - name: Attest the published component
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true

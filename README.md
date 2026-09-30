@@ -35,6 +35,7 @@ wash build
 
 - [Components](#components)
   - [Kafka](#kafka)
+  - [NATS](#nats)
   - [MCP Servers](#mcp-servers)
 - [Host Plugins](#host-plugins)
   - [Native Host Plugins](#native-host-plugins)
@@ -57,6 +58,18 @@ Starting points for Kafka workloads on `cosmonic:kafka@0.5.0`, one per delivery 
 - [http-kafka-producer](components/kafka/rust/http-kafka-producer/) (hosted): HTTP request in, Kafka record out, through a host-owned, binding-scoped `cosmonic:kafka/producer`. The ingest-gateway shape.
 - [kafka-pull-service](components/kafka/rust/kafka-pull-service/) (hosted): A long-running service owning a pull-consumer session, for workloads that need direct assignment, pause, seek, rebalance, or commit control.
 - [kafka-transactional](components/kafka/rust/kafka-transactional/) (hosted): The pull service plus transactions, so output records and input offsets commit atomically, giving exactly-once read-process-write.
+
+### NATS
+
+Starting points for NATS workloads on `wasmcloud:nats@0.1.0`, one per messaging pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic Desktop and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/nats/`](components/nats/).
+
+- [nats-core-subscriber](components/nats/rust/nats-core-subscriber/) (hosted): The cheapest consumer there is. The host subscribes and calls the component once per message, with no acknowledgement and no redelivery, for telemetry, cache invalidation, and notifications.
+- [nats-jetstream-consumer](components/nats/rust/nats-jetstream-consumer/) (hosted, recommended): JetStream paces delivery by acknowledgement, so a slow consumer is throttled rather than overrun and an unacknowledged message comes back.
+- [nats-request-reply](components/nats/rust/nats-request-reply/) (hosted): One reply per request, published back to the inbox subject the requester supplied. RPC over subjects instead of HTTP.
+- [nats-fan-out](components/nats/rust/nats-fan-out/) (hosted): One event copied onto a fixed set of downstream subjects, so routing lives in one place. The fan is a constant in the source and bounded by the binding's grant, not chosen by the sender.
+- [nats-jetstream-worker](components/nats/rust/nats-jetstream-worker/) (hosted): A pull consumer the guest drains at its own pace, for scheduled drains and rate-limited downstreams.
+- [nats-kv-store](components/nats/rust/nats-kv-store/) (hosted): Messages on a subject become revisioned keys in a JetStream KV bucket, for device state, per-tenant settings, and last-known-value caches.
+- [nats-kv-watcher](components/nats/rust/nats-kv-watcher/) (hosted): Reacts to every change in a KV bucket, for config reloads, cache invalidation, and mirroring state onward.
 
 ### MCP Servers
 
