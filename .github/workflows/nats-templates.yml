@@ -279,8 +279,12 @@ jobs:
           go-version: "1.25.5"
           cache: false
 
+      # The binary is the module root, not a cmd/ subpackage. componentize-go
+      # itself needs Go >= 1.25, so the toolchain switch GOTOOLCHAIN=auto does
+      # here is expected and is separate from the patched Go it later builds
+      # for the component.
       - name: Install componentize-go
-        run: go install github.com/bytecodealliance/componentize-go/cmd/componentize-go@v0.4.1
+        run: go install github.com/bytecodealliance/componentize-go@v0.4.1
 
       # componentize-go caches the patched Go and the module downloads here.
       # Without this every job rebuilds a Go toolchain from source.
