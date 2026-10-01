@@ -7,7 +7,13 @@ build:
   # `wash wit fetch` first: wit/deps/ is generated and gitignored, so a fresh
   # clone has only world.wit and `cargo build` fails to resolve
   # wasmcloud:nats. Cheap and idempotent once the deps are there.
-  command: wash wit fetch && cargo build --target wasm32-wasip2 --release
+  #
+  # Its stdout is discarded on purpose. `wash build --output json` hands its
+  # child's stdout straight through, so the fetch's "WIT dependencies fetched
+  # successfully" would land in front of the JSON and anything piping that to
+  # `jq` — this repo's own CI included — fails to parse it. Errors still show:
+  # they go to stderr, and `&&` stops the build.
+  command: wash wit fetch >/dev/null && cargo build --target wasm32-wasip2 --release
   component_path: target/wasm32-wasip2/release/nats_jetstream_consumer.wasm
 
 # Unlike the Kafka templates, this set carries a `workload:` block:
