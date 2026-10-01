@@ -49,6 +49,12 @@ env:
   # Bump deliberately, and expect the published imports to change when you do.
   RUST_VERSION: "1.97.1"
 
+  # componentize-go decides the WASI p3 interface versions the Go bindings are
+  # generated against, so it pins the published import surface the same way
+  # RUST_VERSION does above. `actions/setup-go` pins nothing about the
+  # component: see the note on the `go` job.
+  COMPONENTIZE_GO_VERSION: "v0.4.1"
+
 jobs:
   rust:
     name: ${{ matrix.name }}
@@ -229,11 +235,11 @@ jobs:
   # componentize-go fetches a patched Go (golang/go#76775) and builds with
   # that instead of whatever is on PATH.
   #
-  # What pins the published import surface is therefore `@v0.4.1` below, not
-  # the setup-go version: the installed command is a small downloader, the
-  # binary it fetches is the real tool, and that binary hardcodes which
-  # patched Go it uses. Bumping componentize-go can move every published
-  # component's imports; bumping setup-go moves nothing. That is the same
+  # What pins the published import surface is therefore
+  # COMPONENTIZE_GO_VERSION, not the setup-go version: the installed command is
+  # a small downloader, the binary it fetches is the real tool, and that binary
+  # hardcodes which patched Go it uses. Bumping componentize-go can move every
+  # published component's imports; bumping setup-go moves nothing. That is the same
   # property RUST_VERSION exists to control on the rust job, reached by a
   # different route, so pin componentize-go deliberately.
   #
@@ -243,9 +249,62 @@ jobs:
   # half has materially weaker provenance than the Rust half. componentize-go
   # accepts a `--url`, so mirroring the artifact is the mitigation if that
   # matters more than the convenience.
+  # Fetch the Go toolchain once, for all seven builds below.
+  #
+  # `go install componentize-go` installs a *downloader*. The first build it
+  # runs fetches the real binary, and then, because async WASI p3 needs
+  # `runtime.wasiOnIdle` and stock Go does not have it, a patched Go from a
+  # fork's release tag. Both land in ~/.cache/componentize-go.
+  #
+  # Left to the matrix, all seven jobs fetch those same two archives from
+  # GitHub at the same instant whenever the cache is cold, and it is cold on
+  # the first run of any branch: a pull request's cache is not readable from
+  # `main`, so a merge is always a cold start. That race is what broke `main`
+  # at c550a70 -- GitHub answered one of the seven with an HTTP/2
+  # `REFUSED_STREAM`, so `nats-kv-watcher-go` failed with "failed to install
+  # patched version of Go" while the other six passed. Fetching once removes
+  # the race, and six redundant downloads with it.
+  go-toolchain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      # Where `go install` puts the binary. Set it whether this run installs
+      # the toolchain or restores it.
+      - run: echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/componentize-go
+            ~/go/bin
+            ~/go/pkg/mod
+          key: componentize-go-${{ env.COMPONENTIZE_GO_VERSION }}-${{ runner.os }}
+
+      - name: Download the toolchain
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          # The binary is the module root, not a cmd/ subpackage.
+          go install github.com/bytecodealliance/componentize-go@${{ env.COMPONENTIZE_GO_VERSION }}
+          # Both archives come from GitHub releases, where a refused stream or
+          # a reset mid-download is transient. `install-go` is the tool's own
+          # retry entry point: it is what its error message tells you to run.
+          for attempt in 1 2 3; do
+            if componentize-go install-go; then exit 0; fi
+            echo "::warning::componentize-go install-go failed (attempt ${attempt}/3)"
+            [ "$attempt" = 3 ] || sleep $(( attempt * 15 ))
+          done
+          echo "::error::could not download the patched Go toolchain in 3 attempts"
+          exit 1
+
   go:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    needs: go-toolchain
     permissions:
       contents: read
       packages: write
@@ -293,24 +352,38 @@ jobs:
           go-version: "1.25.5"
           cache: false
 
-      # The binary is the module root, not a cmd/ subpackage.
-      - name: Install componentize-go
-        run: go install github.com/bytecodealliance/componentize-go@v0.4.1
+      - run: echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
-      # Saves re-downloading the ~50 MiB patched toolchain and recompiling the
-      # wasm standard library in each of the seven jobs. Keyed on the
-      # componentize-go version alone, because that is the only thing the
-      # cached artifacts depend on: keying on go.sum would miss the key on
-      # every dependency bump and re-upload the toolchain seven times.
-      - name: Cache the componentize-go toolchain and build output
-        uses: actions/cache@v4
+      # Read-only. `go-toolchain` is the single writer, so the seven builds
+      # neither race to download the toolchain nor race to save it.
+      - name: Restore the componentize-go toolchain
+        id: toolchain
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/componentize-go
-            ~/.cache/go-build
+            ~/go/bin
             ~/go/pkg/mod
-          key: componentize-go-v0.4.1-${{ runner.os }}-${{ matrix.dir }}
-          restore-keys: componentize-go-v0.4.1-${{ runner.os }}-
+          key: componentize-go-${{ env.COMPONENTIZE_GO_VERSION }}-${{ runner.os }}
+
+      # `needs:` means that cache was written, so this should not fire. If
+      # eviction between the two jobs means it does, install here rather than
+      # failing the build with a bare "componentize-go: command not found".
+      - name: Install componentize-go
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/bytecodealliance/componentize-go@${{ env.COMPONENTIZE_GO_VERSION }}
+          componentize-go install-go
+
+      # Compiling the Go standard library for wasm is the slow part of `make
+      # build`, and it is per-template. A separate cache from the toolchain
+      # above, so each one has exactly one writer.
+      - name: Cache the Go build output
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ env.COMPONENTIZE_GO_VERSION }}-${{ runner.os }}-${{ matrix.dir }}
+          restore-keys: go-build-${{ env.COMPONENTIZE_GO_VERSION }}-${{ runner.os }}-
 
       - uses: wasmCloud/setup-wash-action@v2.1.0
 
