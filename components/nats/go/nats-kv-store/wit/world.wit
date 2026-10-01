@@ -1,0 +1,10 @@
+package cosmonic:kv-store@0.1.0;
+
+/// KV Store Client — Read and write a NATS KV bucket — get, put, CAS update, delete, history.
+world kv-store {
+  import wasmcloud:nats/types@0.1.0;
+  import wasmcloud:nats/kv@0.1.0;
+  import wasmcloud:nats/jetstream@0.1.0;
+
+  export wasmcloud:nats/core-handler@0.1.0;
+}

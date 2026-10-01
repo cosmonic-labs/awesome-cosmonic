@@ -1,0 +1,5 @@
+# Build output and the packages componentize-go regenerates on every build.
+*.wasm
+wasmcloud_nats_*/
+wit_exports.go
+wit/deps/
