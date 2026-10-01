@@ -1,20 +1,26 @@
-# Cosmonic Control / Kubernetes.
+# One manifest, both targets.
 #
-# Same spec as ../workload.yaml, wrapped for Control: replicas are the
-# operator's, and the workload spec moves under .spec.template.spec.
+# Cosmonic Control takes a `WorkloadDeployment`, and Cosmonic Desktop 0.5.32+
+# takes one too: it reads the workload out of the envelope and applies that,
+# reporting what a single host cannot honour rather than dropping it. The
+# image below is published from this repository and is pullable from either, so
+# this file is the whole deployment story. On Desktop 0.5.31 and older, which
+# answered `unsupported kind`, flatten it into a `Workload` first.
 #
-# The grants below stay in the manifest. The `wasmcloud-nats` host
-# plugin defaults to `workload_config: deny`, which means a workload
-# may only NARROW the ceiling the operator declares in the hostgroup's
-# `hostPlugins: [{id: wasmcloud-nats, config: {...}}]` — widening a
-# grant, or setting a host-owned connection key (servers, credentials,
-# TLS), is what gets refused.
+# The grants stay in the manifest. Under the `wasmcloud-nats` plugin's
+# `workloadConfig`, which defaults to `deny` on Control, the operator declares
+# a ceiling in the hostgroup's `hostPlugins` entry and a workload may ask for a
+# subset of it. Three outcomes: narrowing a declared ceiling is accepted,
+# asking for more than it is refused, and setting a key the operator declared
+# no ceiling for is also refused. Check that third one before you apply this.
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
   name: nats-jetstream-worker
   namespace: default
 spec:
+  # The operator's, and a cluster's. A single Desktop host runs one instance
+  # and says so at apply; raise this for Control.
   replicas: 1
   template:
     spec:

@@ -54,20 +54,26 @@ grant writing the bucket that captures it.
 
 ## Deploy
 
-- **Cosmonic Desktop** — apply [`workload.yaml`](workload.yaml): Workloads →
-  Run (paste it), or the `cosmonic_workload_apply` MCP tool. Desktop's
-  built-in NATS plugin is configured under Settings → Built-in plugins → NATS
-  and defaults to `nats://127.0.0.1:4222`.
-- **Cosmonic Control / Kubernetes** — apply
-  [`deploy/workload-deployment.yaml`](deploy/workload-deployment.yaml). It is
-  the same spec wrapped as a `WorkloadDeployment`; Desktop rejects that kind
-  and Control requires it, which is why both files exist.
+One manifest, both targets:
 
-Both point at the component published from this template, so the pattern can
-be deployed and watched before any of it is built locally. That image is
-published when this lands on `main` — until then, build locally and push to a
-registry of your own. Once you change the source, do the same and replace the
-image reference in both manifests.
+```bash
+kubectl apply -f deploy/workload-deployment.yaml          # Cosmonic Control
+```
+
+On **Cosmonic Desktop 0.5.32+**, apply the same file: Workloads → Run (paste
+it), or the `cosmonic_workload_apply` MCP tool. Desktop reads the workload out
+of the `WorkloadDeployment` envelope and reports what a single host cannot
+honour, so `replicas` is recorded rather than obeyed. On 0.5.31 and older,
+which answered `unsupported kind`, flatten it into a `Workload` first.
+
+Desktop's built-in NATS plugin is configured under Settings → Built-in plugins
+→ NATS and defaults to `nats://127.0.0.1:4222`.
+
+The image is published from this repository and is pullable from a cluster and
+from Desktop alike, so the pattern can be deployed and watched before any of it
+is built locally. Once you change the source, push it somewhere both can reach
+and replace that reference.
+
 
 ## Exercise it
 
@@ -110,6 +116,5 @@ in the manifest rather than being stripped out of it.
 ├── src/lib.rs                          # START HERE
 ├── wit/world.wit                       # + deps/, fetched and gitignored
 ├── wkg.lock                            # pins the WIT version
-├── workload.yaml                       # Cosmonic Desktop
-└── deploy/workload-deployment.yaml     # Cosmonic Control / Kubernetes
+└── deploy/workload-deployment.yaml     # Desktop 0.5.32+ and Cosmonic Control
 ```

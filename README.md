@@ -61,7 +61,7 @@ Starting points for Kafka workloads on `cosmonic:kafka@0.5.0`, one per delivery 
 
 ### NATS
 
-Starting points for NATS workloads on `wasmcloud:nats@0.1.0`, one per messaging pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic Desktop and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/nats/`](components/nats/).
+Starting points for NATS workloads on `wasmcloud:nats@0.1.0`, one per messaging pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic Desktop and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/nats/`](components/nats/), in Rust and Go.
 
 - [nats-core-subscriber](components/nats/rust/nats-core-subscriber/) (hosted): The cheapest consumer there is. The host subscribes and calls the component once per message, with no acknowledgement and no redelivery, for telemetry, cache invalidation, and notifications.
 - [nats-jetstream-consumer](components/nats/rust/nats-jetstream-consumer/) (hosted, recommended): JetStream paces delivery by acknowledgement, so a slow consumer is throttled rather than overrun and an unacknowledged message comes back.
@@ -70,6 +70,8 @@ Starting points for NATS workloads on `wasmcloud:nats@0.1.0`, one per messaging 
 - [nats-jetstream-worker](components/nats/rust/nats-jetstream-worker/) (hosted): A pull consumer the guest drains at its own pace, for scheduled drains and rate-limited downstreams.
 - [nats-kv-store](components/nats/rust/nats-kv-store/) (hosted): Messages on a subject become revisioned keys in a JetStream KV bucket, for device state, per-tenant settings, and last-known-value caches.
 - [nats-kv-watcher](components/nats/rust/nats-kv-watcher/) (hosted): Reacts to every change in a KV bucket, for config reloads, cache invalidation, and mirroring state onward.
+
+The same seven patterns are also available in Go, built with [componentize-go](https://github.com/bytecodealliance/componentize-go) on the patched Go that WASI p3's async ABI requires: [`components/nats/go/`](components/nats/go/). Same interface, same grants, same subjects; pick the language, not the pattern.
 
 ### MCP Servers
 

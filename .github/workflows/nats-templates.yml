@@ -15,11 +15,11 @@ on:
     branches: [main]
     tags: ["nats-templates/v*"]
     paths:
-      - "components/nats/rust/**"
+      - "components/nats/**"
       - ".github/workflows/nats-templates.yml"
   pull_request:
     paths:
-      - "components/nats/rust/**"
+      - "components/nats/**"
       - ".github/workflows/nats-templates.yml"
   workflow_dispatch:
 
@@ -50,7 +50,7 @@ env:
   RUST_VERSION: "1.97.1"
 
 jobs:
-  build:
+  rust:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     permissions:
@@ -214,6 +214,157 @@ jobs:
 
       # Provenance for something a newcomer is told to pull and run: it ties
       # the published bytes back to this workflow and this commit.
+      - name: Attest the published component
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+  # Go builds through componentize-go, which fetches the patched Go it needs
+  # (golang/go#76775) on first run: wasmcloud:nats@0.1.0 is async-only WASI p3
+  # and stock Go cannot emit the component-model concurrency ABI. So there is
+  # no Go toolchain to pin here beyond the one componentize-go manages, and
+  # `actions/setup-go` would only get in its way.
+  go:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: nats-core-subscriber-go
+            dir: nats-core-subscriber
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-request-reply-go
+            dir: nats-request-reply
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-fan-out-go
+            dir: nats-fan-out
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-jetstream-consumer-go
+            dir: nats-jetstream-consumer
+            expect: "export wasmcloud:nats/jetstream-handler"
+          - name: nats-jetstream-worker-go
+            dir: nats-jetstream-worker
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-kv-store-go
+            dir: nats-kv-store
+            expect: "export wasmcloud:nats/core-handler"
+          - name: nats-kv-watcher-go
+            dir: nats-kv-watcher
+            expect: "export wasmcloud:nats/kv-handler"
+
+    defaults:
+      run:
+        working-directory: components/nats/go/${{ matrix.dir }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The bootstrap Go componentize-go builds its patched toolchain from.
+      # Pinned rather than floating: the patched compiler is what decides a
+      # published component's import surface, the same reasoning the Rust job
+      # pins RUST_VERSION for.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+
+      - name: Install componentize-go
+        run: go install github.com/bytecodealliance/componentize-go/cmd/componentize-go@v0.4.1
+
+      # componentize-go caches the patched Go and the module downloads here.
+      # Without this every job rebuilds a Go toolchain from source.
+      - name: Cache the componentize-go toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/componentize-go
+            ~/go/pkg/mod
+          key: componentize-go-v0.4.1-${{ runner.os }}-${{ hashFiles('components/nats/go/*/go.sum') }}
+          restore-keys: componentize-go-v0.4.1-${{ runner.os }}-
+
+      - uses: wasmCloud/setup-wash-action@v2.1.0
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      # `make build` fetches the WIT by wkg.lock, generates the bindings and
+      # builds; `make verify` asserts the export is there and the lift is
+      # async, which is the failure a Go handler that parks on a timer
+      # produces.
+      - name: Build and verify
+        run: make verify
+
+      - name: Validate the component
+        env:
+          COMPONENT: ${{ matrix.dir }}.wasm
+        run: |
+          wasm-tools validate --features all "$COMPONENT"
+          wit=$(wasm-tools component wit "$COMPONENT")
+          echo "$wit"
+          echo "$wit" | grep -q -- "${{ matrix.expect }}" || {
+            echo "::error::component no longer has '${{ matrix.expect }}'"
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: components/nats/go/${{ matrix.dir }}/${{ matrix.dir }}.wasm
+          if-no-files-found: error
+
+      - name: Log in to GHCR
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GHCR
+        id: publish
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic'
+        env:
+          COMPONENT: ${{ matrix.dir }}.wasm
+        run: |
+          image="ghcr.io/cosmonic-labs/nats-templates/${{ matrix.name }}"
+          case "${GITHUB_REF}" in
+            refs/tags/nats-templates/v*)
+              version="${GITHUB_REF#refs/tags/nats-templates/v}"
+              tags="${version} latest"   # latest last: it is what gets attested
+              ;;
+            *)
+              tags="sha-${GITHUB_SHA:0:12} latest"   # latest last: it is what gets attested
+              ;;
+          esac
+          digest=""
+          for tag in $tags; do
+            echo "pushing ${image}:${tag}"
+            pushed=$(wash oci push --output json "${image}:${tag}" "$COMPONENT")
+            digest=$(echo "$pushed" | jq -er .data.digest) || {
+              echo "::error::push reported no digest: $pushed"
+              exit 1
+            }
+            echo "pushed ${image}:${tag} ($digest)"
+          done
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
       - name: Attest the published component
         if: >-
           github.event_name != 'pull_request' &&

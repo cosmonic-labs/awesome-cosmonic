@@ -3,13 +3,13 @@
 Clone-and-customize starting points for building NATS workloads on Cosmonic
 (`wasmcloud:nats@0.1.0`), in the same shape as the
 [Kafka set](../kafka/) next door: each template is a self-contained project —
-source, a `wkg.lock` pinning the WIT it fetches, a Cosmonic `workload.yaml`,
-and a Kubernetes `deploy/workload-deployment.yaml`.
+source, a `wkg.lock` pinning the WIT it fetches, and one
+`deploy/workload-deployment.yaml` that runs on Cosmonic Control and on
+Cosmonic Desktop alike.
 
 Every manifest points at a prebuilt component published from this directory,
 so a pattern can be deployed and watched before any of it is built locally.
-Those images are published when this lands on `main`; before that, build
-locally and push to a registry of your own.
+The Go images carry a `-go` suffix.
 
 To start from one of these without cloning the repository:
 
@@ -18,14 +18,17 @@ wash new https://github.com/cosmonic-labs/awesome-cosmonic \
   --subfolder components/nats/rust/nats-core-subscriber
 ```
 
-Seven patterns, in Rust:
+Seven patterns, each in Rust and Go:
 
 ```
 components/nats/
   rust/   nats-core-subscriber  | nats-request-reply | nats-fan-out
-          nats-jetstream-consumer | nats-jetstream-worker
+  go/     nats-jetstream-consumer | nats-jetstream-worker
           nats-kv-store         | nats-kv-watcher
 ```
+
+The two tracks are the same seven patterns against the same interface, with
+the same grants and the same subjects. Pick the language, not the pattern.
 
 Start with **nats-core-subscriber** if messages are cheap and losing one is
 survivable, and **nats-jetstream-consumer** if it is not. Those two cover most
@@ -102,19 +105,20 @@ workload manifest rather than being stripped out of it. That is the same
 arrangement the Kafka set uses, where the Control manifest keeps its `topics:`
 grant inline.
 
-## Two manifests, because the two runtimes take different kinds
+## One manifest, both targets
 
-Each template ships both, and they are not interchangeable:
+Each template ships a single `deploy/workload-deployment.yaml`.
 
-- `workload.yaml` is `kind: Workload`, with `spec.components` and
-  `spec.hostInterfaces` at the top level. Cosmonic Desktop takes this.
-- `deploy/workload-deployment.yaml` is `kind: WorkloadDeployment`, the same
-  spec nested under `.spec.template.spec` with `replicas` beside it. Cosmonic
-  Control takes this.
+Cosmonic Control takes a `WorkloadDeployment`, and Cosmonic Desktop 0.5.32+
+takes one too: it reads the workload out of the envelope and applies that,
+reporting what a single host cannot honour instead of dropping it. `replicas`
+is recorded rather than obeyed, since a Desktop host is one host. The image is
+published from this repository and is pullable from a cluster and from Desktop
+alike, so the same file is the whole deployment story.
 
-Desktop's validator rejects a `WorkloadDeployment` outright
-(`unsupported kind "WorkloadDeployment" (expected Workload)`), so a single
-file cannot serve both.
+On Desktop 0.5.31 and older, which answered `unsupported kind`, flatten it
+into a `Workload` first: lift `.spec.template.spec` to `spec` and drop
+`replicas`.
 
 That validator checks shape, not meaning: it accepts an unknown config key and
 it accepts a grant too narrow for the subscription beside it. A green
@@ -143,9 +147,15 @@ Unlike the Kafka set, these need no registry mapping: `wasmcloud:nats@0.1.0`
 is published to a registry `wash` already knows, so `wash build` resolves the
 WIT with no `WKG_CONFIG_FILE` in play.
 
-Rust only for now. `wasmcloud:nats@0.1.0` declares every function `async
-func`, which needs a toolchain that can bind the p3 async ABI — TinyGo tops
-out at WASI P2 and cannot. Go via `componentize-go` is the candidate and a Go
-set exists upstream; it is not published here until it is built and verified
-in CI the way these are, on the same reasoning the Kafka set gives: a template
-that does not compile is worse than one that does not exist.
+The Go track builds through [componentize-go](https://github.com/bytecodealliance/componentize-go),
+which fetches the patched Go it needs (golang/go#76775) on first run.
+`wasmcloud:nats@0.1.0` declares every function `async func`, and stock Go
+cannot emit the component-model concurrency ABI; TinyGo tops out at WASI P2
+and cannot build these at all. There is no toolchain to install by hand, and
+CI builds and verifies all seven the same way it does the Rust set.
+
+One Go rule worth knowing before you write a handler: **parking on a timer
+traps.** `time.Sleep`, `time.After` in a select, `context.WithTimeout`, and any
+retry or backoff built on them fail the delivery with `async-lifted export
+failed to produce a result`. Duration is fine; only waiting on a timer breaks.
+Await `wasi:clocks/monotonic-clock` instead.
