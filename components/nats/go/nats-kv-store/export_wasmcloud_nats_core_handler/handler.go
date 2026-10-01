@@ -1,4 +1,4 @@
-// KV store — write records from a subject into a JetStream KV bucket.
+// KV store: write records from a subject into a JetStream KV bucket.
 //
 // Each message on demo.records.<key> becomes one key in the bucket: the part
 // of the subject after the prefix is the key, and the body is the value. A KV

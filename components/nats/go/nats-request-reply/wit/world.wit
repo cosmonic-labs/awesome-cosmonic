@@ -1,6 +1,6 @@
 package cosmonic:request-reply@0.1.0;
 
-/// Request / Reply — Answer NATS requests — an RPC endpoint that scales to zero between calls.
+/// Request/reply — Answer NATS requests on a subject, one reply per request.
 world request-reply {
   import wasmcloud:nats/types@0.1.0;
   import wasmcloud:nats/core@0.1.0;

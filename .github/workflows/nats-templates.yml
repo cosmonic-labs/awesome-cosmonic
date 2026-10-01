@@ -1,4 +1,4 @@
-# Builds the Rust NATS templates and publishes them to GHCR.
+# Builds the NATS templates, in Rust and Go, and publishes them to GHCR.
 #
 # Same shape as kafka-templates.yml next door, and for the same reason: the
 # useful gate is not "does it compile" but "does the documented path still
@@ -224,11 +224,25 @@ jobs:
           subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
 
-  # Go builds through componentize-go, which fetches the patched Go it needs
-  # (golang/go#76775) on first run: wasmcloud:nats@0.1.0 is async-only WASI p3
-  # and stock Go cannot emit the component-model concurrency ABI. So there is
-  # no Go toolchain to pin here beyond the one componentize-go manages, and
-  # `actions/setup-go` would only get in its way.
+  # Go builds through componentize-go. wasmcloud:nats@0.1.0 is async-only WASI
+  # p3 and stock Go cannot emit the component-model concurrency ABI, so
+  # componentize-go fetches a patched Go (golang/go#76775) and builds with
+  # that instead of whatever is on PATH.
+  #
+  # What pins the published import surface is therefore `@v0.4.1` below, not
+  # the setup-go version: the installed command is a small downloader, the
+  # binary it fetches is the real tool, and that binary hardcodes which
+  # patched Go it uses. Bumping componentize-go can move every published
+  # component's imports; bumping setup-go moves nothing. That is the same
+  # property RUST_VERSION exists to control on the rust job, reached by a
+  # different route, so pin componentize-go deliberately.
+  #
+  # Supply chain, stated rather than implied: that patched toolchain comes
+  # from a fork's release tag and the downloader performs no checksum of its
+  # own. These components are attested and published to `:latest`, so the Go
+  # half has materially weaker provenance than the Rust half. componentize-go
+  # accepts a `--url`, so mirroring the artifact is the mitigation if that
+  # matters more than the convenience.
   go:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -270,31 +284,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The bootstrap Go componentize-go builds its patched toolchain from.
-      # Pinned rather than floating: the patched compiler is what decides a
-      # published component's import surface, the same reasoning the Rust job
-      # pins RUST_VERSION for.
+      # Needed to run `go install` (componentize-go's module requires Go >=
+      # 1.25) and for the `go mod tidy` in each template's bindings step. It
+      # does NOT decide what the component is compiled with: see the note on
+      # this job.
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.5"
           cache: false
 
-      # The binary is the module root, not a cmd/ subpackage. componentize-go
-      # itself needs Go >= 1.25, so the toolchain switch GOTOOLCHAIN=auto does
-      # here is expected and is separate from the patched Go it later builds
-      # for the component.
+      # The binary is the module root, not a cmd/ subpackage.
       - name: Install componentize-go
         run: go install github.com/bytecodealliance/componentize-go@v0.4.1
 
-      # componentize-go caches the patched Go and the module downloads here.
-      # Without this every job rebuilds a Go toolchain from source.
-      - name: Cache the componentize-go toolchain
+      # Saves re-downloading the ~50 MiB patched toolchain and recompiling the
+      # wasm standard library in each of the seven jobs. Keyed on the
+      # componentize-go version alone, because that is the only thing the
+      # cached artifacts depend on: keying on go.sum would miss the key on
+      # every dependency bump and re-upload the toolchain seven times.
+      - name: Cache the componentize-go toolchain and build output
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/componentize-go
+            ~/.cache/go-build
             ~/go/pkg/mod
-          key: componentize-go-v0.4.1-${{ runner.os }}-${{ hashFiles('components/nats/go/*/go.sum') }}
+          key: componentize-go-v0.4.1-${{ runner.os }}-${{ matrix.dir }}
           restore-keys: componentize-go-v0.4.1-${{ runner.os }}-
 
       - uses: wasmCloud/setup-wash-action@v2.1.0

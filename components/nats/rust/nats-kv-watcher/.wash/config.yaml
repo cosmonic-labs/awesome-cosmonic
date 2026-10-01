@@ -10,8 +10,9 @@ build:
 # Unlike the Kafka templates, this set carries a `workload:` block:
 # `wasmcloud:nats` is a built-in Cosmonic Desktop plugin, so the dev loop
 # can serve the binding locally and needs to know what to bind. It mirrors
-# workload.yaml's spec.hostInterfaces, and Desktop carries it onto the dev
-# workload and onto the draft `cosmonic publish` prints.
+# the hostInterfaces under deploy/workload-deployment.yaml's
+# spec.template.spec, and Desktop carries it onto the dev workload and onto
+# the draft `cosmonic publish` prints.
 workload:
   environment:
     config:

@@ -1,6 +1,6 @@
 package cosmonic:kv-watcher@0.1.0;
 
-/// KV Watcher — React to changes in a NATS KV bucket — put, delete, and purge events.
+/// KV watcher — React to every change in a JetStream KV bucket.
 world kv-watcher {
   import wasmcloud:nats/types@0.1.0;
   import wasmcloud:nats/kv@0.1.0;

@@ -71,7 +71,15 @@ Starting points for NATS workloads on `wasmcloud:nats@0.1.0`, one per messaging 
 - [nats-kv-store](components/nats/rust/nats-kv-store/) (hosted): Messages on a subject become revisioned keys in a JetStream KV bucket, for device state, per-tenant settings, and last-known-value caches.
 - [nats-kv-watcher](components/nats/rust/nats-kv-watcher/) (hosted): Reacts to every change in a KV bucket, for config reloads, cache invalidation, and mirroring state onward.
 
-The same seven patterns are also available in Go, built with [componentize-go](https://github.com/bytecodealliance/componentize-go) on the patched Go that WASI p3's async ABI requires: [`components/nats/go/`](components/nats/go/). Same interface, same grants, same subjects; pick the language, not the pattern.
+The same seven patterns in Go, built with [componentize-go](https://github.com/bytecodealliance/componentize-go) on the patched Go that WASI p3's async ABI requires. Same interface, same grants, same subjects:
+
+- [nats-core-subscriber (Go)](components/nats/go/nats-core-subscriber/) (hosted): The cheapest consumer there is, in Go. One handler invocation per message, no acknowledgement and no redelivery.
+- [nats-jetstream-consumer (Go)](components/nats/go/nats-jetstream-consumer/) (hosted): Acknowledged, redelivered JetStream consumption in Go, with `Nats-Msg-Id` deduplication on the result.
+- [nats-request-reply (Go)](components/nats/go/nats-request-reply/) (hosted): One reply per request, published back to the requester's inbox subject.
+- [nats-fan-out (Go)](components/nats/go/nats-fan-out/) (hosted): One event copied onto a fixed set of downstream subjects, bounded by the binding's grant rather than by the sender.
+- [nats-jetstream-worker (Go)](components/nats/go/nats-jetstream-worker/) (hosted): A pull consumer the guest drains at its own pace, dropping each message handle to keep the subscription budget free.
+- [nats-kv-store (Go)](components/nats/go/nats-kv-store/) (hosted): Messages on a subject become revisioned keys in a JetStream KV bucket.
+- [nats-kv-watcher (Go)](components/nats/go/nats-kv-watcher/) (hosted): Reacts to every change in a KV bucket, branching on the operation rather than on whether bytes are present.
 
 ### MCP Servers
 

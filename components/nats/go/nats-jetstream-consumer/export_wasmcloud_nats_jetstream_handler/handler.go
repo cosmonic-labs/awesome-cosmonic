@@ -1,4 +1,4 @@
-// JetStream consumer — delivery with acknowledgement and redelivery.
+// JetStream consumer: delivery with acknowledgement and redelivery.
 //
 // Unlike core NATS, JetStream paces delivery by acknowledgement: a slow
 // consumer is throttled rather than overrun, and an unacknowledged message
@@ -7,10 +7,10 @@
 // attempted.
 //
 // Acknowledgement follows ack-mode on the binding:
-//   - auto, which this template ships: returning Ok acknowledges, and
+//  : auto, which this template ships: returning Ok acknowledges, and
 //     returning Err does not, so the message is redelivered once the
 //     consumer's ack-wait elapses.
-//   - manual: the handler settles the message itself with Ack, Nak or Term,
+//  : manual: the handler settles the message itself with Ack, Nak or Term,
 //     and a message that returns Ok without settling still times out to
 //     redelivery.
 //
@@ -44,6 +44,12 @@ import (
 const maxDeliveries = 5
 
 func HandleMessage(handle *wasmcloud_nats_jetstream.MessageHandle) witTypes.Result[witTypes.Unit, string] {
+	// Rust drops the owned handle at the end of the call; Go has to be told.
+	// The host releases this delivery's share of the subscription budget on
+	// drop, and deferring keeps it before the task returns, so `ack-mode:
+	// auto` still acks.
+	defer handle.Drop()
+
 	msg := handle.Message()
 	sequence := handle.Sequence()
 

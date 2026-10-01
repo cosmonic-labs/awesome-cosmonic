@@ -1,6 +1,6 @@
 package cosmonic:jetstream-consumer@0.1.0;
 
-/// JetStream Consumer — Durable at-least-once consumption from a JetStream stream, with ack control.
+/// JetStream consumer — Consume a JetStream stream with acknowledgement and redelivery.
 world jetstream-consumer {
   import wasmcloud:nats/types@0.1.0;
   import wasmcloud:nats/jetstream@0.1.0;

@@ -4,7 +4,7 @@
 #
 # `-w` is passed explicitly so componentize-go targets this world only. Without
 # it, a componentize-go.toml discovered from a dependency can merge another
-# world in — the wasmCloud Go SDK's default world, for instance, mandates a
+# world in: the wasmCloud Go SDK's default world, for instance, mandates a
 # wasi:http/incoming-handler export this component has no reason to provide.
 WORLD := cosmonic:jetstream-consumer/jetstream-consumer@0.1.0
 OUT   := nats-jetstream-consumer.wasm

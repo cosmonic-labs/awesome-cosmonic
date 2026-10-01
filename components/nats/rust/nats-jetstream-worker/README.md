@@ -20,9 +20,9 @@ is what you want unless you can say why the pace has to be yours.
 ## Build
 
 Prereqs: Rust 1.88+, `rustup target add wasm32-wasip2`, and `wash` 2.5+.
-Built and tested with `wash 2.5.1` and Rust 1.97.1 against a Cosmonic Desktop
-0.5.30 daemon (wasmCloud runtime 2.9.0) and `wasmcloud:nats@0.1.0`. CI
-publishes these on Rust 1.97.1, pinned.
+Built and tested with `wash 2.5.1` and Rust 1.97.1 against
+`wasmcloud:nats@0.1.0`; CI publishes on Rust 1.97.1, pinned. The manifest
+needs a Desktop newer than 0.5.31 to apply as written: see Deploy.
 
 ```sh
 wash build                   # fetches the WIT, then runs .wash/config.yaml
@@ -65,8 +65,10 @@ kubectl apply -f deploy/workload-deployment.yaml          # Cosmonic Control
 On **Cosmonic Desktop 0.5.32+**, apply the same file: Workloads → Run (paste
 it), or the `cosmonic_workload_apply` MCP tool. Desktop reads the workload out
 of the `WorkloadDeployment` envelope and reports what a single host cannot
-honour, so `replicas` is recorded rather than obeyed. On 0.5.31 and older,
-which answered `unsupported kind`, flatten it into a `Workload` first.
+honour, so `replicas` is recorded rather than obeyed. Desktop reads this kind from the
+release after 0.5.31; until that ships, flatten it first: change `kind:
+WorkloadDeployment` to `kind: Workload`, lift everything under
+`.spec.template.spec` up to `spec`, and drop `replicas`.
 
 Desktop's built-in NATS plugin is configured under Settings → Built-in plugins
 → NATS and defaults to `nats://127.0.0.1:4222`.
@@ -75,7 +77,6 @@ The image is published from this repository and is pullable from a cluster and
 from Desktop alike, so the pattern can be deployed and watched before any of it
 is built locally. Once you change the source, push it somewhere both can reach
 and replace that reference.
-
 
 ## Exercise it
 
@@ -104,7 +105,7 @@ TLS material come from the host's NATS plugin configuration, and a workload
 that tries to set them is refused. The component never sees a server address
 in its code.
 
-On Cosmonic Control the plugin defaults to `workload_config: deny`, which
+On Cosmonic Control the plugin defaults to `workloadConfig: deny`, which
 means a workload may only **narrow** the ceiling the operator declares in the
 hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
