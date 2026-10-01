@@ -2,13 +2,12 @@
 # project mode (build, dev loop, publish).
 version: "0.1.0"
 build:
-  # The target is spelled out rather than left to `.cargo/config.toml`,
-  # so this still builds a component if that file is edited or dropped.
-  # `wash wit fetch` first: wit/deps/ is generated and gitignored, so a fresh
-  # clone has only world.wit and `cargo build` fails to resolve
-  # wasmcloud:nats. Cheap and idempotent once the deps are there.
-  command: wash wit fetch && cargo build --target wasm32-wasip2 --release
-  component_path: target/wasm32-wasip2/release/nats_fan_out.wasm
+  # `make build` rather than a spelled-out componentize-go line: the Makefile
+  # already fetches the WIT, regenerates the bindings and runs `go mod tidy`
+  # in the right order, and it is what this template's README tells you to
+  # run. World: cosmonic:kv-watcher/kv-watcher@0.1.0
+  command: make build
+  component_path: nats-kv-watcher.wasm
 
 # Unlike the Kafka templates, this set carries a `workload:` block:
 # `wasmcloud:nats` is a built-in Cosmonic Desktop plugin, so the dev loop
@@ -29,8 +28,9 @@ workload:
       version: "0.1.0"
       interfaces:
         - types
-        - core
-        - core-handler
+        - kv
+        - jetstream
+        - kv-handler
       # Grants are deny-by-default ceilings, checked by containment.
       # subject-allow covers publish, request, core subscriptions, the
       # filter on a JetStream subscription or pull consumer, and stored
@@ -38,6 +38,7 @@ workload:
       # bucket — but stream-allow ALONE reaches nothing readable: grant
       # the subjects the stream stores alongside the stream itself.
       config:
-        subject-allow: demo.events,demo.events.>
-        core-subscriptions: demo.events
+        subject-allow: done.demo.>
+        bucket-allow: demo
+        kv-watches: demo:>
         max-in-flight: "8"
