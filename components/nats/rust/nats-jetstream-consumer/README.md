@@ -108,6 +108,18 @@ hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
 in the manifest rather than being stripped out of it.
 
+## Capacity
+
+JetStream paces delivery by settlement, so a slow consumer is throttled
+rather than overrun — every JetStream cell measured was clean, which is why
+this is the right default for durable work. Always set the queue group (the
+fourth field of `jetstream-subscriptions`): it distributes across replicas
+*and* makes the consumer durable. An ephemeral consumer is reclaimed after
+120 s idle, after which delivery stops with nothing logged.
+
+The numbers behind that, the other six patterns, and the host-memory sizing
+rule are in [the measured operational envelope](../../tuning.md#jetstream-consumer-push).
+
 ## Layout
 
 ```

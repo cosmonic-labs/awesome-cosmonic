@@ -116,6 +116,14 @@ hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
 in the manifest rather than being stripped out of it.
 
+## Capacity
+
+Watch delivery was the one thing that never lost an event in either language,
+and the watch itself costs effectively nothing in host memory.
+
+The numbers behind that, the other six patterns, and the host-memory sizing
+rule are in [the measured operational envelope](../../tuning.md#kv-watcher).
+
 ## Layout
 
 ```

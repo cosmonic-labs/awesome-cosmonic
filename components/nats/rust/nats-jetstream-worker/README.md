@@ -111,6 +111,16 @@ hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
 in the manifest rather than being stripped out of it.
 
+## Capacity
+
+Batch size is a **byte** budget, not a message count. `fetch(100)` on 5 MB
+messages asks the host to materialize 500 MB in one call, which OOM-killed
+the host and every co-tenant workload's connection with it. Use
+`fetch-with-limits` with a byte bound.
+
+The numbers behind that, the other six patterns, and the host-memory sizing
+rule are in [the measured operational envelope](../../tuning.md#jetstream-pull-worker).
+
 ## Layout
 
 ```
