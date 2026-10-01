@@ -85,6 +85,12 @@ Grant exactly what the workload touches.
 `jetstream-subscriptions`, `kv-watches`, `ack-mode`, `max-in-flight`,
 `subscription-capacity`.
 
+`subscription-capacity` is the one to get right: at its stock 1024, a core
+subscriber that fell behind a burst shed 60% of the messages, and raising
+`max-in-flight` instead changed nothing. [The measured operational
+envelope](tuning.md) has the numbers for all seven patterns and a sizing rule
+for host memory.
+
 **Connection keys are the host's** — `servers`, credentials, and TLS material
 come from the host's NATS plugin configuration, and a workload that tries to
 set them is refused. The component never sees a server address in its code.

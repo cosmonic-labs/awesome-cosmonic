@@ -115,6 +115,15 @@ hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
 in the manifest rather than being stripped out of it.
 
+## Capacity
+
+Capacity has to be sized at **every hop a burst traverses**. Raising only the
+receiver's capacity left the amplifier's own input subscription shedding, and
+no receiver-side knob touches that.
+
+The numbers behind that, the other six patterns, and the host-memory sizing
+rule are in [the measured operational envelope](../../tuning.md#fan-out--amplifier).
+
 ## Layout
 
 ```

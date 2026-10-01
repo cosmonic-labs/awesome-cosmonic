@@ -113,6 +113,16 @@ hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
 in the manifest rather than being stripped out of it.
 
+## Capacity
+
+Core queue groups distribute correctly, so replicas scale this pattern
+cleanly: verified clean at 1, 2 and 3 replicas with no duplication. At
+payloads of 1 MB and above, raise the **caller's** timeout — a slow reply
+reaches the caller as a timeout, not an error.
+
+The numbers behind that, the other six patterns, and the host-memory sizing
+rule are in [the measured operational envelope](../../tuning.md#request--reply).
+
 ## Layout
 
 ```

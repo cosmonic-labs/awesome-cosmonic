@@ -117,6 +117,16 @@ hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
 in the manifest rather than being stripped out of it.
 
+## Capacity
+
+This pattern has no backpressure of any kind. At the stock
+`subscription-capacity` of 1024, a burst that outran the guest **shed 60% of
+its messages**, silently — and `max-in-flight` does not help, because what
+overflows is the buffer in front of the admission semaphore.
+
+The numbers behind that, the other six patterns, and the host-memory sizing
+rule are in [the measured operational envelope](../../tuning.md#core-subscriber).
+
 ## Layout
 
 ```

@@ -108,6 +108,16 @@ hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay
 in the manifest rather than being stripped out of it.
 
+## Capacity
+
+Operations are serial per handler invocation, so throughput is bounded by
+round-trip latency rather than by admission. `history()` on a key with no
+history **hangs the guest call indefinitely**, pinning the instance and its
+admission permit — treat that call as unsafe until it is fixed.
+
+The numbers behind that, the other six patterns, and the host-memory sizing
+rule are in [the measured operational envelope](../../tuning.md#kv-store-client).
+
 ## Layout
 
 ```
