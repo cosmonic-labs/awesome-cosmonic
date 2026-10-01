@@ -1,4 +1,4 @@
-// Fan-out — one event in, several downstream subjects out.
+// Fan-out: one event in, several downstream subjects out.
 //
 // The host delivers each message on demo.events and this republishes it to
 // every subject in targets. The fan is fixed by the component and bounded by
@@ -28,7 +28,9 @@ import (
 
 // The subjects each event is copied to. Every one must be covered by
 // subject-allow on the binding, or the publish is denied at the host.
-var targets = [...]string{
+const targetCount = 3
+
+var targets = [targetCount]string{
 	"demo.events.audit",
 	"demo.events.index",
 	"demo.events.notify",

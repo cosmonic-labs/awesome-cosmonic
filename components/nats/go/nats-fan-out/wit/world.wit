@@ -1,6 +1,6 @@
 package cosmonic:fan-out@0.1.0;
 
-/// Fan-Out / Amplifier — Receive one message and republish it to many — the classic scatter pattern.
+/// Fan-out — Take one event and publish it to several downstream subjects.
 world fan-out {
   import wasmcloud:nats/types@0.1.0;
   import wasmcloud:nats/core@0.1.0;

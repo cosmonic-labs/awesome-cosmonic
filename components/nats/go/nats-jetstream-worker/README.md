@@ -19,9 +19,17 @@ is what you want unless you can say why the pace has to be yours.
 
 ## Build
 
-Prereqs: [componentize-go](https://github.com/bytecodealliance/componentize-go)
-and `wash` 2.5+. componentize-go fetches the patched Go it needs the first time
-it runs, so there is no toolchain to install by hand.
+Prereqs: Go 1.25+, [componentize-go](https://github.com/bytecodealliance/componentize-go)
+v0.4.1, `wasm-tools`, and `wash` 2.5+:
+
+```sh
+go install github.com/bytecodealliance/componentize-go@v0.4.1
+cargo install wasm-tools        # or: brew install wasm-tools
+```
+
+componentize-go fetches the *patched* Go it compiles with (golang/go#76775),
+so that one you do not install. Go itself you do need, for the install above
+and for the `go mod tidy` in the bindings step.
 
 ```sh
 make build         # fetches the WIT, generates bindings, builds the component
@@ -66,17 +74,18 @@ kubectl apply -f deploy/workload-deployment.yaml          # Cosmonic Control
 On **Cosmonic Desktop 0.5.32+**, apply the same file: Workloads → Run (paste
 it), or the `cosmonic_workload_apply` MCP tool. Desktop reads the workload out
 of the `WorkloadDeployment` envelope and reports what a single host cannot
-honour, so `replicas` is recorded rather than obeyed. On 0.5.31 and older,
-which answered `unsupported kind`, flatten it into a `Workload` first.
+honour, so `replicas` is recorded rather than obeyed. Desktop reads this kind from the
+release after 0.5.31; until that ships, flatten it first: change `kind:
+WorkloadDeployment` to `kind: Workload`, lift everything under
+`.spec.template.spec` up to `spec`, and drop `replicas`.
 
 Desktop's built-in NATS plugin is configured under Settings → Built-in plugins
 → NATS and defaults to `nats://127.0.0.1:4222`.
 
-The image is published from this repository and is pullable from a cluster and
-from Desktop alike, so the pattern can be deployed and watched before any of it
+The image is published from this repository once this lands on `main`, and is
+then pullable from a cluster and from Desktop alike, so the pattern can be deployed and watched before any of it
 is built locally. Once you change the source, push it somewhere both can reach
 and replace that reference.
-
 
 ## Exercise it
 
@@ -105,7 +114,7 @@ TLS material come from the host's NATS plugin configuration, and a workload
 that tries to set them is refused. The component never sees a server address
 in its code.
 
-On Cosmonic Control the plugin defaults to `workload_config: deny`, which
+On Cosmonic Control the plugin defaults to `workloadConfig: deny`, which
 means a workload may only **narrow** the ceiling the operator declares in the
 hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
 grant, or setting a host-owned key, is what gets refused — so the grants stay

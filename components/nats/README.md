@@ -1,11 +1,15 @@
 # Golden NATS templates for Cosmonic
 
 Clone-and-customize starting points for building NATS workloads on Cosmonic
-(`wasmcloud:nats@0.1.0`), in the same shape as the
-[Kafka set](../kafka/) next door: each template is a self-contained project —
-source, a `wkg.lock` pinning the WIT it fetches, and one
-`deploy/workload-deployment.yaml` that runs on Cosmonic Control and on
-Cosmonic Desktop alike.
+(`wasmcloud:nats@0.1.0`), built like the
+[Kafka set](../kafka/) next door, with one difference noted below: each
+template is a self-contained project with source, a `wkg.lock` pinning the WIT
+it fetches, and one `deploy/workload-deployment.yaml`.
+
+Kafka still ships two manifests, a `Workload` for Desktop and a
+`WorkloadDeployment` for Control. This set ships only the second, because
+Desktop learned to read it (see below). Kafka can follow once that behaviour
+is in a release.
 
 Every manifest points at a prebuilt component published from this directory,
 so a pattern can be deployed and watched before any of it is built locally.
@@ -22,10 +26,12 @@ Seven patterns, each in Rust and Go:
 
 ```
 components/nats/
-  rust/   nats-core-subscriber  | nats-request-reply | nats-fan-out
-  go/     nats-jetstream-consumer | nats-jetstream-worker
-          nats-kv-store         | nats-kv-watcher
+  rust/  nats-core-subscriber | nats-request-reply   | nats-fan-out
+  go/    nats-kv-store        | nats-kv-watcher      | nats-jetstream-consumer
+         nats-jetstream-worker
 ```
+
+Both directories carry all seven. The lists above are split only to fit.
 
 The two tracks are the same seven patterns against the same interface, with
 the same grants and the same subjects. Pick the language, not the pattern.
@@ -87,8 +93,10 @@ On Cosmonic Desktop that configuration lives under Settings → Built-in plugins
 
 ### On Cosmonic Control, a workload narrows; it does not widen
 
-The `wasmcloud-nats` host plugin defaults to `workload_config: deny`. Under
-`deny` the operator declares the ceiling in the hostgroup's values:
+On Cosmonic Control the `wasmcloud-nats` plugin runs `workloadConfig: deny`.
+Cosmonic Desktop defaults to `allow`, so a manifest that is refused on a
+cluster may well apply on a laptop: test the grants where they are enforced.
+Under `deny` the operator declares the ceiling in the hostgroup's values:
 
 ```yaml
 hostPlugins:
@@ -116,43 +124,63 @@ is recorded rather than obeyed, since a Desktop host is one host. The image is
 published from this repository and is pullable from a cluster and from Desktop
 alike, so the same file is the whole deployment story.
 
-On Desktop 0.5.31 and older, which answered `unsupported kind`, flatten it
-into a `Workload` first: lift `.spec.template.spec` to `spec` and drop
-`replicas`.
+Desktop reads this kind from the release after 0.5.31. Until that ships,
+and on any older Desktop, flatten it first. Three steps:
 
-That validator checks shape, not meaning: it accepts an unknown config key and
-it accepts a grant too narrow for the subscription beside it. A green
+1. `kind: WorkloadDeployment` becomes `kind: Workload`. This is the one that
+   fixes `unsupported kind`.
+2. Lift everything under `.spec.template.spec` up to `spec`.
+3. Drop `replicas`, which has no meaning on a single host.
+
+Desktop's `validate` checks shape, not meaning: it accepts an unknown config
+key, and it accepts a grant too narrow for the subscription beside it. A green
 `validate` says the manifest parses, not that the workload will run.
 
 ## Toolchain
 
-The templates use `wit-bindgen 0.60` async (WASI P3) and compile with stock
-`cargo build --target wasm32-wasip2`, which is also what each template's
-`.wash/config.yaml` runs under `wash build`. Rust 1.88 or newer; built and
-tested with `wash 2.5.1` and Rust 1.97.1 against a Cosmonic Desktop 0.5.30
-daemon (wasmCloud runtime 2.9.0).
+Both tracks target the same interface and produce the same exports. How they
+get there is completely different, so take each on its own terms.
 
-CI pins the toolchain it publishes with, following `mcp-servers.yml` rather
-than the Kafka workflow: for `cargo build --target wasm32-wasip2` the WASI
-import versions come from rustc's standard library, not from `Cargo.lock`, so
-a floating toolchain silently changes a published component's import surface.
-On a capability-driven host that surface is what an operator reviews before
-granting anything, so it moves when someone decides it moves.
+### Rust
 
-`wasm32-wasip2` is the target Cosmonic Desktop's Preflight doctor provisions,
-and the only one these are built and published against. The async canonical
-ABI comes from wit-bindgen's generated code, not from the compile target.
+`wit-bindgen 0.60` async (WASI p3), compiled with stock
+`cargo build --target wasm32-wasip2`, which is what each template's
+`.wash/config.yaml` runs under `wash build`. Rust 1.88 or newer. Built and
+tested with `wash 2.5.1` and Rust 1.97.1. `wasm32-wasip2` is the target
+Cosmonic Desktop's Preflight doctor provisions and the only one the Rust
+templates are published against; the async canonical ABI comes from
+wit-bindgen's generated code, not from the compile target.
 
 Unlike the Kafka set, these need no registry mapping: `wasmcloud:nats@0.1.0`
 is published to a registry `wash` already knows, so `wash build` resolves the
 WIT with no `WKG_CONFIG_FILE` in play.
 
-The Go track builds through [componentize-go](https://github.com/bytecodealliance/componentize-go),
-which fetches the patched Go it needs (golang/go#76775) on first run.
-`wasmcloud:nats@0.1.0` declares every function `async func`, and stock Go
-cannot emit the component-model concurrency ABI; TinyGo tops out at WASI P2
-and cannot build these at all. There is no toolchain to install by hand, and
-CI builds and verifies all seven the same way it does the Rust set.
+CI pins the Rust toolchain it publishes with, following `mcp-servers.yml`
+rather than the Kafka workflow: for `cargo build --target wasm32-wasip2` the
+WASI import versions come from rustc's standard library, not from
+`Cargo.lock`, so a floating toolchain silently changes a published
+component's import surface. On a capability-driven host that surface is what
+an operator reviews before granting anything, so it should move when someone
+decides it moves.
+
+### Go
+
+Built with [componentize-go](https://github.com/bytecodealliance/componentize-go),
+pinned to v0.4.1. `wasmcloud:nats@0.1.0` declares every function `async func`,
+stock Go cannot emit the component-model concurrency ABI, and TinyGo tops out
+at WASI p2 and cannot build these at all. componentize-go fetches a patched Go
+(golang/go#76775) and compiles with that rather than whatever is on PATH.
+
+You still need Go 1.25 or newer yourself, to install componentize-go and to
+run the `go mod tidy` in the bindings step, plus `wasm-tools` for `make
+verify`. Only the *patched* toolchain is fetched for you.
+
+Pinning componentize-go is what pins the published Go import surface, the same
+concern `RUST_VERSION` covers on the Rust side: the installed command is a
+downloader, and the binary it fetches decides which patched Go is used. Note
+that toolchain comes from a fork's release tag with no checksum of its own, so
+the Go half has weaker provenance than the Rust half. componentize-go takes a
+`--url` if you would rather mirror it.
 
 One Go rule worth knowing before you write a handler: **parking on a timer
 traps.** `time.Sleep`, `time.After` in a select, `context.WithTimeout`, and any

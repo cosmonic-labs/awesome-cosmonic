@@ -1,4 +1,4 @@
-// Request/reply — answer NATS requests on a subject.
+// Request/reply: answer NATS requests on a subject.
 //
 // The host owns the subscription (core-subscriptions on the binding) and calls
 // this once per request. A request carries the subject its sender is listening

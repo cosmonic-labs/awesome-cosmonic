@@ -1,4 +1,4 @@
-// Core subscriber — the component runs once per message on a NATS subject.
+// Core subscriber: the component runs once per message on a NATS subject.
 //
 // Core NATS is fire-and-forget. There is no acknowledgement, no redelivery and
 // no ordering: if this handler traps, or the host's subscription buffer

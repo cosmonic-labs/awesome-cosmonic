@@ -1,4 +1,4 @@
-// KV watcher — react to every change in a JetStream KV bucket.
+// KV watcher: react to every change in a JetStream KV bucket.
 //
 // The host owns the watch (kv-watches: demo:> on the binding, meaning every
 // key in the demo bucket) and calls this once per change. The entry carries

@@ -1,4 +1,4 @@
-// JetStream pull worker — the guest sets the pace.
+// JetStream pull worker: the guest sets the pace.
 //
 // A core NATS message on demo.worker.run triggers a drain: the component opens
 // the pull consumer named below, fetches batches until the stream is caught up
@@ -75,17 +75,23 @@ func HandleMessage(_ wasmcloud_nats_types.NatsMessage) witTypes.Result[witTypes.
 		}
 		result := fetched.Ok()
 
-		for _, handle := range result.Messages {
+		for i, handle := range result.Messages {
 			// Replace this with your own processing. Acknowledge after the
 			// work, not before: an ack is a promise it is done.
 			if r := handle.Ack(); r.IsErr() {
-				handle.Drop()
+				// Drop this one and every one after it. Go has no equivalent
+				// of Rust consuming the batch by value, so an early return
+				// here would otherwise strand the rest.
+				for _, h := range result.Messages[i:] {
+					h.Drop()
+				}
 				return witTypes.Err[witTypes.Unit, string](
 					fmt.Sprintf("ack failed: %s", ErrString(r.Err())))
 			}
 			// Load-bearing, not tidiness. An un-dropped handle holds its share
-			// of the subscription byte budget, and fetch stalls silently once
-			// that budget is exhausted.
+			// of the subscription byte budget, and the host releases that on
+			// drop rather than on ack, so fetch stalls silently once the
+			// budget is exhausted.
 			handle.Drop()
 			acked++
 		}

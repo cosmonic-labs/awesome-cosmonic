@@ -45,8 +45,17 @@ func ErrString(e wasmcloud_nats_types.NatsError) string {
 		return fmt.Sprintf("UnsupportedByServer(%q)", e.UnsupportedByServer())
 	case wasmcloud_nats_types.NatsErrorDisconnected:
 		return "Disconnected"
-	default:
+	case wasmcloud_nats_types.NatsErrorAlreadySettled:
+		return "AlreadySettled"
+	case wasmcloud_nats_types.NatsErrorAckOwnedByHost:
+		return "AckOwnedByHost"
+	case wasmcloud_nats_types.NatsErrorUnexpected:
 		return fmt.Sprintf("Unexpected(%q)", e.Unexpected())
+	default:
+		// Never call a payload accessor here. The generated accessors panic on
+		// a tag mismatch, and a panic traps the instance, so a variant added to
+		// the WIT would turn a formatted error into a dead component.
+		return fmt.Sprintf("NatsError(tag=%d)", e.Tag())
 	}
 }
 
@@ -75,5 +84,3 @@ func deniedResource(t wasmcloud_nats_types.DeniedResource) string {
 		return fmt.Sprintf("Message#%d", t.Message())
 	}
 }
-
-// parseU32 mirrors Rust's `v.parse::<u32>().ok()`.
