@@ -14,11 +14,13 @@ virtual service.
 
 ## Contract
 
-There is no session resource. The provider identifies the caller through trusted
-wiring and scopes ids, replacement tags, rate budget, and response queues to the
-calling workload. Short-lived components in one workload share that scope, so a
-response to a notification posted by one invocation is collected by a later one.
-Ids, not handles, carry that correlation because handles die with their instance.
+There is no session resource. Calls carry no caller identity, so trusted wiring
+must bind `notifier` and `events` to the same stable caller scope and preserve it
+across component instances. The provider scopes ids, replacement tags, rate
+budget, and response queues to that scope, so a response to a notification posted
+by one invocation is collected by a later one wired to it. The embedding defines
+what a scope is; Desktop maps it to a workload. Ids, not handles, carry the
+correlation because handles die with their instance.
 
 `features` reports the exposed service's effective features and limits.
 `status` reports availability and permission separately. Both are side-effect-free
@@ -47,7 +49,7 @@ completed id is a no-op. Failure strings are diagnostic and must not be parsed.
 | Pattern | Decision |
 | --- | --- |
 | P3 async | Every operation declares `async func`, including discovery for remote or composed services. Rust `async fn` alone would not change a synchronous WIT ABI. `request` and bounded `pull` suspend through native async calls. |
-| Resources | None. A resource handle cannot outlive its component instance, and the required use case is a short-lived component whose response is collected by a later one. Numeric ids are workload-scoped correlation tokens, not authority. |
+| Resources | None. A resource handle cannot outlive its component instance, and the required use case is a short-lived component whose response is collected by a later one. Numeric ids are scope-local correlation tokens, not authority. |
 | Naming | Lowercase kebab-case WIT names; noun resources and records; verb operations. `supported-features` describes effective service behavior. `error-code`, `access-denied`, `invalid-argument`, and `not-supported` follow familiar WASI spellings. |
 | Errors | `error-code` is a variant with `other(option<string>)`, following WASI sockets and HTTP. Use it for unclassified failures; optional detail is diagnostic. |
 | Enums and variants | WIT has no Rust-style `non_exhaustive` annotation. `other` permits new failure meanings within an existing case; it does not make new discriminants compatible. `urgency`, `permission`, and `response` stay closed because their meanings are finite. Adding a case changes the WIT type and requires a breaking contract release (for example, 0.4.0 before 1.0). `permission.unknown` means the provider cannot determine permission. |
@@ -91,4 +93,4 @@ The application example is deferred. Its acceptance criteria are:
 - As a test author, I verify isolation, replacement, close, expiry, drop, overflow,
   denial, unavailable service, and unsupported interactions without native UI.
 - As a consumer, I await bounded operations through the P3 ABI and collect queued
-  responses in a later invocation from any later invocation of the same workload.
+  responses from any later invocation wired to the same caller scope.
