@@ -9,7 +9,7 @@ world inference-provider {
     export embeddings;
 }
 
-/// A trusted serving component, such as the OpenAI server.
+/// A trusted serving component, such as an OpenAI-compatible server.
 world inference-client {
     import inference-types;
     import model-admin;

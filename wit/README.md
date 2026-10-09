@@ -22,11 +22,11 @@ Long-lived operations use native WIT streams and futures.
 | `agent` | `inference-types`, `models`, `chat`, `tools`, `session` | None |
 | `tool-provider` | Inference resource types referenced by `tools` | `tools` |
 
-The OpenAI server uses `inference-client`. The llama adapter and scripted fake
-backend implement `inference-provider`. A caller that only needs chat or
+A serving component that needs chat and embeddings uses `inference-client`; a
+full provider implements `inference-provider`. A caller that only needs chat or
 embeddings can import those interfaces directly and use the smaller providers.
-The OpenAI server needs both interfaces; a provider serving one operation still
-implements the other interface and reports unsupported models there.
+A provider serving one operation still implements the other interface and
+reports unsupported models there.
 
 `model-admin` exposes the trusted catalog and preparation controls. Preparing a
 model can load local weights or open a remote connection. A remote provider can
@@ -58,23 +58,16 @@ Supported options can still reject values outside their range. If an option or
 message part cannot be represented, `on-unrepresentable` controls refusal or
 reported adaptation. Providers must not silently discard unsupported features.
 
-## Implementation boundary
-
-[Architecture diagram](cosmonic-agent/docs/agent-inference-architecture.svg)
-
-The llama.cpp engine's tokenization, sampling, grammar conversion, and context
-cache interfaces are internal to the llama provider. Other providers implement
-the inference contract without reproducing that engine API.
+## Usage
 
 ```text
-openai-server -> cosmonic:agent inference -> llama-inference
-                                          -> another local provider
-                                          -> a remote provider
+client -> cosmonic:agent inference -> local provider
+                                   -> remote provider
 
 agent -> authorized model aliases + chat + tools + session
 ```
 
-The package is self-contained:
+Each package is self-contained:
 
 ```sh
 wasm-tools component wit wit/cosmonic-agent
