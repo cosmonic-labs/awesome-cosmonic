@@ -43,13 +43,23 @@ The response deadline uses the provider's default for none or zero and clamps to
 its maximum. Native display lifetime remains best effort. Closing an unknown or
 completed id is a no-op. Failure strings are diagnostic and must not be parsed.
 
+## Usage
+
+- **Wait for an answer:** call `request`. It returns the user's response or
+  `expired` at the deadline, and never also queues it.
+- **Answer later:** call `post` and keep the id. A later invocation calls
+  `events.pull` and matches `event.id` to the ids it posted.
+- **Withdraw:** call `close` with an id. Its response resolves as `expired`.
+- **Adapt to the service:** call `features` and `status` first when the caller
+  needs to choose between actions, inline input, and plain text.
+
 ## WASI architecture review
 
 | Pattern | Decision |
 | --- | --- |
 | P3 async | Every operation declares `async func`, including discovery for remote or composed services. Rust `async fn` alone would not change a synchronous WIT ABI. `request` and bounded `pull` suspend through native async calls. |
 | Resources | None. A resource handle cannot outlive its component instance, and the required use case is a short-lived component whose response is collected by a later one. Numeric ids are scope-local correlation tokens, not authority. |
-| Naming | Lowercase kebab-case WIT names; noun resources and records; verb operations. `supported-features` describes effective service behavior. `error-code`, `access-denied`, `invalid-argument`, and `not-supported` follow familiar WASI spellings. |
+| Naming | Lowercase kebab-case WIT names; noun records; verb operations. `supported-features` describes effective service behavior. `error-code`, `access-denied`, `invalid-argument`, and `not-supported` follow familiar WASI spellings. |
 | Errors | `error-code` is a variant with `other(option<string>)`, following WASI sockets and HTTP. Use it for unclassified failures; optional detail is diagnostic. |
 | Enums and variants | WIT has no Rust-style `non_exhaustive` annotation. `other` permits new failure meanings within an existing case; it does not make new discriminants compatible. `urgency`, `permission`, and `response` stay closed because their meanings are finite. Adding a case changes the WIT type and requires a breaking contract release (for example, 0.4.0 before 1.0). `permission.unknown` means the provider cannot determine permission. |
 | Streams and futures | A single async result needs neither an explicit future nor a pollable resource. Bounded queue retrieval supports later invocations. A native event stream would suit a continuous subscription, but would add stream ownership, cancellation, and backpressure rules beyond this contract. |
