@@ -4,7 +4,7 @@ The smallest useful agent on the `cosmonic:agent@0.3.0` interfaces: it takes a t
 
 The point is what the component does not hold. It names no model endpoint, carries no API key and declares no outbound network access (`allowedHosts: []`). It asks the host for a model by an alias, `default`, and the workload's binding decides what that alias means. The conversation lives in a session store that the host binds to this one workload, so the agent cannot read another workload's history and the host deletes it with the workload.
 
-About 500 lines of Rust in [`src/lib.rs`](src/lib.rs), with three dependencies besides serde: `wasip3` for the HTTP export, `wit-bindgen` for the agent interfaces, and `serde_json`.
+About 490 lines of Rust in [`src/lib.rs`](src/lib.rs), building to a 290 KB component, with three dependencies besides serde: `wasip3` for the HTTP export, `wit-bindgen` for the agent interfaces, and `serde_json`.
 
 ## What it shows
 
@@ -21,7 +21,7 @@ About 500 lines of Rust in [`src/lib.rs`](src/lib.rs), with three dependencies b
 4. `chat.chat` takes the messages as a WIT `stream<message>`, closed by a `future` once they are all written, and returns a `stream<chunk>` of reply deltas plus a `future` holding the assembled completion. Each text delta is written to the HTTP response as a `delta` line.
 5. A second commit records the call's result (`agent.op-result.v1`) and the reply, and replaces the stored conversation in the same atomic write. It only applies if nothing else wrote the session in between. If something did, the agent keeps the other writer's conversation and leaves its own turn in the journal instead of overwriting it.
 
-The stored conversation is plain text turns. A fuller agent keeps each assistant message exactly as the completion returned it, including reasoning and continuation data, and closes any model call a crashed turn left open when it next starts. The comments in [`session.wit`](../../wit/cosmonic-agent/session.wit) describe that protocol.
+The stored conversation is plain text turns. A fuller agent keeps each assistant message exactly as the completion returned it, including reasoning and continuation data, and closes any model call a crashed turn left open when it next starts. The comments in the published `cosmonic:agent/session` interface (its source is [`wit/cosmonic-agent/session.wit`](../../wit/cosmonic-agent/session.wit) in this repository) describe that protocol.
 
 ## Why a custom world
 
