@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.4.0;
 
 /// Streaming inference with a prepared model.
 interface chat {
@@ -17,9 +17,11 @@ interface chat {
     /// A provider may wait for upstream acceptance before returning.
     ///
     /// Text deltas contain whole UTF-8 characters. Drain chunks before awaiting
-    /// the outcome. Dropping the stream cancels generation; the outcome, if
-    /// awaited, reports cancellation. It may also be dropped. The completion
-    /// contains the assembled reply, usage, finish reason, and adaptations.
+    /// the outcome. Dropping chunks requests cancellation of unfinished generation.
+    /// The first terminal outcome wins; a later cancellation does not replace it.
+    /// Cancellation returns generation-error.cancelled; deadline expiry returns
+    /// generation-error.timed-out. Cancellation is cooperative, not immediate.
+    /// Abandoning the pending chat call may return no WIT result.
     chat: async func(
         model: borrow<model>,
         messages: stream<message>,
