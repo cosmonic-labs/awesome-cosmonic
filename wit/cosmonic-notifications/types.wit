@@ -42,13 +42,13 @@ interface types {
     /// navigation at all.
     default-target: option<action-target>,
     /// Trimmed; blank means none. Replaces the pending notification with the
-    /// same tag from the same workload.
+    /// same tag in the same caller scope.
     tag: option<string>,
     /// Response deadline in ms; none or zero uses default-timeout-ms.
     /// Values above max-timeout-ms are clamped. Display lifetime is best effort.
     timeout-ms: option<u32>,
   }
-  /// Opaque id, unique within the workload scope and never reused there.
+  /// Opaque id, unique within the caller scope and never reused there.
   /// Ids outlive component instances; resources would not.
   type notification-id = u64;
   record text-reply {

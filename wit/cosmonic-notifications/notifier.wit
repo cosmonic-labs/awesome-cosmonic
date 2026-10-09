@@ -1,8 +1,10 @@
 package cosmonic:notifications@0.3.0;
 
-/// The provider identifies the caller through trusted wiring and scopes ids,
-/// tags, rate budget, and queued responses to the calling workload. Short-lived
-/// components in one workload share that scope across invocations.
+/// Calls carry no caller identity. Trusted wiring binds `notifier` and `events`
+/// to one stable caller scope and preserves it across component instances. The
+/// provider scopes ids, tags, rate budget, and queued responses to that scope, so
+/// short-lived components wired to it share them across invocations. An embedding
+/// chooses what a scope is; Desktop maps it to a workload.
 interface notifier {
   use types.{notification, notification-id, response, error-code,
              supported-features, service-status};
@@ -20,7 +22,8 @@ interface notifier {
   close: async func(id: notification-id) -> result<_, error-code>;
 }
 
-/// Responses to posted notifications, queued per workload across invocations.
+/// Responses to posted notifications, queued per caller scope across invocations.
+/// It must be bound to the same scope as `notifier`.
 interface events {
   use types.{event, error-code};
   /// Removes queued events at most once; zero polls, waits are clamped to
