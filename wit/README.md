@@ -4,14 +4,14 @@ One directory per WIT package, with one file per interface and a `world.wit`.
 Components use path overrides in `wkg.toml` and ignore generated `wit/deps`.
 These packages target WASI 0.3 and publish to `ghcr.io/cosmonic-labs/<namespace>/<package>`.
 All declared operations, including resource metadata methods, use `async func`.
-Continuous feeds use native WIT streams and futures; bounded notification waits
-return directly from async operations.
+Continuous feeds use native WIT streams and futures; notification responses
+arrive on a future or stream.
 
 | Package | Contract |
 | --- | --- |
 | [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
-| [`cosmonic:notifications`](cosmonic-notifications/README.md) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native async waits. |
+| [`cosmonic:notifications`](cosmonic-notifications/README.md) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams. |
 
 ## Inference and agent worlds
 

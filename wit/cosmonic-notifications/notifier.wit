@@ -7,28 +7,38 @@ package cosmonic:notifications@0.3.0;
 /// chooses what a scope is; Desktop maps it to a workload.
 interface notifier {
   use types.{notification, notification-id, response, error-code,
-             supported-features, service-status};
-  /// Side-effect-free discovery; never displays UI or requests permission.
+             supported-features};
+
+  /// An accepted notification.
+  record sent {
+    id: notification-id,
+    /// Resolves with the terminal response. If its reader is gone when the
+    /// notification settles, the response goes to `events.subscribe` instead.
+    /// A response is delivered to exactly one of the two. Dropping the future
+    /// does not withdraw the notification.
+    response: future<response>,
+  }
+
+  /// Side-effect-free discovery; never displays UI.
   features: async func() -> supported-features;
-  /// Side-effect-free availability and permission snapshot.
-  status: async func() -> service-status;
-  /// Accepts delivery and returns an id; does not guarantee visibility. The
-  /// terminal response is queued for `events.pull`, even from a later instance.
-  post: async func(notification: notification) -> result<notification-id, error-code>;
-  /// Waits for one terminal response or the bounded deadline; never queues it.
-  /// Cancellation may lose the response.
-  request: async func(notification: notification) -> result<response, error-code>;
+  /// Accepts delivery; does not guarantee visibility. A provider may request
+  /// platform authorization on the first send. Await `response` to wait for the
+  /// answer, or drop it and collect the answer later from `events.subscribe`.
+  send: async func(notification: notification) -> result<sent, error-code>;
   /// Resolves a pending id as expired. Unknown or completed ids are a no-op.
   close: async func(id: notification-id) -> result<_, error-code>;
 }
 
-/// Responses to posted notifications, queued per caller scope across invocations.
-/// It must be bound to the same scope as `notifier`.
+/// Responses that settled with no reader on their `sent.response` future,
+/// queued per caller scope across invocations. It must be bound to the same
+/// scope as `notifier`.
 interface events {
   use types.{event, error-code};
-  /// Removes queued events at most once; zero polls, waits are clamped to
-  /// max-pull-wait-ms. Live providers settle accepted notifications once.
-  /// Overflow drops the oldest events; abrupt provider loss can prevent
-  /// delivery. No durable delivery is promised.
-  pull: async func(max-wait-ms: u32) -> result<list<event>, error-code>;
+  /// Streams queued events, then live ones. A stream receives each event at
+  /// most once and removes it from the queue only when the reader takes it;
+  /// events unread when the reader drops the stream stay queued. Open streams
+  /// compete for events. The queue is bounded and overflow drops the oldest
+  /// events; abrupt provider loss can prevent delivery, and delivery is not
+  /// durable. A short-lived component reads what it needs, then drops the stream.
+  subscribe: async func() -> result<stream<event>, error-code>;
 }
