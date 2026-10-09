@@ -1,4 +1,4 @@
-# Validates the cosmonic:agent, cosmonic:kafka and wasmcloud:notifications WIT packages and publishes
+# Validates the cosmonic:agent, cosmonic:kafka and cosmonic:notifications WIT packages and publishes
 # them to GHCR as ghcr.io/cosmonic-labs/<namespace>/<package>.
 #
 # The version in each package's `package` declaration is the release version.
@@ -56,9 +56,9 @@ jobs:
             id: cosmonic:kafka
             dir: wit/cosmonic-kafka
           - package: notifications
-            namespace: wasmcloud
-            id: wasmcloud:notifications
-            dir: wit/wasmcloud-notifications
+            namespace: cosmonic
+            id: cosmonic:notifications
+            dir: wit/cosmonic-notifications
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,8 +117,8 @@ jobs:
             namespace: cosmonic
             id: cosmonic:kafka
           - package: notifications
-            namespace: wasmcloud
-            id: wasmcloud:notifications
+            namespace: cosmonic
+            id: cosmonic:notifications
     env:
       GITHUB_ACTOR: ${{ github.actor }}
       REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,4 @@
-# wasmcloud:notifications 0.3.0
+# cosmonic:notifications 0.3.0
 
 Portable user notifications supplied by a host or a WebAssembly component.
 Native Windows, macOS, and Linux services, web embeddings, and virtual providers
@@ -63,14 +63,14 @@ handle interactions in the consumer, use session methods for queues, and handle
 `error-code`. The change does not alter previously published artifacts.
 
 ```sh
-wasm-tools component wit wit/wasmcloud-notifications
-node .github/scripts/wit/build.mjs wit/wasmcloud-notifications wasmcloud:notifications
+wasm-tools component wit wit/cosmonic-notifications
+node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notifications
 ```
 
 The release artifact is `dist/notifications.wasm`, published by the WIT workflow
-at `ghcr.io/cosmonic-labs/wasmcloud/notifications:0.3.0`.
-[`../wkg-registries.toml`](../wkg-registries.toml) overrides only
-`wasmcloud:notifications`; other `wasmcloud` packages keep their usual resolution.
+at `ghcr.io/cosmonic-labs/cosmonic/notifications:0.3.0`.
+[`../wkg-registries.toml`](../wkg-registries.toml) maps the `cosmonic` namespace
+to this registry.
 
 ## User stories for the deferred example
 

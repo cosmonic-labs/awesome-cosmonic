@@ -1,4 +1,4 @@
-package wasmcloud:notifications@0.3.0;
+package cosmonic:notifications@0.3.0;
 
 /// Sessions isolate ids, tags, and queues. Providers control attribution.
 interface notifier {

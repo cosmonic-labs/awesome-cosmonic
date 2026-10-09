@@ -101,7 +101,7 @@ Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/<namesp
 
 - [cosmonic:agent](wit/cosmonic-agent/): An API for calling models, tools, and durable sessions without tying a component to one inference provider.
 - [cosmonic:kafka](wit/cosmonic-kafka/): An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions.
-- [wasmcloud:notifications](wit/wasmcloud-notifications/): Portable user notifications with owned sessions, actions, replies, and native async waits.
+- [cosmonic:notifications](wit/cosmonic-notifications/): Portable user notifications with owned sessions, actions, replies, and native async waits.
 
 ## Host Plugins
 

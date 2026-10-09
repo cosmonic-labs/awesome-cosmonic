@@ -11,7 +11,7 @@ return directly from async operations.
 | --- | --- |
 | [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
-| [`wasmcloud:notifications`](wasmcloud-notifications/README.md) 0.3.0 | Portable user notifications with owned sessions, actions, replies, and native async waits. |
+| [`cosmonic:notifications`](cosmonic-notifications/README.md) 0.3.0 | Portable user notifications with owned sessions, actions, replies, and native async waits. |
 
 ## Inference and agent worlds
 
@@ -69,7 +69,7 @@ client -> cosmonic:agent inference -> local provider
 agent -> authorized model aliases + chat + tools + session
 ```
 
-`cosmonic:agent` and `wasmcloud:notifications` are self-contained:
+`cosmonic:agent` and `cosmonic:notifications` are self-contained:
 
 ```sh
 wasm-tools component wit wit/cosmonic-agent
@@ -91,4 +91,4 @@ node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
 | `notification-wrapper` | `downstream: notifier` | `notifier` |
 
 The provider owns each `session`; a wrapper retains its downstream session and
-preserves isolation and lifetime. See the [contract and WASI architecture review](wasmcloud-notifications/README.md).
+preserves isolation and lifetime. See the [contract and WASI architecture review](cosmonic-notifications/README.md).
