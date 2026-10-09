@@ -1,0 +1,14 @@
+/// User notifications supplied by a host or a component.
+package wasmcloud:notifications@0.3.0;
+
+world notification-consumer {
+  import notifier;
+}
+world notification-provider {
+  export notifier;
+}
+/// Wrappers own downstream sessions and translate resource and id ownership.
+world notification-wrapper {
+  import downstream: notifier;
+  export notifier;
+}
