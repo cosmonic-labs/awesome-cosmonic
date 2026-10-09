@@ -88,7 +88,6 @@ node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
 | --- | --- | --- |
 | `notification-consumer` | `notifier` | None |
 | `notification-provider` | None | `notifier` |
-| `notification-wrapper` | `downstream: notifier` | `notifier` |
 
 The provider owns each `session`; a wrapper retains its downstream session and
 preserves isolation and lifetime. See the [contract and WASI architecture review](cosmonic-notifications/README.md).
