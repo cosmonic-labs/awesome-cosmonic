@@ -78,6 +78,14 @@ jobs:
           cp ${{ matrix.dir }}/*.wit "$stage/wit/"
           (cd "$stage" && wash wit build --output-file "$GITHUB_WORKSPACE/${{ matrix.package }}.wasm")
 
+      - name: Validate the built package
+        run: |
+          set -euo pipefail
+          wasm-tools validate --features all ${{ matrix.package }}.wasm
+          wasm-tools component wit ${{ matrix.package }}.wasm \
+            | grep -qxF "package cosmonic:${{ matrix.package }}@${{ steps.meta.outputs.version }};" \
+            || { echo "::error::built package does not declare cosmonic:${{ matrix.package }}@${{ steps.meta.outputs.version }}"; exit 1; }
+
       - name: Log in to GHCR
         if: >-
           github.event_name != 'pull_request' &&
