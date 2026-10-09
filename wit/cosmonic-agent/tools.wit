@@ -1,0 +1,88 @@
+package cosmonic:agent@0.3.0;
+
+/// Tool discovery and calls using inference's tool-call and tool-output types.
+interface tools {
+    use inference-types.{json, tool-call, tool-output};
+
+    /// Provider claims for display. Host grants enforce access; these hints
+    /// cannot authorize calls or retries.
+    record tool-annotations {
+        read-only: option<bool>,
+        destructive: option<bool>,
+        idempotent: option<bool>,
+        /// Whether the tool interacts with the outside world.
+        open-world: option<bool>,
+    }
+
+    /// Semantic version components.
+    record semver-version {
+        major: u64,
+        minor: u64,
+        patch: u64,
+        /// Pre-release, e.g. `rc.1`.
+        pre: option<string>,
+        /// Build metadata, e.g. `20261006.abc123`.
+        build: option<string>,
+    }
+
+    /// Provider-declared version, for display. The host's pinned component digest
+    /// is authoritative for identifying the deployed build.
+    variant tool-version {
+        semver(semver-version),
+        /// Provider-declared content hash.
+        hash(string),
+        /// Anything else, only meaningful to the provider.
+        other(string),
+    }
+
+    /// Tool name, description, and argument schema offered to the model.
+    record tool-def {
+        name: string,
+        /// Display label; name is the model's selection key.
+        title: option<string>,
+        description: string,
+        /// JSON Schema for the arguments object.
+        input-schema: json,
+        /// JSON Schema for `structured`, where the tool declares one.
+        output-schema: option<json>,
+        annotations: tool-annotations,
+        /// The provider's own version for the tool, where it declares one.
+        version: option<tool-version>,
+    }
+
+    /// The response returned by a tool.
+    record tool-response {
+        /// What to show the model and the user, in order.
+        output: list<tool-output>,
+        /// Machine-readable JSON matching output-schema when declared.
+        structured: option<json>,
+        /// The tool ran and failed. Return its output to the model as a normal result.
+        is-error: bool,
+    }
+
+    /// The call could not be dispatched. Execution failures use tool-response.is-error.
+    variant call-error {
+        /// No tool by that name. Carries the name that was asked for.
+        unknown-tool(string),
+        /// Schema violation with a message suitable for returning to the model.
+        invalid-arguments(string),
+        /// Provider unavailable or unable to run, with detail.
+        upstream(string),
+        /// A person or a policy declined the call. Carries the reason to show.
+        denied(string),
+        /// The call was cancelled before it finished.
+        cancelled,
+        /// The call ran longer than it was allowed to.
+        timed-out,
+        other(string),
+    }
+
+    /// All tools offered by this provider.
+    %list: async func() -> list<tool-def>;
+
+    /// Run a tool call. Its id correlates execution with the requesting turn.
+    /// Retries reuse the same id and arguments; providers supporting repeat
+    /// detection must reject the same id with different arguments.
+    /// Dropping the pending call cancels provider work.
+    call: async func(request: tool-call) -> result<tool-response, call-error>;
+}

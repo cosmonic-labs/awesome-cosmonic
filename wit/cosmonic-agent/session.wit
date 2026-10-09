@@ -1,0 +1,175 @@
+package cosmonic:agent@0.3.0;
+
+/// A workload-scoped append-only journal and opaque agent state. The host
+/// binds the session to the workload, grants component access, stamps authors
+/// and timestamps, and deletes it with the workload.
+///
+/// Commits apply entries and state atomically. State writes require both state
+/// and journal-end conditions; entry-only writes may omit them. A failed
+/// condition returns stale with the current snapshot and writes nothing.
+/// State.through records the journal end covered by that state.
+///
+/// Write each op conditionally before dispatch and its result after return.
+/// Never advance state past an unresolved op. On restart, read after through:
+/// - Model calls may repeat: close the old op as cancelled and create a new op.
+/// - Tool calls may repeat with the same id and arguments only when workload
+///   configuration authorizes repeat detection. Tool annotations cannot authorize it.
+/// - Otherwise record unresolved and an error step for a person to resolve.
+///   Never use a new id to bypass an unresolved tool call.
+///
+/// After a stale result, merge using the current state and journal. Already
+/// executed calls must be recorded, even if that requires an unconditional
+/// entry-only commit. A writer that cannot merge preserves the current state
+/// and leaves its work in the journal. Use commit-id to retry a lost reply.
+///
+/// Reserved JSON entry conventions; the host stores data as opaque bytes:
+/// - agent.step.v1: role (user, assistant, tool, error), text, blocks, and tools.
+///   blocks names content kinds such as text, toolRequest, toolResponse, image,
+///   thinking, and error. Other kinds are allowed; readers skip unknown kinds.
+/// - agent.op.v1: op, target (model or tool), name, and tool arguments as a JSON
+///   value. Tool ops use the tool-call id; model ops use a session-unique id.
+/// - agent.op-result.v1: op and outcome. succeeded/failed means the call returned;
+///   cancelled means it was not dispatched or a model call will repeat;
+///   unresolved means its effects are unknown.
+/// - agent.context-reset.v1: {} when unreadable saved state requires fresh context.
+/// All agent.* kinds are reserved. Writers may define other kinds; readers
+/// skip those they do not understand.
+///
+/// Limits reject writes without truncation. A full session requires clear.
+/// Versions are opaque and never reused, including after clear. Sequence
+/// numbers increase, may have gaps, and are never reused. Resume reads at
+/// seq + 1; do not infer sequence numbers otherwise.
+interface session {
+    /// Opaque state version. Only equality is meaningful.
+    type version = string;
+
+    /// Which limit a write would have passed.
+    enum limit-scope {
+        /// One entry, or the state.
+        entry,
+        /// Everything this session holds.
+        session,
+        /// Everything the host holds for all sessions.
+        host,
+    }
+
+    /// A write that would pass a limit.
+    record too-large {
+        scope: limit-scope,
+        /// The limit, in bytes.
+        limit: u64,
+        /// Index of an oversized entry. None identifies state or an aggregate limit.
+        entry: option<u32>,
+    }
+
+    variant error {
+        too-large(too-large),
+        /// Malformed arguments, such as a state write missing either condition.
+        invalid-argument(string),
+        /// The host could not serve the call; the detail is for logs.
+        unavailable(string),
+        other(string),
+    }
+
+    /// One journal entry.
+    record entry {
+        /// Increasing, never reused. Resume reading at seq + 1.
+        seq: u64,
+        /// Stable writing-component identity stamped by the host, not the writer.
+        author: string,
+        /// When the host accepted it, in milliseconds since the Unix epoch.
+        at-ms: u64,
+        /// Reserved or writer-defined entry kind. Data uses this kind's format.
+        kind: string,
+        data: list<u8>,
+    }
+
+    /// An entry to append.
+    record new-entry {
+        kind: string,
+        data: list<u8>,
+    }
+
+    /// Where the journal ends.
+    variant journal-end {
+        /// The journal has no entries.
+        empty,
+        /// The last entry is this one.
+        at(u64),
+    }
+
+    /// Opaque working state in the agent's format.
+    record state {
+        /// Journal end covered by this state, including entries in the same commit.
+        value: list<u8>,
+        version: version,
+        /// Current state and journal end, returned by current and stale.
+        through: journal-end,
+    }
+
+    /// None when no state has been written or the session was cleared.
+    record snapshot {
+        /// `none` before the first state is written.
+        state: option<state>,
+        end: journal-end,
+    }
+
+    /// What the state must be for a commit to apply.
+    variant state-condition {
+        /// No state exists. A conditional first write permits only one winner.
+        absent,
+        /// The state's current version is this one.
+        version(version),
+    }
+
+    /// State writes require both conditions; entry-only writes may omit them.
+    record commit-options {
+        require-state: option<state-condition>,
+        /// Required journal end. Each commit is atomic and totally ordered; this
+        /// condition prevents another writer from interleaving between commits.
+        require-end: option<journal-end>,
+        /// Session-unique commit id, never a restartable counter. A retained duplicate
+        /// returns its original result without writing. The host retains at least the
+        /// most recent 1024 ids; clear forgets them.
+        commit-id: option<string>,
+    }
+
+    /// What a commit wrote.
+    record committed {
+        /// Journal end after this commit; use as the next require-end.
+        end: journal-end,
+        /// The new state's version, when this commit wrote state.
+        version: option<version>,
+    }
+
+    /// The outcome of a `commit`.
+    variant commit-result {
+        committed(committed),
+        /// Condition mismatch. Writes nothing and returns the current snapshot.
+        stale(snapshot),
+    }
+
+    /// Read the current state and journal end for the next commit's conditions.
+    current: async func() -> result<snapshot, error>;
+
+    /// Atomically append entries and optionally replace state. An empty commit
+    /// checks conditions without writing.
+    commit: async func(
+        entries: list<new-entry>,
+        state: option<list<u8>>,
+        options: commit-options,
+    ) -> result<commit-result, error>;
+
+    /// Up to max entries with seq >= start, oldest first. Hosts may cap pages;
+    /// a short page does not signal completion. Read until an empty page.
+    read: async func(start: u64, max: u32) -> result<list<entry>, error>;
+
+    /// Entries with seq >= start, oldest first, followed by new entries.
+    /// Dropping the stream stops following; clear ends it.
+    follow: async func(start: u64) -> result<stream<entry>, error>;
+
+    /// Delete the journal, state, and retained commit ids. Versions and sequence
+    /// numbers remain unreused. Old conditions fail, except empty and absent
+    /// can match again after clear.
+    clear: async func() -> result<_, error>;
+}

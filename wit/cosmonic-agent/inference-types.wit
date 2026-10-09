@@ -1,0 +1,465 @@
+package cosmonic:agent@0.3.0;
+
+/// Messages, model handles, options, usage, and inference errors.
+interface inference-types {
+    /// UTF-8 JSON. Producers emit valid JSON; consumers parse it defensively.
+    type json = string;
+
+    /// An IANA media type, passed through to providers and tools.
+    type media-type = string;
+
+    /// A provider-owned handle ready for local or remote inference.
+    /// Dropping it releases its reservation; accepted work keeps its dependencies.
+    /// Handles retain provider identity across alias changes. Routers own wrapper
+    /// handles and forward calls to the provider that created each underlying handle.
+    resource model {
+        /// The capabilities and limits of this prepared handle.
+        describe: async func() -> model-description;
+    }
+
+    flags capabilities {
+        chat,
+        embeddings,
+    }
+
+    flags response-formats {
+        text,
+        json-object,
+        json-schema,
+    }
+
+    /// Capabilities of this provider/model pair. None means unknown.
+    /// Unsupported values follow on-unrepresentable; never silently drop them.
+    record model-description {
+        model: option<string>,
+        capabilities: capabilities,
+        context-length: option<u32>,
+        max-output-tokens: option<u32>,
+        tools: option<bool>,
+        reasoning: option<bool>,
+        /// None means unknown; some(empty) means text-only input.
+        accepts: option<list<media-type>>,
+        response-formats: option<response-formats>,
+        /// None means unknown; some(empty) means no optional knobs.
+        /// Presence advertises support, not acceptance of every possible value.
+        supported-options: option<list<request-option>>,
+    }
+
+    /// An attachment with its declared media type and byte source.
+    record attachment {
+        /// The provider must support this type or report an adaptation.
+        media-type: media-type,
+        source: attachment-source,
+    }
+
+    variant attachment-source {
+        /// Inline bytes, the form supplied to sandboxed guests.
+        bytes(list<u8>),
+        /// Fetched by the host under the calling workload's egress policy.
+        /// The host checks egress before fetching or forwarding the URL, and
+        /// rejects fetched content whose media type differs from the declaration.
+        url(string),
+    }
+
+    /// A function call requested by the model.
+    record tool-call {
+        /// Correlates the result. The host supplies a unique id if the provider omits it.
+        id: string,
+        /// The name advertised in the request's tool list.
+        name: string,
+        /// Arguments as a JSON object. Parse model-generated arguments defensively.
+        arguments: json,
+    }
+
+    /// Text or attachments returned by a tool.
+    variant tool-output {
+        text(string),
+        attachment(attachment),
+    }
+
+    record tool-result {
+        /// Must equal the tool-call.id being answered.
+        call-id: string,
+        output: list<tool-output>,
+        /// The tool ran and failed. Return the failure to the model as a normal result.
+        is-error: bool,
+    }
+
+    /// A provider block not modeled by this interface. Guests must return it
+    /// unmodified. Providers that cannot carry it report a dropped-part adaptation.
+    record opaque-block {
+        /// The provider's block discriminator.
+        kind: string,
+        /// The original block as JSON.
+        json: json,
+    }
+
+    /// Displayable reasoning summary; an empty summary is valid.
+    /// Return continuation data unmodified: complete provider blocks in
+    /// assistant-content.other, and modeled parts' data in assistant-part.opaque.
+    record reasoning {
+        summary: list<string>,
+    }
+
+    variant assistant-content {
+        text(string),
+        reasoning(reasoning),
+        tool-use(tool-call),
+        /// Generated media. Return it unchanged; unsupported providers report an adaptation.
+        attachment(attachment),
+        other(opaque-block),
+    }
+
+    /// An assistant part with continuation data. Providers preserve order where
+    /// their wire format allows it; callers must not rely on text/tool interleaving.
+    record assistant-part {
+        content: assistant-content,
+        /// Host-framed continuation data for this part. Return it byte-for-byte;
+        /// do not parse, synthesize, or re-encode it. The host checks whether it is
+        /// valid for the destination provider and model.
+        opaque: option<string>,
+    }
+
+    variant user-part {
+        text(string),
+        attachment(attachment),
+    }
+
+    record assistant-message {
+        content: list<assistant-part>,
+    }
+
+    record user-message {
+        content: list<user-part>,
+        /// An author label. Tool results correlate through tool-result.call-id.
+        name: option<string>,
+    }
+
+    /// Conversation turns. Return assistant content and continuation data unchanged.
+    variant message {
+        system(string),
+        user(user-message),
+        assistant(assistant-message),
+        tool(list<tool-result>),
+    }
+
+    /// How to generate a reply. Unset fields take the backend's defaults.
+    record chat-options {
+        /// Generated-token limit. Zero is invalid-options.
+        max-tokens: option<u32>,
+        /// Higher is more random; `0` always picks the most likely token.
+        temperature: option<f32>,
+        /// Keep only the `top-k` most likely tokens; `0` keeps them all.
+        top-k: option<u32>,
+        /// Keep tokens covering this probability mass; 1 keeps them all.
+        top-p: option<f32>,
+        /// Drop tokens below min-p times the largest probability; 0 keeps them all.
+        min-p: option<f32>,
+        /// Lowers the odds of a token once per time it already appeared.
+        frequency-penalty: option<f32>,
+        /// Lowers the odds of any token that already appeared.
+        presence-penalty: option<f32>,
+        /// Divides the odds of tokens that already appeared; `1` is off.
+        repeat-penalty: option<f32>,
+        /// Recent tokens considered by penalties, capped at the context length.
+        penalty-last-n: option<u32>,
+        /// Biases provider-specific token ids; a large negative bias bans a token.
+        logit-bias: list<logit-bias>,
+        /// Requests repeatable sampling. Providers report unsupported seeds or conversions.
+        seed: option<u64>,
+        /// Stop before emitting a matched sequence; exclude it from the reply.
+        stop: list<string>,
+        /// The shape the reply must take.
+        response-format: response-format,
+        /// Tools offered to the model. Providers render definitions and parse calls.
+        tools: list<tool-def>,
+        tool-choice: option<tool-choice>,
+        /// Reasoning mode. None uses the provider default; off explicitly disables it.
+        /// Unsupported modes follow on-unrepresentable.
+        thinking: option<thinking-mode>,
+        effort: option<effort>,
+        /// About the request rather than the reply: tracing, deadlines, caching.
+        meta: request-meta,
+        /// Refuse or report changes needed to represent this request. Unavoidable
+        /// changes, such as dropping invalid continuation data, are always reported.
+        on-unrepresentable: unrepresentable-policy,
+    }
+
+    /// Request metadata. Providers may ignore fields they cannot use.
+    record request-meta {
+        /// W3C traceparent for linking caller and provider traces.
+        trace-parent: option<string>,
+        /// Give up after this many milliseconds, counted from the call.
+        deadline-ms: option<u32>,
+        /// Provider prompt-cache key. The host must scope it to the calling workload.
+        cache-key: option<string>,
+        /// Key-value labels for metering and logs. Not sent to a provider.
+        labels: list<tuple<string, string>>,
+    }
+
+    /// Whether the model reasons before answering, and on what budget.
+    variant thinking-mode {
+        /// Explicitly off, as distinct from an absent `thinking`.
+        off,
+        /// The model chooses whether and how much to reason.
+        adaptive,
+        /// Maximum reasoning tokens, where the provider supports a token budget.
+        budget(u32),
+    }
+
+    /// Requested effort. Providers report adaptation when mapping to a coarser scale.
+    enum effort {
+        minimal,
+        low,
+        medium,
+        high,
+        xhigh,
+        maximum,
+    }
+
+    variant response-format {
+        /// Free-form text.
+        text,
+        /// Any JSON object.
+        json-object,
+        /// JSON matching this schema. Unenforceable schemas return invalid-options.
+        json-schema(json),
+    }
+
+    record logit-bias {
+        token: u32,
+        bias: f32,
+    }
+
+    /// The reason generation ended, including provider-specific reasons.
+    variant finish-reason {
+        /// The model ended its reply.
+        stop,
+        /// A stop sequence matched.
+        stop-sequence,
+        /// `max-tokens` was reached.
+        max-tokens,
+        /// The context window filled up.
+        context-length,
+        /// A completed turn containing tool calls. Token or context limits take
+        /// precedence. Drop incomplete calls and report part-dropped(tool-use);
+        /// never dispatch a call with truncated arguments.
+        tool-calls,
+        /// An unmodeled stop reason, using the provider's name.
+        other(string),
+    }
+
+    /// Token usage. None means unreported; zero means reported as zero.
+    record usage {
+        prompt-tokens: option<u32>,
+        /// Prompt tokens reused from the provider cache.
+        cached-prompt-tokens: option<u32>,
+        /// Prompt tokens written into the provider cache.
+        cache-write-tokens: option<u32>,
+        completion-tokens: option<u32>,
+        /// Completion tokens spent on reasoning.
+        reasoning-tokens: option<u32>,
+    }
+
+    record completion {
+        finish-reason: finish-reason,
+        usage: usage,
+        /// The assembled assistant turn to append to conversation history unchanged.
+        message: assistant-message,
+        /// All changes made to represent the request; empty means no changes.
+        adaptations: list<adaptation>,
+        /// The concrete model that served the request after alias resolution.
+        model: string,
+    }
+
+    /// Incremental tool-call fields. arguments-delta is a JSON fragment.
+    record tool-call-delta {
+        /// Zero-based call index in opening order. Join interleaved fragments by this id.
+        index: u32,
+        /// Present on the frame that opens the call, absent on continuations.
+        id: option<string>,
+        /// Present on the frame that opens the call, absent on continuations.
+        name: option<string>,
+        arguments-delta: string,
+    }
+
+    /// Content in a streamed frame.
+    variant chunk-delta {
+        text(string),
+        /// Reasoning summary text, separate from the answer.
+        reasoning-text(string),
+        tool-call(tool-call-delta),
+        /// A complete part, including terminal continuation data that cannot stream.
+        part(assistant-part),
+    }
+
+    /// A streamed frame. Finish reason, usage, and adaptations are optional hints;
+    /// completion is authoritative. A reply may contain no frames.
+    record chunk {
+        delta: chunk-delta,
+        adaptations: list<adaptation>,
+        finish-reason: option<finish-reason>,
+        usage: option<usage>,
+    }
+
+    /// Location in the caller's original request, before provider transformations.
+    record part-ref {
+        /// Index into the messages the caller supplied.
+        message-index: u32,
+        /// Part index. Zero for system text; tool turns index the tool-result list.
+        part-index: u32,
+        /// Index in tool-result.output when the change is within a tool result.
+        output-index: option<u32>,
+    }
+
+    enum part-kind {
+        text,
+        reasoning,
+        tool-use,
+        tool-result,
+        attachment,
+        opaque,
+    }
+
+    /// A request-level knob, for reporting that one did not survive.
+    enum request-option {
+        tools,
+        tool-choice,
+        response-format,
+        thinking,
+        effort,
+        max-tokens,
+        temperature,
+        top-k,
+        top-p,
+        min-p,
+        frequency-penalty,
+        presence-penalty,
+        repeat-penalty,
+        penalty-last-n,
+        logit-bias,
+        seed,
+        stop,
+    }
+
+    /// A change needed to represent a request for this provider.
+    variant adaptation-kind {
+        /// Replaced with supported content.
+        part-substituted(part-kind),
+        /// Removed because the provider cannot carry it.
+        part-dropped(part-kind),
+        /// The backend has no equivalent, so the knob was not sent.
+        option-ignored(request-option),
+        /// Narrowed to values the provider supports.
+        option-clamped(request-option),
+    }
+
+    /// A reported change to the request.
+    record adaptation {
+        /// Absent for whole-request conditions, which have no part to point at.
+        location: option<part-ref>,
+        kind: adaptation-kind,
+        /// Human-readable, for a log or a UI. Not for branching on.
+        detail: string,
+    }
+
+    /// Policy for requests that cannot be represented unchanged.
+    enum unrepresentable-policy {
+        /// Adapt the request and report each change.
+        adapt,
+        /// Refuse, and say what could not be represented.
+        refuse,
+    }
+
+    /// Context overflow. Token counts are optional when the provider omits them.
+    record context-overflow {
+        prompt-tokens: option<u32>,
+        context-length: option<u32>,
+        /// What the backend said, for a log or a UI.
+        detail: string,
+    }
+
+    /// An account or spending limit requiring operator action. Classify by the
+    /// provider's error, not HTTP status; quota failures and throttling may both be 429.
+    record quota {
+        /// Remediation URL supplied by the provider, if any.
+        top-up-url: option<string>,
+        /// What the backend said, verbatim.
+        detail: string,
+    }
+
+    /// How long the backend expects the caller to wait.
+    record rate-limit {
+        /// Normalized, capped retry delay. None means no usable hint, not immediate retry.
+        retry-after-seconds: option<u32>,
+        /// Human-readable, for a log or a UI. Not for branching on.
+        detail: string,
+    }
+
+    /// Why a chat request was refused before any of the reply was generated.
+    variant request-error {
+        /// The prompt leaves no room in the context window for a reply.
+        context-length-exceeded(context-overflow),
+        /// The options were out of range or unsupported.
+        invalid-options(string),
+        /// The message stream was incomplete or its writer reported failure.
+        messages-incomplete(string),
+        /// The request needs adaptation but on-unrepresentable is refuse.
+        unrepresentable(list<adaptation>),
+        /// The host's provider credentials were rejected; requires operator action.
+        not-authenticated(string),
+        /// Throttled. Back off before retrying.
+        rate-limited(rate-limit),
+        /// Account quota exhausted; retrying or waiting cannot resolve it.
+        quota-exhausted(quota),
+        /// A transient provider or connection failure; retry may succeed.
+        temporarily-unavailable(rate-limit),
+        /// Request or part exceeds the host limit; refused before provider dispatch.
+        too-large(size-limit),
+        /// Unclassified failure, treated as permanent.
+        other(string),
+    }
+
+    /// A size the host refuses to exceed.
+    record size-limit {
+        /// The limit, in bytes.
+        limit: u64,
+        /// Human-readable scope, such as request, attachment, or alias.
+        what: string,
+    }
+
+    /// Failure after generation started. Retry semantics match request-error;
+    /// other is permanent and the named transient failures may succeed on retry.
+    variant generation-error {
+        /// Throttled partway through.
+        rate-limited(rate-limit),
+        /// The backend or the connection to it failed partway through.
+        temporarily-unavailable(rate-limit),
+        /// The context window filled before the model finished.
+        context-length-exceeded(context-overflow),
+        other(string),
+    }
+
+    /// A tool definition offered to the model.
+    record tool-def {
+        name: string,
+        /// Display label; name is the model's selection key.
+        title: option<string>,
+        description: string,
+        /// JSON Schema for the arguments object.
+        input-schema: json,
+        /// Optional JSON Schema for the result.
+        output-schema: option<json>,
+    }
+
+    variant tool-choice {
+        // The model decides. The default when unset.
+        auto,
+        // Never call a tool.
+        none,
+        // Call some tool.
+        required,
+        // Call this specific tool.
+        specific(string),
+    }
+}

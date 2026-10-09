@@ -1,0 +1,21 @@
+# Registry mapping for `wkg` / `wash wit fetch`, so a project can depend on
+# `cosmonic:agent` or `cosmonic:notify`:
+#
+#   WKG_CONFIG_FILE=path/to/wkg-registries.toml wash wit fetch
+#
+# Packages are laid out as ghcr.io/cosmonic-labs/cosmonic/<package>.
+#
+# Self-contained rather than additive: `WKG_CONFIG_FILE` replaces a tool's
+# config wholesale, so the `wasi` namespace is repeated here.
+[namespace_registries]
+wasi = "wasi.dev"
+
+[namespace_registries.cosmonic]
+registry = "ghcr.io"
+
+[namespace_registries.cosmonic.metadata]
+preferredProtocol = "oci"
+
+[namespace_registries.cosmonic.metadata.oci]
+registry = "ghcr.io"
+namespacePrefix = "cosmonic-labs/"
