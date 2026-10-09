@@ -1,0 +1,11 @@
+rules:
+  cache-poisoning:
+    # These workflows publish components, and their caches (the Rust target
+    # directory, the Go toolchain) only speed up builds. Nothing is restored
+    # from a cache into a released artifact without being rebuilt, and
+    # `lookup-only` would turn the caches off.
+    ignore:
+      - nats-templates.yml
+      - kafka-templates.yml
+      - mcp-servers.yml
+      - components.yml

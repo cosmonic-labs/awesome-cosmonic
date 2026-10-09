@@ -26,10 +26,6 @@ jobs:
 
       - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
-          # Scoped to the workflows that are clean. The older workflows have
-          # findings (mostly unpinned actions) that need their own cleanup;
-          # add them here as they are fixed.
-          inputs: .github/workflows/wit.yml .github/workflows/zizmor.yml
           # Without a token the online audits are skipped silently.
           token: ${{ github.token }}
           advanced-security: false
