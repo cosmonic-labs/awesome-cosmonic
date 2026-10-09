@@ -18,8 +18,8 @@ on:
     paths:
       - "components/sandboxed-webhook/**"
       - "components/minimal-agent/**"
-      # minimal-agent resolves cosmonic:agent from here until it is published.
-      - "wit/cosmonic-agent/**"
+      # The registry map every build's WIT fetch reads (cosmonic:* from ghcr.io).
+      - "wit/wkg-registries.toml"
       - "workload-examples/task-manager/**"
       - "workload-examples/first-flight/**"
       - "workload-examples/qrcode/**"
@@ -31,8 +31,8 @@ on:
     paths:
       - "components/sandboxed-webhook/**"
       - "components/minimal-agent/**"
-      # minimal-agent resolves cosmonic:agent from here until it is published.
-      - "wit/cosmonic-agent/**"
+      # The registry map every build's WIT fetch reads (cosmonic:* from ghcr.io).
+      - "wit/wkg-registries.toml"
       - "workload-examples/task-manager/**"
       - "workload-examples/first-flight/**"
       - "workload-examples/qrcode/**"
