@@ -1,5 +1,5 @@
 /// User notifications supplied by a host or a component.
-package wasmcloud:notifications@0.3.0;
+package cosmonic:notifications@0.3.0;
 
 world notification-consumer {
   import notifier;
