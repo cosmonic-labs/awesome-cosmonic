@@ -100,4 +100,3 @@ interface types {
     permission: permission,
   }
 }
-
