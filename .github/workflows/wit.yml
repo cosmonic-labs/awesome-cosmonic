@@ -7,6 +7,7 @@
 #
 # The logic lives in .github/scripts/wit/*.mjs so it can be run locally:
 #   node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
+#   node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
 #   node .github/scripts/wit/registry.mjs check agent dist/agent.wasm --anonymous
 name: wit
 

@@ -1,6 +1,3 @@
-# wkg and wash write fetched dependencies and lock files here; they are not source.
+# wkg and wash write fetched dependencies here; they are not source.
+# A package with dependencies commits its wkg.lock.
 */deps/
-*/wkg.lock
-wkg.lock
-# The kafka package imports wasi:cli and wasmcloud:host; the lock pins them by digest.
-!cosmonic-kafka/wkg.lock
