@@ -1,0 +1,4 @@
+# wkg and wash write fetched dependencies and lock files here; they are not source.
+*/deps/
+*/wkg.lock
+wkg.lock
