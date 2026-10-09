@@ -50,6 +50,7 @@ wash build
 Reusable WebAssembly components that implement a WIT interface. Hosted projects live in [`components/`](components/).
 
 - [sandboxed-webhook](components/sandboxed-webhook/) (hosted): Receives a webhook, verifies its HMAC-SHA256 signature, then forwards the payload to exactly one host bounded by `allowedHosts`, so a compromised handler cannot exfiltrate anywhere else. The signing secret is required rather than defaulted, so an unconfigured deployment refuses every request instead of trusting a published constant. Rust component over `wasi:http`.
+- [minimal-agent](components/minimal-agent/) (hosted): A sandboxed agent on `cosmonic:agent@0.3.0` that runs one streamed chat turn per `POST /task` against a host-resolved model alias and keeps the conversation in the workload's session store, with no endpoint, key, or egress of its own. Rust component exporting `wasi:http/handler@0.3.0`.
 
 ### Kafka
 

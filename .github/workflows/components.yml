@@ -17,6 +17,9 @@ on:
     tags: ["*-v*"]
     paths:
       - "components/sandboxed-webhook/**"
+      - "components/minimal-agent/**"
+      # minimal-agent resolves cosmonic:agent from here until it is published.
+      - "wit/cosmonic-agent/**"
       - "workload-examples/task-manager/**"
       - "workload-examples/first-flight/**"
       - "workload-examples/qrcode/**"
@@ -27,6 +30,9 @@ on:
   pull_request:
     paths:
       - "components/sandboxed-webhook/**"
+      - "components/minimal-agent/**"
+      # minimal-agent resolves cosmonic:agent from here until it is published.
+      - "wit/cosmonic-agent/**"
       - "workload-examples/task-manager/**"
       - "workload-examples/first-flight/**"
       - "workload-examples/qrcode/**"
@@ -99,6 +105,10 @@ jobs:
           - name: passphrase
             path: workload-examples/passphrase
             image: ghcr.io/cosmonic-labs/components/passphrase
+            expect: "export wasi:http/handler"
+          - name: minimal-agent
+            path: components/minimal-agent
+            image: ghcr.io/cosmonic-labs/components/minimal-agent
             expect: "export wasi:http/handler"
 
     defaults:

@@ -1,0 +1,56 @@
+[package]
+name = "minimal-agent"
+edition = "2024"
+version = "0.1.0"
+# wasip3 0.7's component-type section needs the wasm-component-ld bundled with
+# Rust 1.94 or newer.
+rust-version = "1.94"
+description = "A minimal sandboxed agent on cosmonic:agent@0.3.0: one streamed chat turn per request, remembered in the workload's session. WebAssembly component: wasi:http@0.3.0, wasm32-wasip2."
+license = "Apache-2.0"
+repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
+
+[lints]
+workspace = true
+
+[workspace]
+
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "deny"
+unused_extern_crates = "warn"
+trivial_numeric_casts = "warn"
+unstable_features = "warn"
+unused_import_braces = "warn"
+unused-lifetimes = "warn"
+unused-macro-rules = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = 'deny'
+expect_used = 'deny'
+panic = 'deny'
+indexing_slicing = 'deny'
+dbg_macro = 'deny'
+needless_collect = 'deny'
+serde_api_misuse = 'deny'
+trivially_copy_pass_by_ref = 'deny'
+uninit_vec = 'deny'
+unnecessary_box_returns = 'deny'
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The wasi:http/handler@0.3.0 export, streamed response bodies and random.
+# This crate carries the WASI WIT, so none is fetched for it.
+wasip3 = "0.7.1"
+# Bindings for the cosmonic:agent imports in wit/world.wit. Pinned to the
+# version wasip3 uses, so both share one async runtime and one set of stream
+# and future intrinsics.
+wit-bindgen = { version = "0.57.1", features = ["async-spawn"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
