@@ -112,6 +112,38 @@ jobs:
           grep -qxF "package cosmonic:${PACKAGE}@${VERSION};" <<<"$wit" \
             || { echo "::error::built package does not declare cosmonic:${PACKAGE}@${VERSION}"; exit 1; }
 
+      # The publish job fails the same way after merge; catching it here keeps
+      # main green. Anonymous and read-only, so it only sees public packages: a
+      # package that is not published yet, or not public, passes with a notice.
+      - name: Fail if the version is published with different contents
+        env:
+          PACKAGE: ${{ matrix.package }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="cosmonic-labs/cosmonic/${PACKAGE}"
+          token=$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${name}:pull" | jq -r '.token // empty')
+          manifest="$RUNNER_TEMP/manifest.json"
+          status=$(curl -sS -o "$manifest" -w '%{http_code}' \
+            ${token:+-H "Authorization: Bearer ${token}"} \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/${name}/manifests/${VERSION}")
+          case "$status" in
+            200)
+              built="sha256:$(sha256sum "dist/${PACKAGE}.wasm" | cut -d' ' -f1)"
+              if [ "$(jq -r '.layers[0].digest // empty' "$manifest")" != "$built" ]; then
+                echo "::error::ghcr.io/${name}:${VERSION} is already published with different contents; bump the package version in wit/ to release these changes"
+                exit 1
+              fi
+              ;;
+            401|403|404)
+              echo "::notice::ghcr.io/${name}:${VERSION} is not visible anonymously (HTTP ${status}); skipping the version check"
+              ;;
+            *)
+              echo "::warning::probing ghcr.io/${name}:${VERSION} returned HTTP ${status}; skipping the version check"
+              ;;
+          esac
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.package }}
