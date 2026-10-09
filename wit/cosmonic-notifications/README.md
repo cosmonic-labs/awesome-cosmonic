@@ -4,8 +4,8 @@ Portable user notifications supplied by a host or a WebAssembly component.
 Native Windows, macOS, and Linux services, web embeddings, and virtual providers
 share the same contract. Providers control attribution through trusted wiring;
 notifications carry no caller identity or backend name. Action and body targets
-(`deep-link`, `url`, `callback`) are preserved so Desktop keeps its click
-behavior; a provider without navigation treats them as `callback`.
+(`deep-link`, `url`, `callback`) let a provider with navigation handle clicks; a
+provider without it treats them as `callback`.
 
 Import `notifier` and `events` through `notification-consumer` to consume the
 service. Export them through `notification-provider` to implement it. Components
@@ -14,8 +14,7 @@ virtual service.
 
 ## Contract
 
-There is no session resource. Calls carry no caller identity, so trusted wiring
-must bind `notifier` and `events` to the same stable caller scope and preserve it
+Calls carry no caller identity, so trusted wiring must bind `notifier` and `events` to the same stable caller scope and preserve it
 across component instances. The provider scopes ids, replacement tags, rate
 budget, and response queues to that scope, so a response to a notification posted
 by one invocation is collected by a later one wired to it. The embedding defines
@@ -25,7 +24,7 @@ correlation because handles die with their instance.
 `features` reports the exposed service's effective features and limits.
 `status` reports availability and permission separately. Both are side-effect-free
 snapshots; neither prompts. An embedding arranges permission requests through its
-own interaction flow. The provider adapts rather than fails where Desktop did:
+own interaction flow. The provider adapts rather than fails:
 extra actions are truncated, inline input becomes a same-id button when actions
 are supported and a `max-actions` slot remains (the button counts toward the limit;
 otherwise the input is dropped and logged), oversized text is truncated at a
@@ -62,13 +61,7 @@ and [HTTP](https://github.com/WebAssembly/WASI/blob/v0.3.0/proposals/http/wit/ty
 WASI also permits nonblocking synchronous getters; this package consistently uses
 async operations so component providers can query downstream services.
 
-## Migration and publishing
-
-This package replaces `cosmonic:notify@0.2.0` in this catalog. It is a breaking
-0.3.0 contract: replace imports, rename `capabilities` to `features`, collect
-queued responses through `events.pull` as before, move every call to P3 async,
-and handle `error-code` in place of `notify-error`. Targets, tags, and queue scope
-are unchanged. The change does not alter previously published artifacts.
+## Publishing
 
 ```sh
 wasm-tools component wit wit/cosmonic-notifications
@@ -90,7 +83,7 @@ The application example is deferred. Its acceptance criteria are:
   rebuilding the consumer, then interpose a forwarding or filtering component.
 - As an implementer, I preserve actions and replies and report effective support
   across Windows, macOS, Linux, and web environments.
-- As a test author, I verify isolation, replacement, close, expiry, drop, overflow,
+- As a test author, I verify isolation, replacement, close, expiry, overflow,
   denial, unavailable service, and unsupported interactions without native UI.
 - As a consumer, I await bounded operations through the P3 ABI and collect queued
   responses from any later invocation wired to the same caller scope.
