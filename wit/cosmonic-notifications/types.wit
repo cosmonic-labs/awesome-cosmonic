@@ -13,15 +13,16 @@ interface types {
     callback,
   }
   record action {
-    /// Non-blank printable id of at most max-id-bytes, unique across actions
-    /// and text input. Echoed in responses exactly as sent.
+    /// Non-blank printable id, unique across actions and text input, and
+    /// echoed in responses exactly as sent. Providers accept at least 64 UTF-8
+    /// bytes and return invalid-argument for an id they will not accept; they
+    /// never truncate it.
     id: string,
     label: string,
     target: action-target,
   }
   record text-input {
-    /// Non-blank printable id of at most max-id-bytes, unique across actions
-    /// and text input. Echoed in responses exactly as sent.
+    /// Same rules as `action.id`.
     id: string,
     label: string,
     placeholder: option<string>,
@@ -29,7 +30,8 @@ interface types {
   /// Presentation hint; unsupported urgency uses normal.
   enum urgency { low, normal, critical }
   record notification {
-    /// Must contain a non-whitespace character.
+    /// Must contain a non-whitespace character. Display text is truncated at a
+    /// character boundary when the provider's limit is exceeded.
     title: string,
     body: string,
     /// Presentation hint; see `supported-features.urgency`.
@@ -44,12 +46,14 @@ interface types {
     /// Body-click target. None lets the embedding choose, which may be no
     /// navigation at all.
     default-target: option<action-target>,
-    /// Trimmed, then used exactly as trimmed; blank means none and more than
-    /// max-tag-bytes returns invalid-argument. Replaces the pending notification with the
-    /// same tag in the same caller scope.
+    /// Trimmed, then used exactly as trimmed; blank means none. Providers
+    /// accept at least 64 UTF-8 bytes and return invalid-argument for a tag
+    /// they will not accept; they never truncate it. Replaces the pending
+    /// notification with the same tag in the same caller scope.
     tag: option<string>,
-    /// Response deadline in ms; none or zero uses default-timeout-ms.
-    /// Values above max-timeout-ms are clamped. Display lifetime is best effort.
+    /// Response deadline in ms. None or zero uses the provider's default, and
+    /// values above the provider's maximum are clamped. Display lifetime is
+    /// best effort.
     timeout-ms: option<u32>,
   }
   /// Opaque id, unique within the caller scope and never reused there.
@@ -68,22 +72,25 @@ interface types {
     action(string),
     /// The input id and submitted text.
     reply(text-reply),
+    /// The user dismissed it. Reported only when `supported-features.dismissal`
+    /// is true; otherwise a dismissed notification ends as `expired`.
     dismissed,
     /// Deadline, close, replacement, or orderly provider shutdown.
     expired,
   }
-  /// A queued response, correlated by the id that `post` returned.
+  /// A queued response, correlated by the id that `send` returned.
   record event {
     id: notification-id,
     response: response,
   }
   variant error-code {
-    /// Permission or service policy forbids the operation, or the provider
-    /// cannot identify the caller.
+    /// Permission or service policy forbids the operation, such as a per-caller
+    /// revocation, or the provider cannot identify the caller.
     access-denied,
     /// A rate or resource limit was reached.
     limit-exceeded,
-    /// The service cannot deliver notifications now.
+    /// The service cannot deliver notifications now, including when the user
+    /// declined the authorization the provider requested on first send.
     unavailable,
     invalid-argument(string),
     /// The provider cannot adapt the request to its service.
@@ -94,44 +101,21 @@ interface types {
     other(option<string>),
   }
   /// Effective behavior of the composed service, not its underlying platform.
+  /// A snapshot only; sending can still fail after this query succeeds.
   record supported-features {
+    /// False when nothing can be displayed; every send returns unavailable.
+    available: bool,
     actions: bool,
     inline-reply: bool,
     urgency: bool,
+    /// The provider reports `dismissed`. Platforms that need an opt-in to
+    /// observe dismissal, such as macOS notification categories, enable it for
+    /// every notification they display. Channels that never observe it report
+    /// false, and a dismissed notification ends as `expired`.
+    dismissal: bool,
     /// Providers can honor deep-link and url targets; otherwise they behave
     /// as callback.
     navigation: bool,
-    /// Display may remain in a notification center until completion.
-    persistent: bool,
     max-actions: u32,
-    /// UTF-8 byte limits on display text; longer text is truncated at a
-    /// character boundary.
-    max-title-bytes: u32,
-    max-body-bytes: u32,
-    /// Applies to action labels, input labels, and placeholders.
-    max-label-bytes: u32,
-    /// UTF-8 byte limits on identifiers. Longer action and input ids, or a tag
-    /// longer after trimming, return invalid-argument. Providers never truncate
-    /// them, because that would break response correlation or make distinct
-    /// notifications replace each other.
-    max-id-bytes: u32,
-    max-tag-bytes: u32,
-    default-timeout-ms: u32,
-    max-timeout-ms: u32,
-    max-pull-wait-ms: u32,
-    /// Overflow drops the oldest queued responses.
-    max-queued-events: u32,
-  }
-  enum permission {
-    granted,
-    denied,
-    prompt-required,
-    /// The provider cannot determine permission.
-    unknown,
-  }
-  /// Snapshot only; sending can still fail after this query succeeds.
-  record service-status {
-    available: bool,
-    permission: permission,
   }
 }
