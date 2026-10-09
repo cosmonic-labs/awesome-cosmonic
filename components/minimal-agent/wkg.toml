@@ -1,5 +1,0 @@
-# cosmonic:agent@0.3.0 is not published yet, so it resolves from this
-# repository's own wit/ directory. Delete this override once the package is on
-# ghcr.io/cosmonic-labs/cosmonic/agent and the fetch resolves it from there.
-[overrides]
-"cosmonic:agent" = { path = "../../wit/cosmonic-agent" }
