@@ -35,13 +35,13 @@ The stored conversation is plain text turns. A fuller agent keeps each assistant
 ## Build
 
 ```shell
-wash wit fetch
+WKG_CONFIG_FILE=../../wit/wkg-registries.toml wash wit fetch
 wash build
 ```
 
 The component is written to `target/wasm32-wasip2/release/minimal_agent.wasm`.
 
-`cosmonic:agent@0.3.0` is not published yet. Until it is, [`wkg.toml`](wkg.toml) points the fetch at this repository's own [`wit/cosmonic-agent`](../../wit/cosmonic-agent/), so build from a full clone rather than a single-folder `wash new` checkout. `wit/deps` is generated and gitignored. Once the package is on `ghcr.io/cosmonic-labs/cosmonic/agent`, delete the override and the fetch resolves it from the registry.
+`cosmonic:agent@0.3.0` is fetched from `ghcr.io/cosmonic-labs/cosmonic/agent`, where this repository publishes it. [`wit/wkg-registries.toml`](../../wit/wkg-registries.toml) maps the `cosmonic` namespace there; outside this repository, use a copy of that file. [`wkg.lock`](wkg.lock) pins the package by digest, and `wit/deps` is generated and gitignored.
 
 ## Run on Cosmonic Desktop
 
