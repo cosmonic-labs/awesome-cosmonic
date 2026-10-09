@@ -35,9 +35,12 @@ The stored conversation is plain text turns. A fuller agent keeps each assistant
 ## Build
 
 ```shell
-WKG_CONFIG_FILE=../../wit/wkg-registries.toml wash wit fetch
+export WKG_CONFIG_FILE=$PWD/../../wit/wkg-registries.toml
+wash wit fetch
 wash build
 ```
+
+`wash build` fetches again, so the variable has to be set for both commands.
 
 The component is written to `target/wasm32-wasip2/release/minimal_agent.wasm`.
 

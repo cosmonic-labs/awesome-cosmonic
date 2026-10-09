@@ -63,6 +63,11 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    # The cosmonic:* packages resolve through the repository's registry map, for
+    # the fetch and for `wash build`, which fetches again. It repeats the wasi
+    # mapping, so components without cosmonic packages are unaffected.
+    env:
+      WKG_CONFIG_FILE: ${{ github.workspace }}/wit/wkg-registries.toml
     permissions:
       contents: read
       packages: write
@@ -135,11 +140,7 @@ jobs:
       # and have no `wit/` directory at all, and `wash wit fetch` exits 1 on
       # those rather than no-opping. Guarding is what lets one matrix cover both
       # shapes; the alternative is a second workflow that differs by one step.
-      # The cosmonic:* packages resolve through the repository's registry map;
-      # it repeats the wasi mapping, so components without them are unaffected.
       - name: Fetch the WIT dependencies
-        env:
-          WKG_CONFIG_FILE: ${{ github.workspace }}/wit/wkg-registries.toml
         run: |
           if [ -d wit ]; then
             wash wit fetch
