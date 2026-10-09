@@ -32,6 +32,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -88,6 +90,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to GHCR
+        id: publish
         if: >-
           github.event_name != 'pull_request' &&
           github.repository == 'cosmonic-labs/awesome-cosmonic' &&
@@ -112,10 +115,25 @@ jobs:
               echo "::notice::ghcr.io/${NAME}:${VERSION} is already published; bump the version to release these changes"
               ;;
             404)
-              wash -o json oci push "ghcr.io/${NAME}:${VERSION}" ${{ matrix.package }}.wasm
+              if ! out=$(wash -o json oci push "ghcr.io/${NAME}:${VERSION}" ${{ matrix.package }}.wasm); then
+                echo "$out"
+                exit 1
+              fi
+              digest=$(jq -r '.data.digest // empty' <<<"$out")
+              [[ "$digest" == sha256:* ]] \
+                || { echo "::error::wash oci push did not report a digest: $out"; exit 1; }
+              echo "digest=${digest}" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "::error::probing ghcr.io/${NAME}:${VERSION} returned HTTP ${status}"
               exit 1
               ;;
           esac
+
+      - name: Attest build provenance
+        if: steps.publish.outputs.digest != ''
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ghcr.io/cosmonic-labs/cosmonic/${{ matrix.package }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
