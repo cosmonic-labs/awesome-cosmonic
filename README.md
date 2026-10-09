@@ -97,10 +97,10 @@ The same seven patterns in Go, built with [componentize-go](https://github.com/b
 
 ## WIT Packages
 
-Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/cosmonic/<package>`. Resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Hosted under [`wit/`](wit/).
+Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/cosmonic/<package>`. Call them from any component; resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Source lives in [`wit/`](wit/).
 
-- [cosmonic:agent](wit/cosmonic-agent/) (hosted): Provider-independent inference, authorized model aliases, tools, and durable sessions.
-- [cosmonic:notify](wit/cosmonic-notify/) (hosted): Notifications and calls to action, available through an explicit host grant.
+- [cosmonic:agent](wit/cosmonic-agent/): An API for calling models, tools, and durable sessions without tying a component to one inference provider.
+- [cosmonic:notify](wit/cosmonic-notify/): An API for sending notifications to users and getting their responses, with actions such as links and callbacks.
 
 ## Host Plugins
 
