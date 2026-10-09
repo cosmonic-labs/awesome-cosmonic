@@ -6,10 +6,9 @@ share the same contract. Providers control attribution through trusted wiring;
 notifications contain no caller identity, backend name, URL, or Desktop route.
 Consumers decide what to do with returned interactions.
 
-Import `notifier` to consume the service. Export it through
-`notification-provider` to implement it. `notification-wrapper` imports a named
-`downstream` interface and exports `notifier`, letting an assembler interpose a
-filter, router, or virtual service.
+Import `notifier` through `notification-consumer` to consume the service. Export
+it through `notification-provider` to implement it. Components can import and
+export `notifier` to interpose a filter, router, or virtual service.
 
 ## Contract
 
