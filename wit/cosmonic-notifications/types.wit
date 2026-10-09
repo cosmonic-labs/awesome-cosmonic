@@ -35,8 +35,8 @@ interface types {
     actions: list<action>,
     /// Without inline-reply support, becomes an action with the same id.
     input: option<text-input>,
-    /// Body-click target. None lets the provider choose; a provider with
-    /// navigation opens the sending workload's page.
+    /// Body-click target. None lets the embedding choose, which may be no
+    /// navigation at all.
     default-target: option<action-target>,
     /// Trimmed; blank means none. Replaces the pending notification with the
     /// same tag from the same workload.
