@@ -60,8 +60,7 @@ reported adaptation. Providers must not silently discard unsupported features.
 
 ## Implementation boundary
 
-[Architecture diagram](cosmonic-agent/docs/agent-inference-architecture.svg) ·
-[Editable Excalidraw source](cosmonic-agent/docs/agent-inference-architecture.excalidraw)
+[Architecture diagram](cosmonic-agent/docs/agent-inference-architecture.svg)
 
 The llama.cpp engine's tokenization, sampling, grammar conversion, and context
 cache interfaces are internal to the llama provider. Other providers implement
