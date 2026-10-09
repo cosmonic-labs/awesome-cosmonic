@@ -1,9 +1,10 @@
 //! A minimal sandboxed agent on `cosmonic:agent@0.3.0`.
 //!
 //! `POST /task` with `{"task": "..."}` runs one chat turn against the model the
-//! host resolves for the alias `default`, streams the reply back as plain text,
-//! and records the turn in the workload's session so the next request continues
-//! the same conversation.
+//! host resolves for the alias `default`, streams the reply back as NDJSON, and
+//! records the turn in the workload's session so the next request continues the
+//! same conversation. `GET /history` returns the steps recorded so far. Both
+//! follow the protocol the Cosmonic Desktop Agents view speaks.
 //!
 //! The component names no endpoint, holds no key and opens no connection: the
 //! model, the credential and the session store all belong to the host.
@@ -17,8 +18,8 @@ mod bindings {
 }
 
 use bindings::cosmonic::agent::inference_types::{
-    AssistantContent, AssistantMessage, AssistantPart, ChatOptions, ChunkDelta, Message,
-    RequestMeta, ResponseFormat, UnrepresentablePolicy, UserMessage, UserPart,
+    AssistantContent, AssistantMessage, AssistantPart, ChatOptions, ChunkDelta, Completion,
+    Message, RequestMeta, ResponseFormat, UnrepresentablePolicy, UserMessage, UserPart,
 };
 use bindings::cosmonic::agent::session::{
     self, CommitOptions, CommitResult, JournalEnd, NewEntry, Snapshot, StateCondition,
@@ -26,7 +27,7 @@ use bindings::cosmonic::agent::session::{
 use bindings::cosmonic::agent::{chat, models};
 use bindings::{wit_future, wit_stream};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use wasip3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use wasip3::wit_bindgen::{StreamResult, StreamWriter};
 
@@ -36,7 +37,15 @@ const MODEL_ALIAS: &str = "default";
 
 const SYSTEM_PROMPT: &str = "You are a concise, helpful assistant.";
 
-const USAGE: &str = "POST /task with {\"task\": \"...\"}\n";
+/// Required on `POST /task`. A browser cannot add a custom header to a
+/// cross-origin request without a CORS preflight this agent never answers, so
+/// a web page the person happens to visit cannot drive the session.
+const SESSION_HEADER: &str = "x-cosmonic-agent-session";
+
+/// The journal kind a UI draws: `{role, text, blocks, tools}`.
+const STEP_KIND: &str = "agent.step.v1";
+
+const USAGE: &str = "POST /task with {\"task\": \"...\"}";
 
 /// The conversation, as this agent stores it in the session's opaque state.
 #[derive(Default, Serialize, Deserialize)]
@@ -57,37 +66,59 @@ impl wasip3::exports::http::handler::Guest for Agent {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
         let path = request.get_path_with_query().unwrap_or_default();
         Ok(match (request.get_method(), path.as_str()) {
+            (Method::Get, "/history") => history().await,
             (Method::Post, "/task") => run_task(request).await,
-            _ => respond(404, USAGE.into()),
+            _ => respond(404, "text/plain; charset=utf-8", USAGE.into()),
         })
     }
 }
 
 wasip3::http::service::export!(Agent);
 
+/// `{"steps": [...]}`: every step in the session journal, oldest first.
+async fn history() -> Response {
+    let mut steps = Vec::new();
+    let mut start = 0;
+    loop {
+        // A short page does not mean the end; an empty one does.
+        let page = match session::read(start, 1000).await {
+            Ok(page) if page.is_empty() => break,
+            Ok(page) => page,
+            Err(e) => return json_response(500, json!({ "error": format!("{e:?}") })),
+        };
+        for entry in page {
+            start = entry.seq.saturating_add(1);
+            if entry.kind == STEP_KIND
+                && let Ok(step) = serde_json::from_slice::<Value>(&entry.data)
+            {
+                steps.push(step);
+            }
+        }
+    }
+    json_response(200, json!({ "steps": steps }))
+}
+
 async fn run_task(request: Request) -> Response {
+    if request.get_headers().get(SESSION_HEADER).is_empty() {
+        let error = format!("missing {SESSION_HEADER} header");
+        return json_response(403, json!({ "error": error }));
+    }
     let task = match read_body(request).await.ok().and_then(|b| parse_task(&b)) {
         Some(task) => task,
-        None => return respond(400, USAGE.into()),
+        None => return json_response(400, json!({ "error": USAGE })),
     };
 
     // What the session holds now: the conversation so far, and the journal end
     // and state version this turn's commits are conditioned on.
     let snapshot = match session::current().await {
         Ok(snapshot) => snapshot,
-        Err(e) => return respond(500, format!("session unavailable: {e:?}\n")),
+        Err(e) => return json_response(500, json!({ "error": format!("{e:?}") })),
     };
     let conversation = snapshot
         .state
         .as_ref()
         .and_then(|s| serde_json::from_slice::<Conversation>(&s.value).ok())
         .unwrap_or_default();
-
-    // The host resolves the alias and checks this workload may use it.
-    let model = match models::open(MODEL_ALIAS.to_string()).await {
-        Ok(model) => model,
-        Err(e) => return respond(502, format!("no model for {MODEL_ALIAS:?}: {e:?}\n")),
-    };
 
     // Record the person's message and the model call before making it, so a
     // turn that fails partway still shows what was asked.
@@ -108,17 +139,105 @@ async fn run_task(request: Request) -> Response {
     let end = match started {
         Ok(CommitResult::Committed(c)) => c.end,
         Ok(CommitResult::Stale(_)) => {
-            return respond(
-                409,
-                "another request is writing this session; retry\n".into(),
-            );
+            let error = "another request is writing this session; retry";
+            return json_response(409, json!({ "error": error }));
         }
-        Err(e) => return respond(500, format!("session write failed: {e:?}\n")),
+        Err(e) => return json_response(500, json!({ "error": format!("{e:?}") })),
+    };
+
+    // Return the response now and write its lines as the turn happens.
+    let (response, body) = streaming(200, "application/x-ndjson");
+    wit_bindgen::spawn(turn(body, task, conversation, snapshot, op, end));
+    response
+}
+
+/// How the model call ended.
+enum Answer {
+    Done(Completion),
+    /// `outcome` is the `agent.op-result.v1` outcome to record.
+    Failed {
+        outcome: &'static str,
+        error: String,
+    },
+    /// The client went away while the reply streamed.
+    Gone,
+}
+
+/// Run the turn, then record it and finish the response with `done` or
+/// `failed`.
+async fn turn(
+    mut body: StreamWriter<u8>,
+    task: String,
+    conversation: Conversation,
+    before: Snapshot,
+    op: String,
+    end: JournalEnd,
+) {
+    let messages = to_messages(&conversation, &task);
+    let (outcome, role, text, completion) = match answer(&mut body, messages).await {
+        Answer::Done(c) => ("succeeded", "assistant", text_of(&c.message), Some(c)),
+        Answer::Failed { outcome, error } => (outcome, "error", error, None),
+        Answer::Gone => ("cancelled", "error", "the client disconnected".into(), None),
+    };
+    let Some(completion) = completion else {
+        close_turn(&op, outcome, role, &text, &before, end, None).await;
+        send(&mut body, json!({ "type": "failed", "error": text })).await;
+        return;
+    };
+
+    // The finished message replaces the deltas the client has shown so far.
+    let step_line = json!({
+        "type": "step", "role": role, "text": text, "blocks": ["text"], "tools": [],
+    });
+    send(&mut body, step_line).await;
+
+    let mut next = conversation;
+    next.turns.push(Turn {
+        role: "user".into(),
+        text: task,
+    });
+    next.turns.push(Turn {
+        role: "assistant".into(),
+        text: text.clone(),
+    });
+    let context_messages = next.turns.len() + 1;
+    // Recorded before `done` is sent, so a client that redraws on `done`
+    // finds the turn already stored.
+    if let Some(error) = close_turn(&op, outcome, role, &text, &before, end, Some(next)).await {
+        send(&mut body, json!({ "type": "failed", "error": error })).await;
+        return;
+    }
+    let usage = &completion.usage;
+    let resolved = Some(completion.model.clone()).filter(|m| !m.is_empty());
+    let done = json!({
+        "type": "done",
+        "context_messages": context_messages,
+        "answer": text,
+        "turns": 1,
+        "input_tokens": usage.prompt_tokens.unwrap_or(0),
+        "output_tokens": usage.completion_tokens.unwrap_or(0),
+        "model": { "alias": MODEL_ALIAS, "provider": "cosmonic", "resolved": resolved },
+    });
+    send(&mut body, done).await;
+}
+
+/// One chat call, streaming its text to the client as `delta` lines.
+async fn answer(body: &mut StreamWriter<u8>, messages: Vec<Message>) -> Answer {
+    // The host resolves the alias and checks this workload may use it.
+    let model = match models::open(MODEL_ALIAS.to_string()).await {
+        Ok(model) => model,
+        Err(e) => {
+            let error = format!("no model for {MODEL_ALIAS:?}: {e:?}");
+            // Never dispatched, so the call is recorded as cancelled.
+            return Answer::Failed {
+                outcome: "cancelled",
+                error,
+            };
+        }
     };
 
     // Streams do not buffer, so the messages are written while `chat` is
     // pending, then `messages-done` says the conversation is complete.
-    let messages = to_messages(&conversation, &task);
     let (mut msg_tx, msg_rx) = wit_stream::new();
     let (done_tx, done_rx) = wit_future::new(|| Err("the agent stopped writing".to_string()));
     wit_bindgen::spawn(async move {
@@ -134,79 +253,44 @@ async fn run_task(request: Request) -> Response {
     let (mut chunks, outcome) = match chat::chat(&model, msg_rx, done_rx, options()).await {
         Ok(reply) => reply,
         Err(e) => {
-            let text = format!("the model refused the request: {e:?}");
-            close_turn(&op, "failed", "error", &text, &snapshot, end, None).await;
-            return respond(502, format!("{text}\n"));
+            let error = format!("the model refused the request: {e:?}");
+            return Answer::Failed {
+                outcome: "failed",
+                error,
+            };
         }
     };
 
-    // Return the response now and write its body as the reply arrives.
-    let (response, mut body) = streaming(200, "text/plain; charset=utf-8");
-    wit_bindgen::spawn(async move {
-        let _model = model;
-        let mut client_gone = false;
-        while let Some(chunk) = chunks.next().await {
-            // Only text is streamed. Anything else is in the completion.
-            if let ChunkDelta::Text(text) = chunk.delta
-                && !body.write_all(text.into_bytes()).await.is_empty()
-            {
-                // The client went away. Dropping the chunk stream cancels
-                // generation at the host.
-                client_gone = true;
-                break;
-            }
+    while let Some(chunk) = chunks.next().await {
+        // Only text is streamed. Anything else is in the completion.
+        if let ChunkDelta::Text(text) = chunk.delta
+            && !text.is_empty()
+            && !send(body, json!({ "type": "delta", "text": text })).await
+        {
+            // Dropping the chunk stream cancels generation at the host.
+            return Answer::Gone;
         }
-        drop(chunks);
-        if client_gone {
-            close_turn(
-                &op,
-                "cancelled",
-                "error",
-                "the client disconnected",
-                &snapshot,
-                end,
-                None,
-            )
-            .await;
-            return;
-        }
+    }
+    drop(chunks);
 
-        // Read the outcome after the last chunk, as the interface asks.
-        let note = match outcome.await {
-            Ok(completion) => {
-                let reply = text_of(&completion.message);
-                let mut next = conversation;
-                next.turns.push(Turn {
-                    role: "user".into(),
-                    text: task,
-                });
-                next.turns.push(Turn {
-                    role: "assistant".into(),
-                    text: reply.clone(),
-                });
-                close_turn(
-                    &op,
-                    "succeeded",
-                    "assistant",
-                    &reply,
-                    &snapshot,
-                    end,
-                    Some(next),
-                )
-                .await
+    // Read the outcome after the last chunk, as the interface asks.
+    match outcome.await {
+        Ok(completion) => Answer::Done(completion),
+        Err(e) => {
+            let error = format!("generation failed: {e:?}");
+            Answer::Failed {
+                outcome: "failed",
+                error,
             }
-            Err(e) => {
-                let text = format!("generation failed: {e:?}");
-                close_turn(&op, "failed", "error", &text, &snapshot, end, None).await;
-                Some(text)
-            }
-        };
-        if let Some(note) = note {
-            let _ = body.write_all(format!("\n[{note}]").into_bytes()).await;
         }
-        let _ = body.write_all(b"\n".to_vec()).await;
-    });
-    response
+    }
+}
+
+/// Write one NDJSON line. False once the client has gone away.
+async fn send(body: &mut StreamWriter<u8>, line: Value) -> bool {
+    let mut bytes = line.to_string().into_bytes();
+    bytes.push(b'\n');
+    body.write_all(bytes).await.is_empty()
 }
 
 /// Close the model call opened by this turn and record what came of it. With a
@@ -392,10 +476,14 @@ fn streaming(status: u16, content_type: &str) -> (Response, StreamWriter<u8>) {
     (response, body_tx)
 }
 
-fn respond(status: u16, text: String) -> Response {
-    let (response, mut body) = streaming(status, "text/plain; charset=utf-8");
+fn json_response(status: u16, value: Value) -> Response {
+    respond(status, "application/json", value.to_string().into_bytes())
+}
+
+fn respond(status: u16, content_type: &str, bytes: Vec<u8>) -> Response {
+    let (response, mut body) = streaming(status, content_type);
     wit_bindgen::spawn(async move {
-        let _ = body.write_all(text.into_bytes()).await;
+        let _ = body.write_all(bytes).await;
     });
     response
 }
