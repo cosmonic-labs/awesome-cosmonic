@@ -44,8 +44,6 @@ jobs:
             dir: wit/cosmonic-agent
           - package: notify
             dir: wit/cosmonic-notify
-    outputs:
-      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,8 +108,8 @@ jobs:
         run: |
           set -euo pipefail
           wasm-tools validate --features all "dist/${PACKAGE}.wasm"
-          wasm-tools component wit "dist/${PACKAGE}.wasm" \
-            | grep -qxF "package cosmonic:${PACKAGE}@${VERSION};" \
+          wit=$(wasm-tools component wit "dist/${PACKAGE}.wasm")
+          grep -qxF "package cosmonic:${PACKAGE}@${VERSION};" <<<"$wit" \
             || { echo "::error::built package does not declare cosmonic:${PACKAGE}@${VERSION}"; exit 1; }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -142,7 +140,6 @@ jobs:
         package: [agent, notify]
     env:
       PACKAGE: ${{ matrix.package }}
-      VERSION: ${{ needs.build.outputs.version }}
       IMAGE: ghcr.io/cosmonic-labs/cosmonic/${{ matrix.package }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -156,6 +153,16 @@ jobs:
       - uses: wasmCloud/setup-wash-action@47756fa211cc82f392c57e39504f43ef46fc0b3e # v2.1.0
         with:
           wash-version: ${{ env.WASH_VERSION }}
+
+      # Each matrix job reads its own version from the package it is about to
+      # push; a job-level output would be shared by both packages.
+      - name: Read package version
+        run: |
+          set -euo pipefail
+          wit=$(wasm-tools component wit "${PACKAGE}.wasm")
+          decl=$(grep -m1 -E '^package ' <<<"$wit")
+          version=${decl#*@}
+          echo "VERSION=${version%;}" >> "$GITHUB_ENV"
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -245,6 +252,6 @@ jobs:
         run: |
           set -euo pipefail
           wash oci pull "${IMAGE}@${DIGEST}" "$RUNNER_TEMP/pulled.wasm"
-          wasm-tools component wit "$RUNNER_TEMP/pulled.wasm" \
-            | grep -qxF "package cosmonic:${PACKAGE}@${VERSION};" \
+          wit=$(wasm-tools component wit "$RUNNER_TEMP/pulled.wasm")
+          grep -qxF "package cosmonic:${PACKAGE}@${VERSION};" <<<"$wit" \
             || { echo "::error::${IMAGE}@${DIGEST} does not declare cosmonic:${PACKAGE}@${VERSION}"; exit 1; }
