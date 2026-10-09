@@ -27,4 +27,3 @@ interface notifier {
   /// Never requests permission; an unavailable service may still open a session.
   open: async func() -> result<session, error-code>;
 }
-
