@@ -1,0 +1,48 @@
+# Workload for the minimal agent on Cosmonic Desktop or wasmCloud.
+#
+# The agent component holds no egress (allowedHosts: []). Everything it can do
+# beyond answering HTTP is listed under hostInterfaces: inference by alias and
+# a session store, both served by the host and scoped to this workload.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: minimal-agent
+  namespace: default
+spec:
+  hostInterfaces:
+    # The agent exports wasi:http/handler@0.3.0. Requests whose Host header
+    # matches this name are routed to it.
+    - namespace: wasi
+      package: http
+      interfaces:
+        - handler
+      config:
+        host: minimal-agent.localhost
+    # The conversation: a host store bound to THIS workload. The agent names no
+    # session, so it cannot reach another workload's, and the host deletes it
+    # with the workload.
+    - namespace: cosmonic
+      package: agent
+      version: 0.3.0
+      interfaces:
+        - session
+    # Inference. The agent asks for the alias "default"; this entry decides
+    # what that means. With no config it uses the host's default model source.
+    # The host serves cosmonic:agent from two plugins, so the session and the
+    # inference interfaces are declared as separate entries.
+    - namespace: cosmonic
+      package: agent
+      version: 0.3.0
+      interfaces:
+        - inference-types
+        - models
+        - chat
+      # config:
+      #   backend: <one of the host's named model sources>
+      #   model: <a model on that source>
+  components:
+    - name: agent
+      image: ghcr.io/cosmonic-labs/components/minimal-agent:0.1.0
+      poolSize: 1
+      localResources:
+        allowedHosts: []

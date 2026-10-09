@@ -1,0 +1,10 @@
+# wash v2 project configuration, used by Cosmonic Desktop's project mode and by
+# the `wash` CLI alike.
+version: "0.1.0"
+build:
+  command: cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/minimal_agent.wasm
+workload:
+  # The agent holds no egress of its own: every model call goes through the
+  # host's cosmonic:agent inference plugin. Explicit [] is deny-all.
+  allowedHosts: []
