@@ -7,8 +7,3 @@ world notification-consumer {
 world notification-provider {
   export notifier;
 }
-/// Wrappers own downstream sessions and translate resource and id ownership.
-world notification-wrapper {
-  import downstream: notifier;
-  export notifier;
-}
