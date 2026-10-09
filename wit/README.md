@@ -8,8 +8,8 @@ Long-lived operations use native WIT streams and futures.
 
 | Package | Contract |
 | --- | --- |
-| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | Provider-independent inference, authorized model aliases, tools, and durable sessions. |
-| [`cosmonic:notify`](cosmonic-notify/notify.wit) 0.2.0 | Notifications and calls to action, available through an explicit host grant. |
+| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:notify`](cosmonic-notify/notify.wit) 0.2.0 | An API for sending notifications to users and getting their responses, with actions such as links and callbacks. |
 
 ## Inference and agent worlds
 
