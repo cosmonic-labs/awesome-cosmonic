@@ -33,7 +33,7 @@ world embeddings-provider {
 
 /// A sandboxed agent acquires models through workload-scoped aliases.
 /// Model administration, credentials, and network grants belong to the host.
-/// Notifications require an explicit wasmcloud:notifications import and provider grant.
+/// Notifications require an explicit cosmonic:notify import and host grant.
 world agent {
     import inference-types;
     import models;
