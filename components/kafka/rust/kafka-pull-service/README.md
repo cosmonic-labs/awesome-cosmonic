@@ -21,8 +21,8 @@ wash build                   # fetches the WIT, then runs .wash/config.yaml
 
 `wkg.lock` pins the exact versions and `wit/deps/` is gitignored, so the
 first build is what populates it. `cargo build --release` produces the same
-component; `.wash/config.yaml` just names that command and where its output
-lands, which is what lets tooling find the artifact without being told.
+component. `.wash/config.yaml` also marks it as a service and carries the
+same environment and Kafka binding as `workload.yaml` for project tooling.
 
 To stop passing the variable, merge the entries from
 [`../../wkg-registries.toml`](../../wkg-registries.toml) into
@@ -39,6 +39,13 @@ Both point at the component published from this template. Set the broker,
 topic, group, and environment placeholders before applying a manifest. Once
 you change the source, build it, push it to your own registry, and replace the
 image reference.
+
+This component exports `wasi:cli/run`, so it must occupy `spec.service`.
+Putting it only in `spec.components` loads it but never calls `run`. The
+Desktop manifest keeps a zero-size compatibility component because current
+Desktop validation still requires a non-empty `components` list.
+The `.wash/config.yaml` marks the build as a service for dev tooling; the dev
+host must still provide `cosmonic:kafka`.
 
 The broker address and topic names in the manifests are placeholders. The
 workload's `cosmonic:kafka` entry under `hostInterfaces` is where the
@@ -64,7 +71,9 @@ that many output records arrive or the record stream ends; this template has
 no batch timer. Values are capped at 100. Increase it only for a steady stream
 where throughput matters more than partial-batch latency.
 
-The service commits stored input positions only after every output delivery
-and every per-partition commit result succeeds. A failure exits the Service so
-its supervisor restarts it from committed offsets. Transform failures are sent
-to `DLQ_TOPIC`; pending output is flushed before that record is committed.
+The service commits stored input positions only after every output delivery.
+`no-offset` means there is nothing new to commit, and a retriable commit error
+is deferred until the next flush. Fatal and non-retriable failures exit the
+Service so its supervisor restarts it from committed offsets. Transform
+failures are sent to `DLQ_TOPIC`; pending output is flushed before that record
+is committed.

@@ -5,6 +5,6 @@ package cosmonic-templates:kafka-transactional;
 // `std::env` supplies environment variables without a second wasi:cli version.
 world kafka-transactional {
     import cosmonic:kafka/consumer@0.5.0;
-    import transaction: cosmonic:kafka/transaction@0.5.0;
+    import cosmonic:kafka/transaction@0.5.0;
     export wasi:cli/run@0.3.0;
 }

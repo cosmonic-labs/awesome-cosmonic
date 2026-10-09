@@ -23,7 +23,9 @@ mod bindings {
 
 use bindings::cosmonic::kafka::consumer::Consumer;
 use bindings::cosmonic::kafka::producer;
-use bindings::cosmonic::kafka::types::{ConsumedRecord, ProduceRecord};
+use bindings::cosmonic::kafka::types::{
+    ConsumedRecord, Error as KafkaError, ErrorCode, ProduceRecord,
+};
 use bindings::exports::wasi::cli::run::Guest as RunGuest;
 
 struct Component;
@@ -55,9 +57,36 @@ fn transform(rec: &ConsumedRecord) -> Result<ProduceRecord, String> {
 }
 
 async fn commit_stored(consumer: &Consumer) -> Result<(), ()> {
-    let outcomes = consumer.commit(Vec::new()).await.map_err(|_| ())?;
-    if outcomes.iter().any(|outcome| outcome.error.is_some()) {
-        return Err(());
+    match consumer.commit(Vec::new()).await {
+        Ok(outcomes) => {
+            for outcome in outcomes {
+                match outcome.error {
+                    None | Some(ErrorCode::NoError | ErrorCode::NoOffset) => {}
+                    Some(code) => {
+                        eprintln!(
+                            "offset commit failed for {}-{}: {code:?}",
+                            outcome.topic, outcome.partition
+                        );
+                        return Err(());
+                    }
+                }
+            }
+        }
+        Err(KafkaError {
+            code: ErrorCode::NoOffset,
+            ..
+        }) => {}
+        Err(error) if error.fatal => {
+            eprintln!("fatal offset commit error: {}", error.message);
+            return Err(());
+        }
+        Err(error) if error.retriable => {
+            eprintln!("deferring offset commit retry: {}", error.message);
+        }
+        Err(error) => {
+            eprintln!("offset commit cannot be retried: {}", error.message);
+            return Err(());
+        }
     }
     Ok(())
 }

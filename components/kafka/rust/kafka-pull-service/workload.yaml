@@ -17,16 +17,22 @@ spec:
         consumer.group.id: "demo-pipeline-g1"
         auto.offset.reset: earliest
         enable.auto.commit: "false"
+  service:
+    image: ghcr.io/cosmonic-labs/kafka-templates/kafka-pull-service:latest
+    maxRestarts: 100
+    localResources:
+      environment:
+        config:
+          IN_TOPIC: demo.events
+          OUT_TOPIC: demo.enriched
+          DLQ_TOPIC: demo.events.dlq
+          BATCH_SIZE: "1"
+      allowedHosts: []
+  # Desktop currently requires one pooled component even for a service-only
+  # workload. This copy is never invoked; only `service` drives wasi:cli/run.
   components:
-    - name: pipeline
-      # Prebuilt from this template on every push to main. Swap it for your
-      # own registry once you change the source.
+    - name: desktop-validator-placeholder
       image: ghcr.io/cosmonic-labs/kafka-templates/kafka-pull-service:latest
+      poolSize: 0
       localResources:
-        environment:
-          config:
-            IN_TOPIC: demo.events
-            OUT_TOPIC: demo.enriched
-            DLQ_TOPIC: demo.events.dlq
-            BATCH_SIZE: "1"
         allowedHosts: []

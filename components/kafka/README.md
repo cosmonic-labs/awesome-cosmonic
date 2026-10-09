@@ -29,6 +29,11 @@ Start with **kafka-handler-consumer** for serverless event processing. The host
 keeps the Kafka consumer and group membership stable while component instances
 scale with assigned partition work and can return to zero when idle.
 
+`wasi:cli/run` is the runtime's long-lived Service entry point in these
+templates, not a user-facing command. Only the pull and transactional patterns
+need it because they keep a guest-owned consumer session alive. The recommended
+handler exports `cosmonic:kafka/handler` and runs as a regular pooled component.
+
 Use a Service only when the component must own session state or a transaction.
 Do not choose the pull template just to publish output: a handler can import the
 binding-scoped producer without owning a Kafka client.

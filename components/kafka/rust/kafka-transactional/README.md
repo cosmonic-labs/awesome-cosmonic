@@ -21,8 +21,8 @@ wash build                   # fetches the WIT, then runs .wash/config.yaml
 
 `wkg.lock` pins the exact versions and `wit/deps/` is gitignored, so the
 first build is what populates it. `cargo build --release` produces the same
-component; `.wash/config.yaml` just names that command and where its output
-lands, which is what lets tooling find the artifact without being told.
+component. `.wash/config.yaml` also marks it as a service and carries the
+same environment and Kafka bindings as `workload.yaml` for project tooling.
 
 To stop passing the variable, merge the entries from
 [`../../wkg-registries.toml`](../../wkg-registries.toml) into
@@ -40,6 +40,13 @@ topic, group, transaction ID, and environment placeholders before applying a
 manifest. Once you change the source, build it, push it to your own registry,
 and replace the image reference.
 
+This component exports `wasi:cli/run`, so it must occupy `spec.service`.
+Putting it only in `spec.components` loads it but never calls `run`. The
+Desktop manifest keeps a zero-size compatibility component because current
+Desktop validation still requires a non-empty `components` list.
+The `.wash/config.yaml` marks the build as a service for dev tooling; the dev
+host must still provide `cosmonic:kafka`.
+
 The broker address and topic names in the manifests are placeholders. The
 workload's `cosmonic:kafka` entry under `hostInterfaces` is where the
 connection lives — broker, credentials, groups, topic grants, and the
@@ -52,11 +59,10 @@ for binding and topic-grant rules.
 
 ## Transaction binding
 
-The named `transaction` binding is separate from the pull-consumer binding.
-All transactional sends and `send-offsets` calls run through the resource
-returned by `transaction::begin()`. Configure credentials on both bindings.
-The consumer grant needs the input topic; the transaction grant needs both the
-output topic and every input topic whose offsets it enlists.
+One Kafka binding grants both `consumer` and `transaction`. All transactional
+sends and `send-offsets` calls run through the resource returned by
+`transaction::begin()`. Its topic grant must include the output topic and every
+input topic whose offsets it enlists.
 
 The checked-in manifests are intentionally single-replica. Do not scale one
 unchanged manifest above one replica: each simultaneously live transaction
