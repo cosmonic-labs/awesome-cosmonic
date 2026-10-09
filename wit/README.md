@@ -11,7 +11,7 @@ return directly from async operations.
 | --- | --- |
 | [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
-| [`cosmonic:notifications`](cosmonic-notifications/README.md) 0.3.0 | Portable user notifications with owned sessions, actions, replies, and native async waits. |
+| [`cosmonic:notifications`](cosmonic-notifications/README.md) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native async waits. |
 
 ## Inference and agent worlds
 
@@ -86,8 +86,8 @@ node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
 
 | World | Imports | Exports |
 | --- | --- | --- |
-| `notification-consumer` | `notifier` | None |
-| `notification-provider` | None | `notifier` |
+| `notification-consumer` | `notifier`, `events` | None |
+| `notification-provider` | None | `notifier`, `events` |
 
-The provider owns each `session`; a wrapper retains its downstream session and
-preserves isolation and lifetime. See the [contract and WASI architecture review](cosmonic-notifications/README.md).
+Trusted wiring binds both interfaces to one caller scope, and the provider scopes
+ids, tags, and queued responses to it. See the [contract and WASI architecture review](cosmonic-notifications/README.md).

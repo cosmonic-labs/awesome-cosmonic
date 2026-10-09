@@ -30,6 +30,7 @@ interface types {
     /// Must contain a non-whitespace character.
     title: string,
     body: string,
+    /// Presentation hint; see `supported-features.urgency`.
     urgency: urgency,
     /// Truncated to max-actions; the provider logs what it drops.
     actions: list<action>,
@@ -49,13 +50,16 @@ interface types {
     timeout-ms: option<u32>,
   }
   /// Opaque id, unique within the caller scope and never reused there.
-  /// Ids outlive component instances; resources would not.
+  /// Ids remain valid across component instances.
   type notification-id = u64;
+  /// A submitted inline reply.
   record text-reply {
     input-id: string,
     text: string,
   }
+  /// The one terminal outcome of an accepted notification.
   variant response {
+    /// The user activated the notification body.
     activated,
     /// The selected action id.
     action(string),
@@ -65,6 +69,7 @@ interface types {
     /// Deadline, close, replacement, or orderly provider shutdown.
     expired,
   }
+  /// A queued response, correlated by the id that `post` returned.
   record event {
     id: notification-id,
     response: response,
