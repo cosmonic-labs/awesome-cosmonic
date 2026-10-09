@@ -1,7 +1,7 @@
 // Validates a WIT package directory and builds it into dist/<package>.wasm.
 //
 //   node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
@@ -33,14 +33,24 @@ async function main([dir, pkg]) {
   const version = readVersion(dir, pkg);
   setOutput("version", version);
 
-  await run("wasm-tools", ["component", "wit", dir]);
-
   // wash builds the package in ./wit, so stage the one being built.
   const stage = join(process.env.RUNNER_TEMP ?? tmpdir(), `wit-${pkg}`);
   mkdirSync(join(stage, "wit"), { recursive: true });
   for (const f of readdirSync(dir).filter((f) => f.endsWith(".wit"))) {
     copyFileSync(join(dir, f), join(stage, "wit", f));
   }
+
+  // A package with dependencies commits a wkg.lock; fetching must reproduce it.
+  const lock = join(dir, "wkg.lock");
+  if (existsSync(lock)) {
+    copyFileSync(lock, join(stage, "wkg.lock"));
+    await run("wash", ["wit", "fetch"], { cwd: stage });
+    if (readFileSync(lock, "utf8") !== readFileSync(join(stage, "wkg.lock"), "utf8")) {
+      throw new Error(`wash wit fetch changed ${lock}; commit the updated lock deliberately`);
+    }
+  }
+
+  await run("wasm-tools", ["component", "wit", join(stage, "wit")]);
   mkdirSync("dist", { recursive: true });
   const out = resolve("dist", `${pkg}.wasm`);
   await run("wash", ["wit", "build", "--output-file", out], { cwd: stage });

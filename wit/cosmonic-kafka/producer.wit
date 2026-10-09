@@ -1,0 +1,73 @@
+package cosmonic:kafka@0.5.0;
+
+/// Binding-scoped Kafka publishing.
+///
+/// Importing this interface grants a component one producer capability. The
+/// import binding fixes the brokers, credentials, transport, client policy and
+/// topic grant before the component runs. A named import selects a different
+/// admitted binding; no function accepts a connection or client configuration.
+///
+/// The provider owns and reuses the native producer behind the binding. It may
+/// share connections, metadata and batching state across concurrent component
+/// instances without exposing that client as guest-owned state. Each operation
+/// still has its own completion boundary, so one invocation never needs to
+/// flush another invocation's queue.
+///
+/// Every function is `async`. A host component plugin installs concurrent host
+/// functions on the caller's linker, and a synchronous function cannot be
+/// served by that path.
+@since(version = 0.1.0)
+interface producer {
+    @since(version = 0.4.0)
+    use types.{error, produce-record, produce-ack, partition, watermarks};
+
+    /// Produce one record and resolve with its delivery report.
+    ///
+    /// The provider must check `topic` against this binding's topic grant
+    /// before enqueueing the record.
+    ///
+    /// # Typical errors
+    /// - `msg-timed-out`: not acknowledged within `message.timeout.ms`.
+    /// - `queue-full`: the binding's bounded local queue is full.
+    /// - `unknown-topic-or-part`: the topic is absent and auto-create is off.
+    /// - `not-leader-for-partition`: leadership moved; retry after refresh.
+    @since(version = 0.4.0)
+    send: async func(topic: string, %record: produce-record)
+        -> result<produce-ack, error>;
+
+    /// Produce many records to one topic.
+    ///
+    /// The result is positional: entry N is the delivery outcome for record N.
+    /// Records are enqueued before their delivery reports are awaited so the
+    /// provider can batch them. A record rejected before enqueue appears as an
+    /// error in its position; it does not fail unrelated entries.
+    @since(version = 0.4.0)
+    send-batch: async func(topic: string, records: list<produce-record>)
+        -> result<list<result<produce-ack, error>>, error>;
+
+    /// Produce a stream of records with backpressure.
+    ///
+    /// The provider stops reading while its bounded queues are full. The
+    /// returned future resolves only after the input ends and every record the
+    /// provider accepted has a delivery outcome. A record becomes accepted when
+    /// the provider has reserved its bounded capacity and taken it from the
+    /// input stream. If the workload, binding or provider stops first, the
+    /// future reports an error because accepted records may have an unknown
+    /// outcome.
+    ///
+    /// A provider may impose a documented per-record size limit when its
+    /// component runtime cannot determine a streamed item's size before
+    /// lowering it into host memory.
+    @since(version = 0.4.0)
+    send-stream: async func(topic: string, records: stream<produce-record>)
+        -> future<result<_, error>>;
+
+    /// Partition count for a granted topic.
+    @since(version = 0.4.0)
+    partition-count: async func(topic: string) -> result<u32, error>;
+
+    /// Low and high watermarks for a granted topic partition.
+    @since(version = 0.4.0)
+    watermark-offsets: async func(topic: string, partition: partition)
+        -> result<watermarks, error>;
+}
