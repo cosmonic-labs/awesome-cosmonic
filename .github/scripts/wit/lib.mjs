@@ -11,7 +11,7 @@ export async function run(cmd, args, opts = {}) {
     const { stdout } = await exec(cmd, args, { maxBuffer: 64 << 20, ...opts });
     return stdout;
   } catch (err) {
-    throw new Error(`${cmd} ${args.join(" ")} failed:\n${err.stdout ?? ""}${err.stderr ?? ""}`);
+    throw new Error(`${cmd} ${args.join(" ")} failed: ${err.code ?? ""} ${err.message.split("\n")[0]}\n${err.stdout ?? ""}${err.stderr ?? ""}`);
   }
 }
 

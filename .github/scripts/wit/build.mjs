@@ -1,28 +1,30 @@
 // Validates a WIT package directory and builds it into dist/<package>.wasm.
 //
 //   node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
-import { copyFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import { declaration, declaredPackage, run, runMain, setOutput } from "./lib.mjs";
 
 const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
+const DECL = /^package\s+cosmonic:([a-z0-9-]+)@(\S+?)\s*;/;
+
 // Every file declares the package and they must all agree. Returns the version.
 export function readVersion(dir, pkg) {
   const files = readdirSync(dir).filter((f) => f.endsWith(".wit"));
   if (files.length === 0) throw new Error(`${dir} has no .wit files`);
-  const decls = new Set();
+  const found = new Set();
   for (const f of files) {
-    const line = readFileSync(join(dir, f), "utf8").split("\n").find((l) => l.startsWith("package "));
-    if (!line) throw new Error(`${f} has no package declaration`);
-    decls.add(line.trim());
+    const m = readFileSync(join(dir, f), "utf8").split(/\r?\n/).map((l) => DECL.exec(l)).find(Boolean);
+    if (!m) throw new Error(`${f} has no cosmonic package declaration`);
+    found.add(`${m[1]}@${m[2]}`);
   }
-  if (decls.size !== 1) throw new Error(`files disagree on the package declaration: ${[...decls].join(" | ")}`);
-  const [decl] = decls;
-  const version = decl.slice(decl.indexOf("@") + 1, -1);
+  if (found.size !== 1) throw new Error(`files disagree on the package declaration: ${[...found].join(" | ")}`);
+  const [name, version] = [...found][0].split("@");
   if (!SEMVER.test(version)) throw new Error(`version '${version}' is not <major>.<minor>.<patch>[-prerelease]`);
-  if (decl !== declaration(pkg, version)) throw new Error(`unexpected package declaration: ${decl}`);
+  if (name !== pkg) throw new Error(`${dir} declares cosmonic:${name}, expected cosmonic:${pkg}`);
   return version;
 }
 
@@ -49,4 +51,4 @@ async function main([dir, pkg]) {
   console.log(`built ${out} (${built})`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) runMain(main);
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) runMain(main);
