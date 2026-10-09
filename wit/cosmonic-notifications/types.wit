@@ -13,13 +13,15 @@ interface types {
     callback,
   }
   record action {
-    /// Non-blank printable id, unique across actions and text input.
+    /// Non-blank printable id of at most max-id-bytes, unique across actions
+    /// and text input. Echoed in responses exactly as sent.
     id: string,
     label: string,
     target: action-target,
   }
   record text-input {
-    /// Non-blank printable id, unique across actions and text input.
+    /// Non-blank printable id of at most max-id-bytes, unique across actions
+    /// and text input. Echoed in responses exactly as sent.
     id: string,
     label: string,
     placeholder: option<string>,
@@ -42,7 +44,8 @@ interface types {
     /// Body-click target. None lets the embedding choose, which may be no
     /// navigation at all.
     default-target: option<action-target>,
-    /// Trimmed; blank means none. Replaces the pending notification with the
+    /// Trimmed, then used exactly as trimmed; blank means none and more than
+    /// max-tag-bytes returns invalid-argument. Replaces the pending notification with the
     /// same tag in the same caller scope.
     tag: option<string>,
     /// Response deadline in ms; none or zero uses default-timeout-ms.
@@ -101,11 +104,16 @@ interface types {
     /// Display may remain in a notification center until completion.
     persistent: bool,
     max-actions: u32,
-    /// UTF-8 byte limits; longer text is truncated at a character boundary.
+    /// UTF-8 byte limits on display text; longer text is truncated at a
+    /// character boundary.
     max-title-bytes: u32,
     max-body-bytes: u32,
     /// Applies to action labels, input labels, and placeholders.
     max-label-bytes: u32,
+    /// UTF-8 byte limits on identifiers. Longer action and input ids, or a tag
+    /// longer after trimming, return invalid-argument. Providers never truncate
+    /// them, because that would break response correlation or make distinct
+    /// notifications replace each other.
     max-id-bytes: u32,
     max-tag-bytes: u32,
     default-timeout-ms: u32,
