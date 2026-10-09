@@ -27,8 +27,11 @@ snapshots; neither prompts. An embedding arranges permission requests through it
 own interaction flow. The provider adapts rather than fails:
 extra actions are truncated, inline input becomes a same-id button when actions
 are supported and a `max-actions` slot remains (the button counts toward the limit;
-otherwise the input is dropped and logged), oversized text is truncated at a
-character boundary, and urgency falls back to normal.
+otherwise the input is dropped and logged), oversized display text is truncated at a
+character boundary, and urgency falls back to normal. Identifiers are never
+adapted: an action or input id over `max-id-bytes`, or a tag over `max-tag-bytes`
+after trimming, returns `invalid-argument`, and accepted ids and tags are kept
+exactly, apart from tag trimming.
 `not-supported` is reserved for requests that cannot be adapted.
 
 `post` accepts delivery and returns a correlation id; visibility is not guaranteed.
