@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.4.0;
 
 /// Tool discovery and calls using inference's tool-call and tool-output types.
 interface tools {
@@ -60,21 +60,40 @@ interface tools {
         is-error: bool,
     }
 
-    /// The call could not be dispatched. Execution failures use tool-response.is-error.
-    variant call-error {
-        /// No tool by that name. Carries the name that was asked for.
+    /// This attempt did not start tool execution and produced no tool effects.
+    variant dispatch-error {
+        /// No tool by that name.
         unknown-tool(string),
-        /// Schema violation with a message suitable for returning to the model.
+        /// Arguments failed schema validation.
         invalid-arguments(string),
-        /// Provider unavailable or unable to run, with detail.
+        /// Provider unavailable before execution could start.
         upstream(string),
-        /// A person or a policy declined the call. Carries the reason to show.
+        /// A person or policy refused execution.
         denied(string),
-        /// The call was cancelled before it finished.
         cancelled,
-        /// The call ran longer than it was allowed to.
         timed-out,
+        /// Diagnostic detail; never parse it to determine dispatch state.
         other(string),
+    }
+
+    /// No terminal tool response was obtained; effects may have occurred.
+    variant outcome-error {
+        /// The provider or connection failed after dispatch may have occurred.
+        upstream(string),
+        /// Cancellation was requested; execution may continue.
+        cancelled,
+        /// The execution deadline elapsed; execution may continue.
+        timed-out,
+        /// Diagnostic detail; never parse it to determine effects.
+        other(string),
+    }
+
+    /// Completed tool failures use tool-response.is-error.
+    variant call-error {
+        /// This attempt is confirmed not to have started execution.
+        not-dispatched(dispatch-error),
+        /// Dispatch or completion cannot be confirmed; effects remain unknown.
+        outcome-unknown(outcome-error),
     }
 
     /// All tools offered by this provider.
@@ -83,6 +102,8 @@ interface tools {
     /// Run a tool call. Its id correlates execution with the requesting turn.
     /// Retries reuse the same id and arguments; providers supporting repeat
     /// detection must reject the same id with different arguments.
-    /// Dropping the pending call cancels provider work.
+    /// Retry an unknown outcome only with trusted repeat detection for this id.
+    /// Dropping the pending call requests cooperative cancellation and may return
+    /// no result. Without a terminal response, treat its effects as unknown.
     call: async func(request: tool-call) -> result<tool-response, call-error>;
 }

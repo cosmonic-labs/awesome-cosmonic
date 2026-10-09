@@ -8,7 +8,7 @@ Long-lived operations use native WIT streams and futures.
 
 | Package | Contract |
 | --- | --- |
-| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.4.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
 | [`cosmonic:notify`](cosmonic-notify/notify.wit) 0.2.0 | An API for sending notifications to users and getting their responses, with actions such as links and callbacks. |
 
@@ -40,7 +40,7 @@ before unloading. It is not included in the inference or agent worlds; hosts
 grant it explicitly. Dropping an inference handle releases only its reservation.
 Providers control retention and sharing, including for direct WIT callers.
 
-## Model ownership and capabilities
+## Model ownership and supported operations
 
 `inference-types.model` is a provider-owned resource ready for inference. The
 provider exports its resource definition alongside chat and embeddings so
@@ -52,12 +52,35 @@ attachment egress, and credential policy.
 
 Both catalog entries and prepared handles expose the same `model-description`.
 Catalog limits may be unknown; a prepared handle reports its effective limits.
-Capabilities describe the provider/model pair, not just the model's training.
+Supported operations describe the provider/model pair, not just the model's training.
 Optional fields distinguish unknown from unsupported: `accepts = some(empty)`
 means text-only, and `supported-options = some(empty)` means no optional knobs.
 Supported options can still reject values outside their range. If an option or
 message part cannot be represented, `on-unrepresentable` controls refusal or
 reported adaptation. Providers must not silently discard unsupported features.
+
+## Agent 0.4.0 migration
+
+The agent package adds typed chat interruption outcomes and explicit tool dispatch
+outcomes. Update imports from `cosmonic:agent@0.3.0` to `cosmonic:agent@0.4.0`.
+The published 0.3.0 artifact remains unchanged.
+
+- Rename `inference-types.capabilities` and `model-description.capabilities` to
+  `supported-operations`. The flags remain `chat` and `embeddings`.
+- Handle `cancelled` and `timed-out` in both chat error types. Before acceptance,
+  errors return from `chat`; afterward, they resolve the reply's outcome future.
+  Dropping reply chunks requests cooperative cancellation. A terminal outcome
+  already recorded wins the race. Abandoning a pending call may return no result.
+- Match tool errors as `not-dispatched(dispatch-error)` or
+  `outcome-unknown(outcome-error)`. The first confirms that this attempt produced
+  no execution or effects; the second includes uncertain dispatch and lost replies.
+  Both preserve typed cancellation, timeout, upstream failure, and diagnostic detail.
+- Keep completed execution failures in `tool-response.is-error`, with their output
+  available to the model. Cancellation and timeout do not imply rollback.
+- Record an unknown tool outcome or abandoned call as an unresolved operation.
+  Retry with the same id and arguments only when trusted configuration authorizes
+  repeat detection. Provider annotations cannot authorize replay. A not-dispatched
+  result describes this attempt and does not erase effects from earlier attempts.
 
 ## Usage
 
