@@ -3,7 +3,9 @@ package cosmonic:notifications@0.3.0;
 
 world notification-consumer {
   import notifier;
+  import events;
 }
 world notification-provider {
   export notifier;
+  export events;
 }
