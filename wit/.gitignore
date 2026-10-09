@@ -2,3 +2,5 @@
 */deps/
 */wkg.lock
 wkg.lock
+# The kafka package imports wasi:cli and wasmcloud:host; the lock pins them by digest.
+!cosmonic-kafka/wkg.lock

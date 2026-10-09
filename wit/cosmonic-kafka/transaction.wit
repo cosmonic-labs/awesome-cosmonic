@@ -1,0 +1,98 @@
+package cosmonic:kafka@0.5.0;
+
+/// Binding-scoped transactional Kafka publishing.
+///
+/// This is a separate capability from `producer`. Its binding supplies a
+/// stable `transactional.id` and, when `send-offsets` is used, a
+/// `transaction.group.id`. Keeping it separate prevents ordinary concurrent
+/// sends from joining a transaction implicitly and lets an operator grant
+/// transactional authority independently.
+///
+/// The provider owns the native producer. `begin` leases its single Kafka
+/// transaction slot and returns the stateful resource through which every
+/// participating send is made. The initial contract permits one active
+/// transaction per binding; a concurrent `begin` fails with `state` or a
+/// retriable resource error.
+///
+/// Each simultaneously live producer needs a distinct stable
+/// `transactional.id`. Deploying the same ID on two hosts or replicas causes
+/// Kafka to fence one of them. Elastic transaction pools therefore require an
+/// external stable-ID allocation scheme; this interface does not invent one.
+@since(version = 0.5.0)
+interface transaction {
+    @since(version = 0.5.0)
+    use types.{
+        error, produce-record, produce-ack, partition-offset, partition,
+        watermarks
+    };
+
+    /// One transaction on this binding's producer.
+    ///
+    /// The resource is a strict state machine. Producing and `send-offsets`
+    /// are valid while active. Exactly one of `commit`, `abort` or resource
+    /// drop ends it. Calls made after a terminal operation fail with `state`.
+    /// On an error with `txn-requires-abort`, the only valid terminal operation
+    /// is `abort`. A fatal error retires the binding's native client.
+    @since(version = 0.5.0)
+    resource transaction {
+        /// Produce one record as part of this transaction.
+        @since(version = 0.5.0)
+        send: async func(topic: string, %record: produce-record)
+            -> result<produce-ack, error>;
+
+        /// Produce many records as part of this transaction.
+        ///
+        /// Results are positional, as in `producer.send-batch`.
+        @since(version = 0.5.0)
+        send-batch: async func(topic: string, records: list<produce-record>)
+            -> result<list<result<produce-ack, error>>, error>;
+
+        /// Stream records into this transaction with bounded backpressure.
+        ///
+        /// A concurrent `commit` or `abort` closes stream admission. Permits
+        /// already granted may finish enqueueing, which defines the accepted
+        /// prefix. `commit` waits for that prefix and includes it; `abort`
+        /// waits until no operation can enqueue and discards the transaction.
+        /// The stream future reports `state` when terminal finalization
+        /// truncates its input, so the caller cannot mistake the prefix for the
+        /// complete stream.
+        @since(version = 0.5.0)
+        send-stream: async func(topic: string, records: stream<produce-record>)
+            -> future<result<_, error>>;
+
+        /// Add consumer offsets to this transaction.
+        ///
+        /// Offsets are the positions to resume at, normally one past the last
+        /// record processed. The provider validates every topic and uses the
+        /// binding's fixed `transaction.group.id`; the guest cannot select or
+        /// disturb another consumer group.
+        @since(version = 0.5.0)
+        send-offsets: async func(offsets: list<partition-offset>)
+            -> result<_, error>;
+
+        /// Commit after every accepted send has reached a delivery outcome.
+        @since(version = 0.5.0)
+        commit: async func() -> result<_, error>;
+
+        /// Stop accepting sends and discard the transaction.
+        @since(version = 0.5.0)
+        abort: async func() -> result<_, error>;
+    }
+
+    /// Initialize this binding's transactional client and begin a transaction.
+    ///
+    /// Initialization fences a previous producer using the same stable
+    /// `transactional.id`. The returned resource owns the binding's transaction
+    /// slot until commit, abort or bounded drop cleanup finishes.
+    @since(version = 0.5.0)
+    begin: async func() -> result<transaction, error>;
+
+    /// Partition count for a granted topic.
+    @since(version = 0.5.0)
+    partition-count: async func(topic: string) -> result<u32, error>;
+
+    /// Low and high watermarks for a granted topic partition.
+    @since(version = 0.5.0)
+    watermark-offsets: async func(topic: string, partition: partition)
+        -> result<watermarks, error>;
+}

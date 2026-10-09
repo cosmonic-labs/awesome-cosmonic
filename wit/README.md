@@ -9,6 +9,7 @@ Long-lived operations use native WIT streams and futures.
 | Package | Contract |
 | --- | --- |
 | [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.0 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
 | [`cosmonic:notify`](cosmonic-notify/notify.wit) 0.2.0 | An API for sending notifications to users and getting their responses, with actions such as links and callbacks. |
 
 ## Inference and agent worlds
@@ -67,8 +68,15 @@ client -> cosmonic:agent inference -> local provider
 agent -> authorized model aliases + chat + tools + session
 ```
 
-Each package is self-contained:
+`cosmonic:agent` and `cosmonic:notify` are self-contained:
 
 ```sh
 wasm-tools component wit wit/cosmonic-agent
+```
+
+`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, which `wkg.lock` pins by
+digest. The build script fetches them and checks the lock still reproduces:
+
+```sh
+node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
 ```
