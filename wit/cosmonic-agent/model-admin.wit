@@ -1,0 +1,59 @@
+package cosmonic:agent@0.3.0;
+
+/// Trusted catalog and preparation controls for local or remote inference.
+/// Agents acquire authorized handles through models instead.
+interface model-admin {
+    use inference-types.{model, model-description};
+
+    variant prepare-error {
+        /// Capacity is reserved or the model is draining; the caller may retry.
+        temporarily-unavailable(string),
+        /// Preparation failed over the network.
+        network-error(string),
+        /// Preparation failed while accessing local model data.
+        file-system-error(string),
+        /// Anything else.
+        other(string),
+    }
+
+    record prepare-options {
+        /// Requested prompt-plus-reply context window. None uses the provider default;
+        /// the provider caps it to the model's supported window.
+        context-length: option<u32>,
+    }
+
+    /// How far a phase that moves bytes has got.
+    record byte-progress {
+        /// Bytes done so far in this phase.
+        completed: u64,
+        /// Bytes this phase has in total, when known.
+        total: option<u64>,
+    }
+
+    /// Preparation progress. Initializing has no byte count and may include
+    /// opening a remote connection. Providers only emit phases they perform.
+    variant prepare-progress {
+        reading-cache(byte-progress),
+        downloading(byte-progress),
+        writing-cache(byte-progress),
+        initializing,
+    }
+
+    get-available-models: async func() -> list<model-info>;
+
+    /// A model the provider can prepare for inference.
+    resource model-info {
+        name: async func() -> string;
+        description: async func() -> string;
+        describe: async func() -> model-description;
+
+        /// Acquire a handle, sharing resident weights or a connection when possible.
+        /// Dropping the handle releases its reservation, not another caller's work.
+        /// Progress is coalesced and never blocks preparation; dropping it does not cancel work.
+        /// The outcome resolves when ready; pending progress may drain afterward.
+        /// Remote providers may return an empty stream.
+        prepare: async func(
+            options: prepare-options,
+        ) -> tuple<stream<prepare-progress>, future<result<model, prepare-error>>>;
+    }
+}

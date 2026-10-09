@@ -1,0 +1,29 @@
+package cosmonic:agent@0.3.0;
+
+/// Streaming inference with a prepared model.
+interface chat {
+    use inference-types.{
+        model, message, chat-options, chunk, completion, request-error, generation-error,
+    };
+
+    /// Reply chunks followed by the assembled completion or generation error.
+    type reply = tuple<stream<chunk>, future<result<completion, generation-error>>>;
+
+    /// Write messages while this call is pending; streams do not buffer. Close
+    /// the stream, then resolve messages-done to ok for a complete conversation.
+    ///
+    /// Acceptance reads all messages and validates the request. Failures before
+    /// acceptance are request-error; failures afterward arrive on the outcome future.
+    /// A provider may wait for upstream acceptance before returning.
+    ///
+    /// Text deltas contain whole UTF-8 characters. Drain chunks before awaiting
+    /// the outcome. Dropping the stream cancels generation; the outcome, if
+    /// awaited, reports cancellation. It may also be dropped. The completion
+    /// contains the assembled reply, usage, finish reason, and adaptations.
+    chat: async func(
+        model: borrow<model>,
+        messages: stream<message>,
+        messages-done: future<result<_, string>>,
+        options: chat-options,
+    ) -> result<reply, request-error>;
+}

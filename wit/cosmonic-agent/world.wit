@@ -1,0 +1,48 @@
+/// Inference, authorized model access, tools, and durable agent sessions.
+package cosmonic:agent@0.3.0;
+
+/// A provider owns the model resources used by its inference interfaces.
+world inference-provider {
+    export inference-types;
+    export model-admin;
+    export chat;
+    export embeddings;
+}
+
+/// A trusted serving component, such as the OpenAI server.
+world inference-client {
+    import inference-types;
+    import model-admin;
+    import chat;
+    import embeddings;
+}
+
+/// A provider that only serves chat.
+world chat-provider {
+    export inference-types;
+    export model-admin;
+    export chat;
+}
+
+/// A provider that only serves embeddings.
+world embeddings-provider {
+    export inference-types;
+    export model-admin;
+    export embeddings;
+}
+
+/// A sandboxed agent acquires models through workload-scoped aliases.
+/// Model administration, credentials, and network grants belong to the host.
+/// Notifications require an explicit cosmonic:notify import and host grant.
+world agent {
+    import inference-types;
+    import models;
+    import chat;
+    import tools;
+    import session;
+}
+
+/// A tool's network and storage grants belong to its provider component.
+world tool-provider {
+    export tools;
+}

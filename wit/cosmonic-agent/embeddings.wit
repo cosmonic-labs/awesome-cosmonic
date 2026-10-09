@@ -1,0 +1,33 @@
+package cosmonic:agent@0.3.0;
+
+/// Text embeddings with a prepared model.
+interface embeddings {
+    use inference-types.{model};
+
+    record embedded {
+        /// One vector per input, in input order. Scaling is provider-specific.
+        embeddings: list<list<f32>>,
+        /// Tokens across all inputs.
+        prompt-tokens: u32,
+    }
+
+    record input-overflow {
+        /// Which input does not fit.
+        index: u32,
+        tokens: u32,
+        context-length: u32,
+    }
+
+    variant embed-error {
+        /// An input has more tokens than the model takes at once.
+        input-too-long(input-overflow),
+        /// An input is empty.
+        empty-input(u32),
+        /// The model cannot produce embeddings.
+        unsupported(string),
+        /// Anything else.
+        other(string),
+    }
+
+    embed: async func(model: borrow<model>, inputs: list<string>) -> result<embedded, embed-error>;
+}

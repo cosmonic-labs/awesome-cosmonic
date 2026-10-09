@@ -1,0 +1,25 @@
+package cosmonic:agent@0.3.0;
+
+/// Workload-scoped aliases resolved by the host to an inference provider.
+/// Trusted catalog and residency controls are separate.
+interface models {
+    use inference-types.{model, model-description};
+
+    variant open-error {
+        unknown-alias(string),
+        denied(string),
+        unavailable(string),
+        /// The alias exceeds the host's byte limit.
+        too-large(u64),
+        other(string),
+    }
+
+    /// Returns a handle served by the same provider as chat and embeddings.
+    /// A router must forward its own handles to that provider's resources.
+    /// Existing handles retain their provider when an alias changes.
+    open: async func(alias: string) -> result<model, open-error>;
+
+    /// Resolves the alias afresh and reports what the host knows.
+    /// The same workload access checks as open apply.
+    describe: async func(alias: string) -> result<model-description, open-error>;
+}

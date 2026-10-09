@@ -1,0 +1,121 @@
+# Validates the cosmonic:agent and cosmonic:notify WIT packages and publishes
+# them to GHCR as ghcr.io/cosmonic-labs/cosmonic/<package>.
+#
+# The version in each package's `package` declaration is the release version.
+# A merge to main that bumps it publishes that version; any other merge finds
+# the version already there and skips, so a published version is never moved.
+name: wit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wit/**"
+      - ".github/workflows/wit.yml"
+  pull_request:
+    paths:
+      - "wit/**"
+      - ".github/workflows/wit.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  wit:
+    name: ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: agent
+            dir: wit/cosmonic-agent
+          - package: notify
+            dir: wit/cosmonic-notify
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+
+      - uses: wasmCloud/setup-wash-action@v2.1.0
+
+      - name: Read package identity
+        id: meta
+        run: |
+          set -euo pipefail
+          decl=$(grep -h -m1 -oE '^package cosmonic:[a-z0-9-]+@[^;]+' ${{ matrix.dir }}/*.wit | sort -u)
+          [ "$(echo "$decl" | wc -l)" = 1 ] || { echo "::error::files disagree on the package declaration: $decl"; exit 1; }
+          version=${decl#*@}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::package version '$version' is not <major>.<minor>.<patch>[-prerelease]"
+            exit 1
+          fi
+          [ "${decl#package }" = "cosmonic:${{ matrix.package }}@${version}" ] \
+            || { echo "::error::unexpected package declaration: $decl"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate the package
+        run: wasm-tools component wit ${{ matrix.dir }} > /dev/null
+
+      - name: Build the package
+        run: |
+          set -euo pipefail
+          # wash builds the package in ./wit, so stage the one being built.
+          stage="$RUNNER_TEMP/${{ matrix.package }}"
+          mkdir -p "$stage/wit"
+          cp ${{ matrix.dir }}/*.wit "$stage/wit/"
+          (cd "$stage" && wash wit build --output-file "$GITHUB_WORKSPACE/${{ matrix.package }}.wasm")
+
+      - name: Log in to GHCR
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic' &&
+          github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GHCR
+        if: >-
+          github.event_name != 'pull_request' &&
+          github.repository == 'cosmonic-labs/awesome-cosmonic' &&
+          github.ref == 'refs/heads/main'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          NAME: cosmonic-labs/cosmonic/${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          token=$(curl -fsS -u "${GITHUB_ACTOR}:${{ secrets.GITHUB_TOKEN }}" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${NAME}:pull" | jq -r '.token // empty')
+          [ -n "$token" ] || { echo "::error::ghcr.io issued no token for ${NAME}"; exit 1; }
+
+          # Acts only on 200 or 404; anything else (auth, outage) fails rather
+          # than risk pushing over a release.
+          status=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json" \
+            "https://ghcr.io/v2/${NAME}/manifests/${VERSION}")
+          case "$status" in
+            200)
+              echo "::notice::ghcr.io/${NAME}:${VERSION} is already published; bump the version to release these changes"
+              ;;
+            404)
+              wash -o json oci push "ghcr.io/${NAME}:${VERSION}" ${{ matrix.package }}.wasm
+              ;;
+            *)
+              echo "::error::probing ghcr.io/${NAME}:${VERSION} returned HTTP ${status}"
+              exit 1
+              ;;
+          esac

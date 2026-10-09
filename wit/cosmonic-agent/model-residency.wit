@@ -1,0 +1,46 @@
+package cosmonic:agent@0.3.0;
+
+/// Optional, trusted controls for providers that manage local model residency.
+/// Hosts grant this interface separately from inference and agent aliases.
+interface model-residency {
+    use model-admin.{prepare-progress, prepare-error};
+
+    enum residency-state {
+        unloaded,
+        preparing,
+        ready,
+        draining,
+    }
+
+    record residency-status {
+        state: residency-state,
+        /// Outstanding inference handles and accepted work.
+        handles: u32,
+        pins: u32,
+    }
+
+    variant residency-error {
+        unknown-model(string),
+        unsupported(string),
+        preparation(prepare-error),
+        other(string),
+    }
+
+    /// Keeps a model resident. Dropping this reservation releases only its pin.
+    resource reservation;
+
+    /// Reports residency without preparing the model or reading its weights.
+    status: async func(name: string) -> result<residency-status, residency-error>;
+
+    /// Prepare and pin a model. Multiple reservations hold independent pins.
+    /// Dropping progress does not cancel preparation; dropping the result releases its pin.
+    pin: async func(name: string) -> tuple<
+        stream<prepare-progress>, future<result<reservation, residency-error>>
+    >;
+
+    /// Reject new preparation until existing handles, work, and pins finish.
+    /// The outcome resolves after resident resources are released. Dropping it
+    /// does not cancel draining. Later preparation may load the model again.
+    /// Downloaded weights are retained.
+    unload: async func(name: string) -> result<future<result<_, residency-error>>, residency-error>;
+}

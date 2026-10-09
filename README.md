@@ -37,6 +37,7 @@ wash build
   - [Kafka](#kafka)
   - [NATS](#nats)
   - [MCP Servers](#mcp-servers)
+- [WIT Packages](#wit-packages)
 - [Host Plugins](#host-plugins)
   - [Native Host Plugins](#native-host-plugins)
   - [Host Component Plugins](#host-component-plugins)
@@ -93,6 +94,13 @@ The same seven patterns in Go, built with [componentize-go](https://github.com/b
 - [pii-redactor-mcp](components/mcp-servers/pii-redactor-mcp/) (hosted): Redact six specific patterns of sensitive value from text with a single `redact` tool: emails, US SSNs, North American phone numbers, Luhn-validated payment cards, IPv4 addresses, and AWS access key ids, each replaced by a distinct `[REDACTED_*]` placeholder, with per-category counts. Pure compute with **zero egress**: the component never constructs an outbound request, so the text it sees cannot leave the sandbox. Six regular expressions are not a PII classifier, and the README documents what they miss. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 - [md-html-sanitizer-mcp](components/mcp-servers/md-html-sanitizer-mcp/) (hosted): Turn untrusted markdown or HTML into safe HTML. `sanitize_html` runs raw HTML through the [ammonia](https://docs.rs/ammonia) allowlist (dropping `<script>`/`<style>`/`<iframe>`, event-handler attributes, and `javascript:`/`data:` URLs), and `render_markdown` renders CommonMark with [pulldown-cmark](https://docs.rs/pulldown-cmark) and passes the result back through ammonia so embedded raw HTML is neutralized. Pure compute with **zero egress**: the component never constructs an outbound request, so the content it sees cannot leave the sandbox. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 - [gitlab-mcp](components/mcp-servers/gitlab-mcp/) (hosted): Searches and reads GitLab (projects, issues, files) over the GitLab REST API v4, bounded by `allowedHosts` to the single host `gitlab.com`. Runs unauthenticated by default; an optional `GITLAB_TOKEN` secret raises the rate limit and reaches private projects. Rust component exporting `wasi:http/handler@0.3.0`.
+
+## WIT Packages
+
+Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/cosmonic/<package>`. Resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Hosted under [`wit/`](wit/).
+
+- [cosmonic:agent](wit/cosmonic-agent/) (hosted): Provider-independent inference, authorized model aliases, tools, and durable sessions.
+- [cosmonic:notify](wit/cosmonic-notify/) (hosted): Notifications and calls to action, available through an explicit host grant.
 
 ## Host Plugins
 
