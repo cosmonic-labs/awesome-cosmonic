@@ -7,8 +7,9 @@
 // `check` fails if the version is published with other contents. Anonymous
 // mode is read-only and passes when the package is not visible.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { declaredPackage, notice, run, runMain, setOutput, warning } from "./lib.mjs";
 
@@ -104,4 +105,4 @@ async function main([cmd, pkg, wasm, ...rest]) {
   throw new Error(`unknown command '${cmd}'`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) runMain(main);
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) runMain(main);
