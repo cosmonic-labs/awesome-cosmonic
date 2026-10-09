@@ -1,0 +1,103 @@
+package wasmcloud:notifications@0.3.0;
+
+/// Text is plain; providers may strip display controls and normalize empty labels.
+interface types {
+  /// An interaction returned to the sender; no navigation is performed.
+  record action {
+    /// Non-blank printable id, unique across actions and text input.
+    id: string,
+    label: string,
+  }
+  record text-input {
+    /// Non-blank printable id, unique across actions and text input.
+    id: string,
+    label: string,
+    placeholder: option<string>,
+  }
+  /// Presentation hint; unsupported urgency uses normal.
+  enum urgency { low, normal, critical }
+  record notification {
+    /// Must contain a non-whitespace character.
+    title: string,
+    body: string,
+    urgency: urgency,
+    /// Unsupported actions or counts above max-actions return not-supported.
+    actions: list<action>,
+    /// Unsupported input returns not-supported; never becomes a button.
+    input: option<text-input>,
+    /// Trimmed; blank means none. Replaces the pending tag in this session.
+    tag: option<string>,
+    /// Response deadline in ms; none or zero uses default-timeout-ms.
+    /// Values above max-timeout-ms are clamped. Display lifetime is best effort.
+    timeout-ms: option<u32>,
+  }
+  /// Opaque id, valid only in its session; never reused during that session.
+  type notification-id = u64;
+  record text-reply {
+    input-id: string,
+    text: string,
+  }
+  variant response {
+    activated,
+    /// The selected action id.
+    action(string),
+    /// The input id and submitted text.
+    reply(text-reply),
+    dismissed,
+    /// Deadline, close, replacement, or orderly provider shutdown.
+    expired,
+  }
+  record event {
+    id: notification-id,
+    response: response,
+  }
+  variant error-code {
+    /// Permission or service policy forbids the operation.
+    access-denied,
+    /// A rate or resource limit was reached.
+    limit-exceeded,
+    /// The service cannot deliver notifications now.
+    unavailable,
+    invalid-argument(string),
+    /// Required interaction or payload size is not supported.
+    not-supported(string),
+    /// Delivery failed; detail is diagnostic only.
+    failed(string),
+    /// An unclassified error; optional detail is diagnostic only.
+    other(option<string>),
+  }
+  /// Effective behavior of the composed service, not its underlying platform.
+  record supported-features {
+    actions: bool,
+    inline-reply: bool,
+    urgency: bool,
+    /// Display may remain in a notification center until completion.
+    persistent: bool,
+    max-actions: u32,
+    /// UTF-8 byte limits; oversized fields return not-supported.
+    max-title-bytes: u32,
+    max-body-bytes: u32,
+    /// Applies to action labels, input labels, and placeholders.
+    max-label-bytes: u32,
+    max-id-bytes: u32,
+    max-tag-bytes: u32,
+    default-timeout-ms: u32,
+    max-timeout-ms: u32,
+    max-pull-wait-ms: u32,
+    /// Overflow drops the oldest queued responses.
+    max-queued-events: u32,
+  }
+  enum permission {
+    granted,
+    denied,
+    prompt-required,
+    /// The provider cannot determine permission.
+    unknown,
+  }
+  /// Snapshot only; sending can still fail after this query succeeds.
+  record service-status {
+    available: bool,
+    permission: permission,
+  }
+}
+

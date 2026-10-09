@@ -1,0 +1,30 @@
+package wasmcloud:notifications@0.3.0;
+
+/// Sessions isolate ids, tags, and queues. Providers control attribution.
+interface notifier {
+  use types.{notification, notification-id, response, event,
+             error-code, supported-features, service-status};
+  /// Retain or share this resource to receive responses across calls.
+  /// Drop withdraws pending notifications and discards queued responses.
+  /// Resources cannot be serialized or recovered after provider loss.
+  resource session {
+    /// Side-effect-free discovery; never displays UI or requests permission.
+    supported-features: async func() -> supported-features;
+    /// Side-effect-free availability and permission snapshot.
+    status: async func() -> service-status;
+    /// Accepts delivery; does not guarantee visibility. Responses use pull.
+    post: async func(notification: notification) -> result<notification-id, error-code>;
+    /// Waits for one terminal response or the bounded deadline; never queues it.
+    request: async func(notification: notification) -> result<response, error-code>;
+    /// Resolves a pending id as expired. Unknown or completed ids are a no-op.
+    close: async func(id: notification-id) -> result<_, error-code>;
+    /// Removes queued events at most once; zero polls, waits are clamped.
+    /// Live providers settle accepted notifications once. Overflow and abrupt
+    /// provider loss can prevent delivery; no durable delivery is promised.
+    pull: async func(max-wait-ms: u32) -> result<list<event>, error-code>;
+  }
+  /// Opens an isolated session using identity from trusted wiring.
+  /// Never requests permission; an unavailable service may still open a session.
+  open: async func() -> result<session, error-code>;
+}
+

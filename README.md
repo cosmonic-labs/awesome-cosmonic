@@ -97,11 +97,11 @@ The same seven patterns in Go, built with [componentize-go](https://github.com/b
 
 ## WIT Packages
 
-Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/cosmonic/<package>`. Call them from any component; resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Source lives in [`wit/`](wit/).
+Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/<namespace>/<package>`. Call them from any component; resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Source lives in [`wit/`](wit/).
 
 - [cosmonic:agent](wit/cosmonic-agent/): An API for calling models, tools, and durable sessions without tying a component to one inference provider.
 - [cosmonic:kafka](wit/cosmonic-kafka/): An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions.
-- [cosmonic:notify](wit/cosmonic-notify/): An API for sending notifications to users and getting their responses, with actions such as links and callbacks.
+- [wasmcloud:notifications](wit/wasmcloud-notifications/): Portable user notifications with owned sessions, actions, replies, and native async waits.
 
 ## Host Plugins
 

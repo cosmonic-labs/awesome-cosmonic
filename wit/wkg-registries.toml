@@ -1,9 +1,9 @@
 # Registry mapping for `wkg` / `wash wit fetch`, so a project can depend on
-# `cosmonic:agent`, `cosmonic:kafka` or `cosmonic:notify`:
+# `cosmonic:agent`, `cosmonic:kafka` or `wasmcloud:notifications`:
 #
 #   WKG_CONFIG_FILE=path/to/wkg-registries.toml wash wit fetch
 #
-# Packages are laid out as ghcr.io/cosmonic-labs/cosmonic/<package>.
+# Packages are laid out as ghcr.io/cosmonic-labs/<namespace>/<package>.
 #
 # Self-contained rather than additive: `WKG_CONFIG_FILE` replaces a tool's
 # config wholesale, so the `wasi` namespace is repeated here.
@@ -17,5 +17,16 @@ registry = "ghcr.io"
 preferredProtocol = "oci"
 
 [namespace_registries.cosmonic.metadata.oci]
+registry = "ghcr.io"
+namespacePrefix = "cosmonic-labs/"
+
+# Override only this package; other wasmcloud packages retain their registry.
+[package_registry_overrides."wasmcloud:notifications"]
+registry = "ghcr.io"
+
+[package_registry_overrides."wasmcloud:notifications".metadata]
+preferredProtocol = "oci"
+
+[package_registry_overrides."wasmcloud:notifications".metadata.oci]
 registry = "ghcr.io"
 namespacePrefix = "cosmonic-labs/"
