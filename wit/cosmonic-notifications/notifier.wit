@@ -1,0 +1,56 @@
+package cosmonic:notifications@0.3.0;
+
+/// Calls carry no caller identity. Trusted wiring binds `notifier` and `events`
+/// to one stable caller scope and preserves it across component instances. The
+/// provider scopes ids, tags, rate budget, and queued responses to that scope, so
+/// short-lived components wired to it share them across invocations. An embedding
+/// chooses what a scope is; Desktop maps it to a workload.
+interface notifier {
+  use types.{notification, notification-id, response, error-code,
+             supported-features};
+
+  /// An accepted notification.
+  record sent {
+    id: notification-id,
+    /// Resolves with the terminal response when its reader is still attached as
+    /// the notification settles. Otherwise the response goes to
+    /// `events.subscribe`. Delivery is best effort and not durable: a reader
+    /// that fails mid-await can lose the response. Dropping the future does not
+    /// withdraw the notification.
+    response: future<response>,
+  }
+
+  /// Side-effect-free discovery; never displays UI. An unavailable service
+  /// still succeeds, with `available` false. A remote provider that cannot be
+  /// reached returns an error.
+  features: async func() -> result<supported-features, error-code>;
+  /// Accepts delivery; does not guarantee visibility. A provider may request
+  /// platform authorization on the first send. Await `response` to wait for the
+  /// answer, or drop it and collect the answer later from `events.subscribe`.
+  /// Returns `unavailable` while the service is unavailable.
+  send: async func(notification: notification) -> result<sent, error-code>;
+  /// Settles a pending id as `closed`, delivered like any response. Unknown or
+  /// completed ids, and an unavailable service, are a no-op that succeeds.
+  close: async func(id: notification-id) -> result<_, error-code>;
+}
+
+/// Responses that settled with no reader on their `sent.response` future,
+/// queued per caller scope across invocations. It must be bound to the same
+/// scope as `notifier`.
+interface events {
+  use types.{event, error-code};
+  /// Streams queued events. A stream receives each event at most once and
+  /// removes it from the queue only when the reader takes it; events unread
+  /// when the reader drops the stream stay queued. Open streams compete for
+  /// events.
+  ///
+  /// With `follow` false the stream ends after the backlog queued when it
+  /// opened, so a short-lived component reads what has settled and finishes.
+  /// With `follow` true it then continues with live events until the reader
+  /// drops it, for a long-lived component.
+  ///
+  /// The queue is bounded and overflow drops the oldest events. Abrupt provider
+  /// loss can prevent delivery. Returns `unavailable` while the service is
+  /// unavailable and `limit-exceeded` when too many streams are open.
+  subscribe: async func(follow: bool) -> result<stream<event>, error-code>;
+}

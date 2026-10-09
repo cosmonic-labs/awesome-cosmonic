@@ -1,0 +1,133 @@
+package cosmonic:notifications@0.3.0;
+
+/// Text is plain; providers may strip display controls and normalize empty labels.
+interface types {
+  /// What happens when the user activates an action or the notification body.
+  variant action-target {
+    /// Open a relative application route. Reject schemes, hosts, `..`, and a
+    /// leading `//`. An unknown route only focuses the application.
+    deep-link(string),
+    /// Open an HTTP or HTTPS URL. Other schemes return invalid-argument.
+    url(string),
+    /// Return the response to the sender; the provider navigates nowhere.
+    callback,
+  }
+  record action {
+    /// Printable id with at least one non-whitespace character and no control
+    /// characters, unique across actions and text input (a collision returns
+    /// invalid-argument). It is never trimmed and is echoed in responses exactly
+    /// as sent. Providers accept at least 64 UTF-8 bytes and return
+    /// invalid-argument for an id they will not accept; they never truncate it.
+    id: string,
+    label: string,
+    target: action-target,
+  }
+  record text-input {
+    /// Same rules as `action.id`.
+    id: string,
+    label: string,
+    placeholder: option<string>,
+  }
+  /// Presentation hint; unsupported urgency uses normal.
+  enum urgency { low, normal, critical }
+  record notification {
+    /// Must contain a non-whitespace character. Display text is truncated at a
+    /// character boundary when the provider's limit is exceeded.
+    title: string,
+    body: string,
+    /// Presentation hint; see `supported-features.urgency`.
+    urgency: urgency,
+    /// Truncated to max-actions; the provider logs what it drops.
+    actions: list<action>,
+    /// Without inline-reply support, becomes an action with the same id and the
+    /// `callback` target, but only if actions are supported and a max-actions
+    /// slot remains after the listed actions; the fallback button counts toward
+    /// max-actions. Otherwise the provider drops the input and logs it. The
+    /// user's click then arrives as `action(id)` with no text, so check
+    /// `supported-features.inline-reply` when that matters.
+    input: option<text-input>,
+    /// Body-click target. None lets the embedding choose, which may be no
+    /// navigation at all.
+    default-target: option<action-target>,
+    /// Trimmed, then used exactly as trimmed; blank means none. Providers
+    /// accept at least 64 UTF-8 bytes and return invalid-argument for a tag
+    /// they will not accept; they never truncate it. Replaces the pending
+    /// notification with the same tag in the same caller scope; the replaced id
+    /// settles as `closed`.
+    tag: option<string>,
+    /// Response deadline in ms. None or zero uses the provider's default, and
+    /// values above the provider's maximum are clamped; both are
+    /// provider-defined. Display lifetime is best effort.
+    timeout-ms: option<u32>,
+  }
+  /// Opaque id, unique within the caller scope and never reused there.
+  /// Ids remain valid across component instances.
+  type notification-id = u64;
+  /// A submitted inline reply.
+  record text-reply {
+    input-id: string,
+    text: string,
+  }
+  /// The one terminal outcome of an accepted notification.
+  variant response {
+    /// The user activated the notification body.
+    activated,
+    /// The selected action id.
+    action(string),
+    /// The input id and submitted text.
+    reply(text-reply),
+    /// The user dismissed it. Reported only when `supported-features.dismissal`
+    /// is true; otherwise a dismissed notification ends as `expired`.
+    dismissed,
+    /// The response deadline passed with no answer, or a dismissal could not
+    /// be observed. A caller may reasonably resend.
+    expired,
+    /// The notification was withdrawn by `close`, replaced by a tag, or ended
+    /// by orderly provider shutdown. A caller should not resend on its own.
+    closed,
+  }
+  /// A queued response, correlated by the id that `send` returned.
+  record event {
+    id: notification-id,
+    response: response,
+  }
+  variant error-code {
+    /// Permission or service policy forbids the operation, such as a per-caller
+    /// revocation, or the provider cannot identify the caller.
+    access-denied,
+    /// A rate or resource limit was reached, such as the send budget, too many
+    /// pending notifications, or too many open event streams. Retryable after
+    /// backoff or after pending notifications settle.
+    limit-exceeded,
+    /// The service cannot deliver notifications now, including when the user
+    /// declined the authorization the provider requested on first send.
+    /// `send` and `events.subscribe` return it while `available` is false.
+    unavailable,
+    invalid-argument(string),
+    /// The provider cannot adapt the request to its service.
+    not-supported(string),
+    /// Delivery failed; detail is diagnostic only.
+    failed(string),
+    /// An unclassified error; optional detail is diagnostic only.
+    other(option<string>),
+  }
+  /// Effective behavior of the composed service, not its underlying platform.
+  /// A snapshot only; sending can still fail after this query succeeds.
+  record supported-features {
+    /// False when nothing can be displayed; every send returns unavailable.
+    available: bool,
+    actions: bool,
+    inline-reply: bool,
+    urgency: bool,
+    /// The provider reports `dismissed`. Platforms that need an opt-in to
+    /// observe dismissal, such as macOS notification categories, enable it for
+    /// every notification they display. Channels that never observe it report
+    /// false, and a dismissed notification ends as `expired`.
+    dismissal: bool,
+    /// Providers can honor deep-link and url targets; otherwise they behave
+    /// as callback.
+    navigation: bool,
+    /// At most 8, and 0 when `actions` is false. Fallback buttons count.
+    max-actions: u32,
+  }
+}

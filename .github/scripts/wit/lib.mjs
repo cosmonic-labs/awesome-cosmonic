@@ -33,8 +33,16 @@ export function runMain(main) {
   });
 }
 
-// The package line the registry-side checks compare against.
-export const declaration = (pkg, version) => `package cosmonic:${pkg}@${version};`;
+// Package identity determines the registry repository.
+export function packageInfo(pkg) {
+  const id = pkg.includes(":") ? pkg : `cosmonic:${pkg}`;
+  const match = /^([a-z][a-z0-9]*(?:-[a-z0-9]+)*):([a-z][a-z0-9]*(?:-[a-z0-9]+)*)$/.exec(id);
+  if (!match) throw new Error(`invalid package id '${pkg}'`);
+  const [, namespace, name] = match;
+  return { id, namespace, name, repository: `cosmonic-labs/${namespace}/${name}` };
+}
+
+export const declaration = (pkg, version) => `package ${packageInfo(pkg).id}@${version};`;
 
 // Reads the `package` line out of a built package.
 export async function declaredPackage(wasm) {
