@@ -1,4 +1,4 @@
-package cosmonic:kafka@0.5.0;
+package cosmonic:kafka@0.5.1;
 
 /// A workload that publishes without owning a Kafka client.
 @since(version = 0.1.0)
@@ -106,7 +106,7 @@ world processor-service {
 /// hostInterfaces:
 ///   - namespace: cosmonic
 ///     package: kafka
-///     version: "0.5.0"
+///     version: "0.5.1"
 ///     interfaces: [producer]
 ///     config:
 ///       bootstrap.servers: kafka.svc:9092
@@ -129,7 +129,7 @@ world processor-service {
 ///   - name: orders-reader
 ///     namespace: cosmonic
 ///     package: kafka
-///     version: "0.5.0"
+///     version: "0.5.1"
 ///     interfaces: [consumer]
 ///     config:
 ///       bootstrap.servers: kafka.svc:9092
@@ -157,7 +157,7 @@ world processor-service {
 ///   - name: orders-tx
 ///     namespace: cosmonic
 ///     package: kafka
-///     version: "0.5.0"
+///     version: "0.5.1"
 ///     interfaces: [transaction]
 ///     config:
 ///       bootstrap.servers: kafka.svc:9092
@@ -180,7 +180,7 @@ world processor-service {
 /// hostInterfaces:
 ///   - namespace: cosmonic
 ///     package: kafka
-///     version: "0.5.0"
+///     version: "0.5.1"
 ///     interfaces: [handler, producer]
 ///     config:
 ///       bootstrap.servers: kafka.svc:9092

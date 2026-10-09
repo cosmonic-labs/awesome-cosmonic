@@ -1,4 +1,4 @@
-package cosmonic:kafka@0.5.0;
+package cosmonic:kafka@0.5.1;
 
 /// Binding-scoped transactional Kafka publishing.
 ///

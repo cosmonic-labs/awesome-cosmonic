@@ -1,4 +1,4 @@
-package cosmonic:kafka@0.5.0;
+package cosmonic:kafka@0.5.1;
 
 /// Binding-scoped Kafka consumption, with and without group coordination.
 ///
@@ -7,6 +7,7 @@ package cosmonic:kafka@0.5.0;
 /// because it owns real session state — group membership, assignment, cursor,
 /// paused partitions, streams and shutdown — and several resources opened from
 /// one binding are distinct members of its configured group.
+///
 /// ## Every function is `async`
 ///
 /// Including the ones that only read local state —
@@ -73,6 +74,25 @@ interface consumer {
         /// - `invalid-group-id`: `group.id` missing or rejected.
         @since(version = 0.4.0)
         open: static async func() -> result<consumer, error>;
+
+        /// Permanently give the guest responsibility for applying group
+        /// assignments reported by `rebalances`.
+        ///
+        /// Take `rebalances` first, then call this before the first `subscribe`
+        /// call. Repeating it before then is harmless. Calling it before taking
+        /// the stream or after a `subscribe` call fails with `state`. Direct
+        /// manual assignment does not require this operation.
+        ///
+        /// Once taken, the guest must continuously drain `rebalances` and answer
+        /// every event: `assign(partitions)` / `assign([])` for eager rebalances,
+        /// or `incremental-assign(partitions)` /
+        /// `incremental-unassign(partitions)` for cooperative rebalances. Those
+        /// answer calls are applied on librdkafka's callback thread. A `commit`
+        /// made before the answer is relayed there too, so revoked offsets can be
+        /// committed safely. If no matching answer arrives within 30 seconds, the
+        /// host applies the broker assignment to preserve group liveness.
+        @since(version = 0.5.1)
+        take-rebalance-control: async func() -> result<_, error>;
 
         /// Join a group and let it assign partitions for these topics.
         ///
@@ -150,9 +170,12 @@ interface consumer {
         /// cannot call back into the guest; this is the async counterpart of
         /// librdkafka's `rebalance_cb`.
         ///
-        /// Ignoring it is not fatal — the client falls back to its default
-        /// assignment behaviour — but revocations then pass unobserved, which
-        /// is how duplicate processing starts.
+        /// Reading this stream only observes group movement; librdkafka keeps
+        /// applying its default assignment. Call `take-rebalance-control` before
+        /// `subscribe` to make the guest responsible for applying each event.
+        ///
+        /// A guest that only observes events must still drain the stream so
+        /// revocations do not pass unnoticed.
         @since(version = 0.1.0)
         rebalances: async func() -> result<stream<rebalance-event>, error>;
 
