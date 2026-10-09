@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.4.0;
 
 /// Messages, model handles, options, usage, and inference errors.
 interface inference-types {
@@ -13,11 +13,11 @@ interface inference-types {
     /// Handles retain provider identity across alias changes. Routers own wrapper
     /// handles and forward calls to the provider that created each underlying handle.
     resource model {
-        /// The capabilities and limits of this prepared handle.
+        /// The supported operations and limits of this prepared handle.
         describe: async func() -> model-description;
     }
 
-    flags capabilities {
+    flags supported-operations {
         chat,
         embeddings,
     }
@@ -28,11 +28,11 @@ interface inference-types {
         json-schema,
     }
 
-    /// Capabilities of this provider/model pair. None means unknown.
+    /// Support and limits of this provider/model pair. Optional fields may be unknown.
     /// Unsupported values follow on-unrepresentable; never silently drop them.
     record model-description {
         model: option<string>,
-        capabilities: capabilities,
+        supported-operations: supported-operations,
         context-length: option<u32>,
         max-output-tokens: option<u32>,
         tools: option<bool>,
@@ -396,8 +396,12 @@ interface inference-types {
         detail: string,
     }
 
-    /// Why a chat request was refused before any of the reply was generated.
+    /// Failure before chat acceptance; later failures use generation-error.
     variant request-error {
+        /// Processing was cancelled before acceptance.
+        cancelled,
+        /// The provider's execution deadline elapsed before acceptance.
+        timed-out,
         /// The prompt leaves no room in the context window for a reply.
         context-length-exceeded(context-overflow),
         /// The options were out of range or unsupported.
@@ -428,9 +432,13 @@ interface inference-types {
         what: string,
     }
 
-    /// Failure after generation started. Retry semantics match request-error;
-    /// other is permanent and the named transient failures may succeed on retry.
+    /// Failure after chat acceptance, including before the first reply chunk.
+    /// Only named transient failures imply a retry may succeed.
     variant generation-error {
+        /// Generation was cancelled before a terminal outcome was recorded.
+        cancelled,
+        /// The provider's execution deadline elapsed.
+        timed-out,
         /// Throttled partway through.
         rate-limited(rate-limit),
         /// The backend or the connection to it failed partway through.
