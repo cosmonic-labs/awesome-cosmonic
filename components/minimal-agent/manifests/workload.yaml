@@ -26,8 +26,13 @@ spec:
       version: 0.3.0
       interfaces:
         - session
+      # Granted to the component named agent only, the way Desktop scopes its
+      # agent sessions, so a tool component added to this workload later
+      # cannot read the conversation.
+      config:
+        components: agent
     # Inference. The agent asks for the alias "default"; this entry decides
-    # what that means. With no config it uses the host's default model source.
+    # what that means. Without a backend it uses the host's default model source.
     # The host serves cosmonic:agent from two plugins, so the session and the
     # inference interfaces are declared as separate entries.
     - namespace: cosmonic
@@ -37,9 +42,10 @@ spec:
         - inference-types
         - models
         - chat
-      # config:
-      #   backend: <one of the host's named model sources>
-      #   model: <a model on that source>
+      config:
+        components: agent
+        # backend: <one of the host's named model sources>
+        # model: <a model on that source>
   components:
     - name: agent
       image: ghcr.io/cosmonic-labs/components/minimal-agent:0.1.0
