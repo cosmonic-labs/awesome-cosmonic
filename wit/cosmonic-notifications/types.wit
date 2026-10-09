@@ -1,4 +1,4 @@
-package wasmcloud:notifications@0.3.0;
+package cosmonic:notifications@0.3.0;
 
 /// Text is plain; providers may strip display controls and normalize empty labels.
 interface types {
