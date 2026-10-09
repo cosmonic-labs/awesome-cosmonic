@@ -2,11 +2,21 @@ package cosmonic:notifications@0.3.0;
 
 /// Text is plain; providers may strip display controls and normalize empty labels.
 interface types {
-  /// An interaction returned to the sender; no navigation is performed.
+  /// What happens when the user activates an action or the notification body.
+  variant action-target {
+    /// Open a relative application route. Reject schemes, hosts, `..`, and a
+    /// leading `//`. An unknown route only focuses the application.
+    deep-link(string),
+    /// Open an HTTP or HTTPS URL. Other schemes return invalid-argument.
+    url(string),
+    /// Return the response to the sender; the provider navigates nowhere.
+    callback,
+  }
   record action {
     /// Non-blank printable id, unique across actions and text input.
     id: string,
     label: string,
+    target: action-target,
   }
   record text-input {
     /// Non-blank printable id, unique across actions and text input.
@@ -21,17 +31,22 @@ interface types {
     title: string,
     body: string,
     urgency: urgency,
-    /// Unsupported actions or counts above max-actions return not-supported.
+    /// Truncated to max-actions; the provider logs what it drops.
     actions: list<action>,
-    /// Unsupported input returns not-supported; never becomes a button.
+    /// Without inline-reply support, becomes an action with the same id.
     input: option<text-input>,
-    /// Trimmed; blank means none. Replaces the pending tag in this session.
+    /// Body-click target. None lets the provider choose; a provider with
+    /// navigation opens the sending workload's page.
+    default-target: option<action-target>,
+    /// Trimmed; blank means none. Replaces the pending notification with the
+    /// same tag from the same workload.
     tag: option<string>,
     /// Response deadline in ms; none or zero uses default-timeout-ms.
     /// Values above max-timeout-ms are clamped. Display lifetime is best effort.
     timeout-ms: option<u32>,
   }
-  /// Opaque id, valid only in its session; never reused during that session.
+  /// Opaque id, unique within the workload scope and never reused there.
+  /// Ids outlive component instances; resources would not.
   type notification-id = u64;
   record text-reply {
     input-id: string,
@@ -52,14 +67,15 @@ interface types {
     response: response,
   }
   variant error-code {
-    /// Permission or service policy forbids the operation.
+    /// Permission or service policy forbids the operation, or the provider
+    /// cannot identify the caller.
     access-denied,
     /// A rate or resource limit was reached.
     limit-exceeded,
     /// The service cannot deliver notifications now.
     unavailable,
     invalid-argument(string),
-    /// Required interaction or payload size is not supported.
+    /// The provider cannot adapt the request to its service.
     not-supported(string),
     /// Delivery failed; detail is diagnostic only.
     failed(string),
@@ -71,10 +87,13 @@ interface types {
     actions: bool,
     inline-reply: bool,
     urgency: bool,
+    /// Providers can honor deep-link and url targets; otherwise they behave
+    /// as callback.
+    navigation: bool,
     /// Display may remain in a notification center until completion.
     persistent: bool,
     max-actions: u32,
-    /// UTF-8 byte limits; oversized fields return not-supported.
+    /// UTF-8 byte limits; longer text is truncated at a character boundary.
     max-title-bytes: u32,
     max-body-bytes: u32,
     /// Applies to action labels, input labels, and placeholders.
