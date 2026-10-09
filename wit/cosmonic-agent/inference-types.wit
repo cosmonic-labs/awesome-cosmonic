@@ -453,13 +453,13 @@ interface inference-types {
     }
 
     variant tool-choice {
-        // The model decides. The default when unset.
+        /// The model decides. The default when unset.
         auto,
-        // Never call a tool.
+        /// Never call a tool.
         none,
-        // Call some tool.
+        /// Call some tool.
         required,
-        // Call this specific tool.
+        /// Call this specific tool.
         specific(string),
     }
 }

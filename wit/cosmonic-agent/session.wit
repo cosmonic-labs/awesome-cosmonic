@@ -100,16 +100,15 @@ interface session {
 
     /// Opaque working state in the agent's format.
     record state {
-        /// Journal end covered by this state, including entries in the same commit.
         value: list<u8>,
         version: version,
-        /// Current state and journal end, returned by current and stale.
+        /// Journal end covered by this state, including entries in the same commit.
         through: journal-end,
     }
 
-    /// None when no state has been written or the session was cleared.
+    /// Current state and journal end, returned by current and stale.
     record snapshot {
-        /// `none` before the first state is written.
+        /// `none` when no state has been written or the session was cleared.
         state: option<state>,
         end: journal-end,
     }
