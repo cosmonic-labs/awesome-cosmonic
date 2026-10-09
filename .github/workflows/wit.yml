@@ -2,8 +2,12 @@
 # them to GHCR as ghcr.io/cosmonic-labs/cosmonic/<package>.
 #
 # The version in each package's `package` declaration is the release version.
-# A merge to main that bumps it publishes that version. A merge that changes the
-# package without bumping it fails, so the registry and the repo cannot drift.
+# A merge to main that bumps it publishes that version. A change without a bump
+# fails, so the registry and the repo cannot drift.
+#
+# The logic lives in .github/scripts/wit/*.mjs so it can be run locally:
+#   node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
+#   node .github/scripts/wit/registry.mjs check agent dist/agent.wasm --anonymous
 name: wit
 
 on:
@@ -11,10 +15,12 @@ on:
     branches: [main]
     paths:
       - "wit/**"
+      - ".github/scripts/wit/**"
       - ".github/workflows/wit.yml"
   pull_request:
     paths:
       - "wit/**"
+      - ".github/scripts/wit/**"
       - ".github/workflows/wit.yml"
   workflow_dispatch:
 
@@ -57,92 +63,13 @@ jobs:
         with:
           wash-version: ${{ env.WASH_VERSION }}
 
-      - name: Read package identity
-        id: meta
-        env:
-          DIR: ${{ matrix.dir }}
-          PACKAGE: ${{ matrix.package }}
-        run: |
-          set -euo pipefail
-          # Every file declares the package, and they must all agree.
-          decls=""
-          for f in "$DIR"/*.wit; do
-            line=$(grep -m1 -E '^package ' "$f") \
-              || { echo "::error::$f has no package declaration"; exit 1; }
-            decls+="${line}"$'\n'
-          done
-          decl=$(sort -u <<<"$decls" | sed '/^$/d')
-          [ "$(wc -l <<<"$decl")" = 1 ] \
-            || { echo "::error::files disagree on the package declaration: $decl"; exit 1; }
-          version=${decl#*@}
-          version=${version%;}
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::package version '$version' is not <major>.<minor>.<patch>[-prerelease]"
-            exit 1
-          fi
-          [ "$decl" = "package cosmonic:${PACKAGE}@${version};" ] \
-            || { echo "::error::unexpected package declaration: $decl"; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Validate and build
+        run: node .github/scripts/wit/build.mjs "${{ matrix.dir }}" "${{ matrix.package }}"
 
-      - name: Validate the package
-        env:
-          DIR: ${{ matrix.dir }}
-        run: wasm-tools component wit "$DIR" > /dev/null
-
-      - name: Build the package
-        env:
-          DIR: ${{ matrix.dir }}
-          PACKAGE: ${{ matrix.package }}
-        run: |
-          set -euo pipefail
-          # wash builds the package in ./wit, so stage the one being built.
-          stage="$RUNNER_TEMP/${PACKAGE}"
-          mkdir -p "$stage/wit" dist
-          cp "$DIR"/*.wit "$stage/wit/"
-          (cd "$stage" && wash wit build --output-file "$GITHUB_WORKSPACE/dist/${PACKAGE}.wasm")
-
-      - name: Validate the built package
-        env:
-          PACKAGE: ${{ matrix.package }}
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          wasm-tools validate --features all "dist/${PACKAGE}.wasm"
-          wit=$(wasm-tools component wit "dist/${PACKAGE}.wasm")
-          grep -qxF "package cosmonic:${PACKAGE}@${VERSION};" <<<"$wit" \
-            || { echo "::error::built package does not declare cosmonic:${PACKAGE}@${VERSION}"; exit 1; }
-
-      # The publish job fails the same way after merge; catching it here keeps
-      # main green. Anonymous and read-only, so it only sees public packages: a
-      # package that is not published yet, or not public, passes with a notice.
+      # Anonymous and read-only, so it only sees public packages; one that is
+      # not published yet, or not public, passes with a notice.
       - name: Fail if the version is published with different contents
-        env:
-          PACKAGE: ${{ matrix.package }}
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          set -euo pipefail
-          name="cosmonic-labs/cosmonic/${PACKAGE}"
-          token=$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${name}:pull" | jq -r '.token // empty')
-          manifest="$RUNNER_TEMP/manifest.json"
-          status=$(curl -sS -o "$manifest" -w '%{http_code}' \
-            ${token:+-H "Authorization: Bearer ${token}"} \
-            -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
-            "https://ghcr.io/v2/${name}/manifests/${VERSION}")
-          case "$status" in
-            200)
-              built="sha256:$(sha256sum "dist/${PACKAGE}.wasm" | cut -d' ' -f1)"
-              if [ "$(jq -r '.layers[0].digest // empty' "$manifest")" != "$built" ]; then
-                echo "::error::ghcr.io/${name}:${VERSION} is already published with different contents; bump the package version in wit/ to release these changes"
-                exit 1
-              fi
-              ;;
-            401|403|404)
-              echo "::notice::ghcr.io/${name}:${VERSION} is not visible anonymously (HTTP ${status}); skipping the version check"
-              ;;
-            *)
-              echo "::warning::probing ghcr.io/${name}:${VERSION} returned HTTP ${status}; skipping the version check"
-              ;;
-          esac
+        run: node .github/scripts/wit/registry.mjs check "${{ matrix.package }}" "dist/${{ matrix.package }}.wasm" --anonymous
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -159,6 +86,7 @@ jobs:
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       packages: write
       # attest-build-provenance signs with a Sigstore certificate issued
       # against the job's OIDC token (id-token), stores the attestation with
@@ -171,12 +99,18 @@ jobs:
       matrix:
         package: [agent, notify]
     env:
-      PACKAGE: ${{ matrix.package }}
-      IMAGE: ghcr.io/cosmonic-labs/cosmonic/${{ matrix.package }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts/wit
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ matrix.package }}
+          path: dist
 
       - uses: bytecodealliance/actions/wasm-tools/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
         with:
@@ -186,104 +120,33 @@ jobs:
         with:
           wash-version: ${{ env.WASH_VERSION }}
 
-      # Each matrix job reads its own version from the package it is about to
-      # push; a job-level output would be shared by both packages.
-      - name: Read package version
-        run: |
-          set -euo pipefail
-          wit=$(wasm-tools component wit "${PACKAGE}.wasm")
-          decl=$(grep -m1 -E '^package ' <<<"$wit")
-          version=${decl#*@}
-          echo "VERSION=${version%;}" >> "$GITHUB_ENV"
-
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # push when new, attest when an earlier attempt pushed these bytes and
+      # then failed, fail when the version holds other contents.
       - name: Check whether this version is already published
         id: check
-        # Asks the registry directly and acts only on 200 or 404; anything else
-        # (auth, outage) fails rather than risk pushing over a release.
-        #   404                    not published yet: push it.
-        #   200, this build's bytes an earlier attempt pushed it and then failed,
-        #                          e.g. at attestation: attest it instead of
-        #                          skipping, so re-running the job recovers.
-        #   200, other bytes       the package changed without a version bump:
-        #                          fail rather than let the registry drift.
-        env:
-          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          name="${IMAGE#ghcr.io/}"
-          token=$(curl -fsS -u "${GITHUB_ACTOR}:${REGISTRY_TOKEN}" \
-            "https://ghcr.io/token?service=ghcr.io&scope=repository:${name}:pull" | jq -r '.token // empty')
-          [ -n "$token" ] || { echo "::error::ghcr.io issued no token for ${name}"; exit 1; }
-
-          # Accept every manifest type, so whatever sits at the tag answers 200
-          # rather than a 404 that would read as "free".
-          manifest="$RUNNER_TEMP/manifest.json"
-          status=$(curl -sS -o "$manifest" -w '%{http_code}' \
-            -H "Authorization: Bearer ${token}" \
-            -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json" \
-            "https://ghcr.io/v2/${name}/manifests/${VERSION}")
-
-          case "$status" in
-            404)
-              echo "${IMAGE}:${VERSION} is not published yet"
-              echo "action=push" >> "$GITHUB_OUTPUT"
-              ;;
-            200)
-              # wash pushes the package as the manifest's only layer.
-              built="sha256:$(sha256sum "${PACKAGE}.wasm" | cut -d' ' -f1)"
-              if [ "$(jq -r '.layers[0].digest // empty' "$manifest")" = "$built" ]; then
-                echo "::notice::${IMAGE}:${VERSION} already holds this build; attesting it"
-                echo "action=attest" >> "$GITHUB_OUTPUT"
-                echo "digest=sha256:$(sha256sum "$manifest" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-              else
-                echo "::error::${IMAGE}:${VERSION} is already published with different contents; bump the package version to release these changes"
-                exit 1
-              fi
-              ;;
-            *)
-              echo "::error::probing ${IMAGE}:${VERSION} returned HTTP ${status}"
-              cat "$manifest"
-              exit 1
-              ;;
-          esac
+        run: node .github/scripts/wit/registry.mjs check "${{ matrix.package }}" "dist/${{ matrix.package }}.wasm"
 
       - name: Push
         id: push
         if: steps.check.outputs.action == 'push'
-        run: |
-          set -euo pipefail
-          # On failure the error JSON also goes to stdout, so show it before exiting.
-          if ! out=$(wash -o json oci push "${IMAGE}:${VERSION}" "${PACKAGE}.wasm"); then
-            echo "$out"
-            exit 1
-          fi
-          echo "$out"
-          digest=$(jq -r '.data.digest // empty' <<<"$out")
-          [[ "$digest" == sha256:* ]] \
-            || { echo "::error::wash oci push did not report a manifest digest"; exit 1; }
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+        run: node .github/scripts/wit/registry.mjs push "${{ matrix.package }}" "dist/${{ matrix.package }}.wasm"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
-          subject-name: ${{ env.IMAGE }}
+          subject-name: ghcr.io/cosmonic-labs/cosmonic/${{ matrix.package }}
           subject-digest: ${{ steps.push.outputs.digest || steps.check.outputs.digest }}
           push-to-registry: true
 
+      # Pulls the package back at the attested digest, the way a consumer would.
       - name: Verify what landed
-        # Pull the package back at the attested digest, the way a consumer
-        # would, and check it is still the package that was built.
         env:
+          PACKAGE: ${{ matrix.package }}
           DIGEST: ${{ steps.push.outputs.digest || steps.check.outputs.digest }}
-        run: |
-          set -euo pipefail
-          wash oci pull "${IMAGE}@${DIGEST}" "$RUNNER_TEMP/pulled.wasm"
-          wit=$(wasm-tools component wit "$RUNNER_TEMP/pulled.wasm")
-          grep -qxF "package cosmonic:${PACKAGE}@${VERSION};" <<<"$wit" \
-            || { echo "::error::${IMAGE}@${DIGEST} does not declare cosmonic:${PACKAGE}@${VERSION}"; exit 1; }
+        run: node .github/scripts/wit/registry.mjs verify "$PACKAGE" "dist/${PACKAGE}.wasm" "$DIGEST"
