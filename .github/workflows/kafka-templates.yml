@@ -125,6 +125,11 @@ jobs:
             echo "::error::component no longer has '${{ matrix.expect }}'"
             exit 1
           }
+          if echo "$wit" | grep -q -- "export wasi:cli/run"; then
+            grep -q '^  service:' workload.yaml
+            grep -q '^    maxRestarts:' workload.yaml
+            grep -q '^  service: true' .wash/config.yaml
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

@@ -29,9 +29,9 @@ mod bindings {
 use std::collections::BTreeMap;
 
 use bindings::cosmonic::kafka::consumer::Consumer;
+use bindings::cosmonic::kafka::transaction::{self, Transaction};
 use bindings::cosmonic::kafka::types::{ConsumedRecord, PartitionOffset, ProduceRecord};
 use bindings::exports::wasi::cli::run::Guest as RunGuest;
-use bindings::transaction::{self, Transaction};
 
 struct Component;
 
