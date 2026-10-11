@@ -1,0 +1,144 @@
+# Cosmonic Desktop / wasmCloud v2 Workload manifest for this MCP server.
+#
+# Published variant: a public OCI image. For local iteration against Desktop's
+# built-in registry use ../workload.yaml instead.
+#
+# Set the image reference below before deploying, and re-check the grants: the
+# ones that ship here match the README's demo resources, not your deployment.
+#
+# Two hostInterfaces, and they do different jobs:
+#   wasi:http       ingress — routes requests here by HTTP Host header.
+#   wasmcloud:nats  the NATS binding — and the grants that bound it.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: nats-mcp-server-v1
+  namespace: default
+  # MCP metadata convention used by Cosmonic Desktop to catalog MCP servers.
+  labels:
+    app.kubernetes.io/name: "nats-mcp-server-v1"
+    app.kubernetes.io/version: "0.4.2"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "nats"
+    "mcp.ai/function-type": tools
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    # Ingress. `interfaces: ["handler"]` is the WASI p3 (wasi:http@0.3.0)
+    # export, not the p2 `incoming-handler`.
+    - namespace: wasi
+      package: http
+      interfaces: ["handler"]
+      config:
+        host: nats-mcp-server-v1.localhost.cosmonic.sh
+
+    # The NATS binding. `interfaces` lists only what the component imports —
+    # there is no `core-handler` here because this server is a client, not a
+    # subscriber: nothing is delivered to it, it only makes calls.
+    #
+    # Connection settings (servers, credentials, TLS) are NOT here. They
+    # belong to the host: Settings → Built-in plugins → NATS.
+    - namespace: wasmcloud
+      package: nats
+      version: "0.1.0"
+      interfaces: ["types", "core", "jetstream", "kv"]
+      config:
+        # ---------------------------------------------------------------
+        # GRANTS — the security boundary of this server. Deny-by-default:
+        # anything not listed here is refused by the host before it reaches
+        # NATS, and the guest cannot widen them.
+        #
+        # These three are separate on purpose:
+        #   subject-allow  publish + request subjects, and the subjects a
+        #                  stored JetStream message may be read from
+        #   stream-allow   JetStream stream reads
+        #   bucket-allow   KV buckets
+        #
+        # Patterns may use NATS wildcards (`demo.>`); the subjects a tool
+        # actually publishes to must still be literal.
+        #
+        # The values below match the demo resources created in the README.
+        # Widen them to the subjects, streams, and buckets this server should
+        # actually reach — deliberately. Granting `>` hands every agent that
+        # can call this server the run of the entire NATS deployment,
+        # including whatever else shares it.
+        # ---------------------------------------------------------------
+        # `demo.>` is captured by the DEMO stream, so a core request there is
+        # answered by JetStream's own publish ack. `rpc.>` is deliberately
+        # outside any stream, which is what makes nats_request meaningful:
+        # a real responder answers, and an absent one gives `no-responders`.
+        subject-allow: demo.>,rpc.>,orders.created
+        stream-allow: DEMO,ORDERS
+        bucket-allow: demo-kv
+  components:
+    - name: mcp
+      # Point at your published image; Desktop pins the tag to a digest at
+      # apply time. For a locally promoted build use the digest-pinned
+      # oci.localhost:8200 reference that promote returns.
+      image: ghcr.io/<org>/nats-mcp-server-v1:0.4.2
+      # Each instance serves one MCP exchange at a time (the bridge drives a
+      # single tokio-world computation), so concurrency comes from the warm
+      # pool rather than from inside an instance. The component exports the
+      # p3 handler, so poolSize genuinely applies.
+      poolSize: 4
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: the Host headers the MCP transport will
+            # accept. Cosmonic routes to this workload by Host header, so
+            # this must cover the ingress host above — unset, rmcp accepts
+            # only localhost/127.0.0.1/::1 and every request 421s.
+            MCP_ALLOWED_HOSTS: "nats-mcp-server-v1.localhost.cosmonic.sh,nats-mcp-server-v1.localhost"
+            # Largest message/entry body rendered into a tool result before
+            # it is truncated (bytes). Guards the caller's context window.
+            MCP_NATS_MAX_PAYLOAD_BYTES: "65536"
+            # Discovery hints — optional, and only consulted when a call names
+            # nothing. The binding has no list call, so without either these or
+            # MCP_NATS_MONITOR_URL a zero-argument nats_diagnose has nowhere to
+            # look. They restate names already in the grants above because a
+            # guest cannot read its own grants; they GRANT nothing, so a hinted
+            # name outside the grants is still denied (nats_check_access shows
+            # the difference). Unnecessary when monitoring is enabled, which
+            # discovers everything.
+            MCP_NATS_STREAMS: "DEMO,ORDERS"
+            MCP_NATS_CONSUMERS: "DEMO/worker"
+            MCP_NATS_BUCKETS: "demo-kv"
+            # Optional server-wide telemetry. With this unset, nats_server_info,
+            # nats_server_streams and nats_connections return the steps to turn
+            # it on and every other tool works unchanged.
+            #
+            # It is a separate road on purpose: connection counts, slow
+            # consumers and the stream inventory live behind $SYS and the
+            # JetStream API, which the NATS binding reserves for the host — no
+            # grant can open those. So this reads the NATS server's monitoring
+            # port (`nats-server -m 8222`) over HTTP instead: read-only by
+            # construction, and gated by the outbound allow-list below.
+            #
+            # The address must be one the component's OUTBOUND HTTP path can
+            # resolve, which rules out two tempting spellings:
+            #   127.0.0.1                 the guest's own virtual network, not
+            #                             this machine.
+            #   host.wasmcloud.internal   the reserved name for the machine's
+            #                             loopback, but it is resolved on the
+            #                             wasi:sockets path only — outbound
+            #                             HTTP uses the system resolver and
+            #                             fails it with a DNS error.
+            # `nats-server -m` binds every interface, so the machine's LAN
+            # address reaches it. Change this when the machine's IP changes,
+            # or point it at a stable hostname.
+            # MCP_NATS_MONITOR_URL: "http://<lan-ip>:8222"
+        # Outbound HTTP allow-list — empty is deny-all (fail-closed). NATS
+        # traffic rides the host binding above, not HTTP; the single entry
+        # here is the optional monitoring port named by MCP_NATS_MONITOR_URL.
+        # Remove both to run with no server-wide telemetry.
+        allowedHosts: []
+        # Kept for the day outbound HTTP honors host.wasmcloud.internal; it is
+        # ignored on that path today (only wasi:sockets consults it), so it
+        # neither helps nor hurts here.
+        allowedHostLoopbackPorts: ["8222"]

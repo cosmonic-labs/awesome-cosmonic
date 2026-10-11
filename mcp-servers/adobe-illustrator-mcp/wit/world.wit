@@ -1,0 +1,17 @@
+package cosmonic-labs:illustrator-bridge;
+
+/// Host imports this component needs *in addition* to the `wasi:http@0.3.0`
+/// service world that the `wasip3` crate generates for us.
+///
+/// The bridge is a rendezvous between two callers that never meet: an MCP
+/// tool call queues a command, and the Illustrator bridge picks it up on its
+/// next poll. Those two HTTP requests may land on different component
+/// instances, so the queue cannot live in the component's linear memory — it
+/// goes in a host keyvalue bucket, which is also what lets the workload run
+/// more than one instance (see `poolSize` in workload.yaml).
+///
+/// Clocks come from `wasi:clocks@0.3.0` via the `wasip3` crate, so they are
+/// not repeated here.
+world bridge-state {
+  import wasi:keyvalue/store@0.2.0-draft;
+}

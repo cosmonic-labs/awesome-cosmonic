@@ -1,0 +1,7 @@
+package cosmonic-labs:kv-stub;
+
+/// Test-only provider of the one host capability `wasmtime serve` does not
+/// implement. Composed into the server with `wac plug` by scripts/e2e.sh.
+world kv-stub {
+  export wasi:keyvalue/store@0.2.0-draft;
+}

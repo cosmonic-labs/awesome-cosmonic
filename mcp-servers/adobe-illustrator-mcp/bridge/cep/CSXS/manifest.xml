@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CEP manifest for the Illustrator MCP Bridge panel.
+
+     Installed (with index.html, main.js, and commands.jsx from
+     /bridge/commands.jsx) into
+       ~/Library/Application Support/Adobe/CEP/extensions/com.cosmonic.illustrator-mcp/
+     by ./install-bridge.sh. Unsigned, so Adobe's PlayerDebugMode must be on —
+     the install script sets it. -->
+<ExtensionManifest ExtensionBundleId="com.cosmonic.illustrator-mcp"
+                   ExtensionBundleVersion="0.1.0"
+                   ExtensionBundleName="Illustrator MCP Bridge"
+                   Version="7.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ExtensionList>
+    <Extension Id="com.cosmonic.illustrator-mcp.panel" Version="0.1.0"/>
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <!-- Illustrator 2020 (24.0) onward. -->
+      <Host Name="ILST" Version="[24.0,99.9]"/>
+    </HostList>
+    <LocaleList>
+      <Locale Code="All"/>
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="9.0"/>
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.cosmonic.illustrator-mcp.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./index.html</MainPath>
+          <!-- The shared command library; evalScript dispatches into it. -->
+          <ScriptPath>./commands.jsx</ScriptPath>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>Illustrator MCP Bridge</Menu>
+          <Geometry>
+            <Size>
+              <Height>420</Height>
+              <Width>340</Width>
+            </Size>
+            <MinSize>
+              <Height>200</Height>
+              <Width>260</Width>
+            </MinSize>
+          </Geometry>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>
