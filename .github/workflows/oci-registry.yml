@@ -1,0 +1,64 @@
+name: oci-registry
+
+# Build (and, on a version tag, publish) the oci-registry component.
+# A push of tag `oci-registry-v<x.y.z>` publishes:
+#   ghcr.io/cosmonic-labs/oci-registry:<x.y.z>   (+ :latest)
+# PRs that touch the component build it only. Same convention as first-flight.
+
+on:
+  push:
+    tags:
+      - "oci-registry-v*"
+  pull_request:
+    paths:
+      - "oci-registry/**"
+      - ".github/workflows/oci-registry.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (e.g. 0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/cosmonic-labs/oci-registry
+  WORKDIR: oci-registry
+  WASM: oci-registry/target/wasm32-wasip2/release/oci_registry.wasm
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up wash
+        uses: wasmcloud/setup-wash-action@v1.0.0-rc.3
+
+      - name: Add wasm32-wasip2 target
+        run: rustup target add wasm32-wasip2
+
+      - name: Build component
+        working-directory: ${{ env.WORKDIR }}
+        run: cargo build --target wasm32-wasip2 --release
+
+      # Publish only on a version tag or a manual dispatch — PRs stop at build.
+      - name: Resolve version
+        id: v
+        if: startsWith(github.ref, 'refs/tags/oci-registry-v') || github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME#oci-registry-v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to GHCR
+        if: steps.v.outputs.tag != ''
+        run: |
+          wash oci push "${IMAGE}:${{ steps.v.outputs.tag }}" "$WASM" \
+            -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"
+          wash oci push "${IMAGE}:latest" "$WASM" \
+            -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"

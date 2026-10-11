@@ -1,0 +1,71 @@
+# Cosmonic Desktop Workload for the OCI registry.
+#
+# Schema: runtime.wasmcloud.dev/v1alpha1 (the spec Cosmonic Desktop schedules;
+# identical to the wasmCloud runtime-operator CRD, so it is portable to a
+# Cosmonic Control cluster unchanged).
+#
+# The registry is a single reactor component exporting wasi:http/incoming-handler.
+# It scales to zero: the host instantiates it per request and tears it down, so
+# nothing is resident when idle. All durable state lives on the disk volume
+# mounted at /data via the hostPath volume below — pushed images survive
+# restarts and live on your local disk.
+#
+# Deploy (Cosmonic Desktop MCP / API):
+#   cosmonic_apply_workload  (paste this YAML), or via the daemon API:
+#   curl --unix-socket "$COSMONIC_SOCK" -X POST http://d/v1/workloads \
+#        -H 'content-type: application/yaml' --data-binary @deploy/workload.yaml
+#
+# Reach it once running (HTTP ingress routes by Host header):
+#   curl -H 'Host: oci-registry.localhost' http://127.0.0.1:8080/v2/
+#   wash oci push --insecure oci-registry.localhost/myimage:tag ./component.wasm
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: oci-registry
+  namespace: default
+  labels:
+    app.kubernetes.io/name: oci-registry
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  # Expose the component over HTTP ingress. The daemon's DynamicRouter routes
+  # requests whose Host header is `oci-registry.localhost` to this component.
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      interfaces:
+        - incoming-handler
+      config:
+        host: oci-registry.localhost
+
+  # Durable, content-addressed storage on the local disk. Change `path` to
+  # wherever you want the registry's blobs/manifests to live. The directory must
+  # already exist and be writable by the daemon — the runtime does NOT create it
+  # (it fails to start with "HostPath volume ... does not exist" otherwise). On
+  # macOS Desktop a home-dir path works without sudo; on Linux/Control the
+  # /var/lib path below is conventional. `make deploy` creates the dir for you.
+  volumes:
+    - name: data
+      hostPath:
+        # macOS example: /Users/<you>/.cosmonic/oci-registry-data
+        path: /var/lib/cosmonic/oci-registry
+    # Alternative — lifetime is the workload's, not persisted across restarts,
+    # and needs no pre-created directory:
+    # - name: data
+    #   ephemeral: {}
+
+  components:
+    - name: oci-registry
+      image: ghcr.io/liamrandall/oci-registry:0.1.0
+      # Reactor: one instance, instantiated on demand. poolSize/maxInvocations
+      # are carried for Control portability; Desktop instantiates per request.
+      poolSize: 1
+      localResources:
+        # The registry needs no outbound HTTP; fail-closed (deny all egress).
+        allowedHosts: []
+        volumeMounts:
+          - name: data
+            mountPath: /data
+        # Storage root defaults to /data; set REGISTRY_ROOT to override.
+        environment:
+          config:
+            REGISTRY_ROOT: /data
