@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.3.1;
 
 /// Tool discovery and calls using inference's tool-call and tool-output types.
 interface tools {

@@ -9,7 +9,7 @@ arrive on a future or stream.
 
 | Package | Contract |
 | --- | --- |
-| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.1 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
 | [`cosmonic:notifications`](cosmonic-notifications/README.md) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams. |
 
