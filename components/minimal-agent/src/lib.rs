@@ -21,6 +21,10 @@ use bindings::cosmonic::agent::inference_types::{
     AssistantContent, AssistantMessage, AssistantPart, ChatOptions, ChunkDelta, Completion,
     Message, RequestMeta, ResponseFormat, UnrepresentablePolicy, UserMessage, UserPart,
 };
+use bindings::cosmonic::agent::inference_types::{
+    ContextOverflow, GenerationError, Quota, RateLimit, RequestError, SizeLimit,
+};
+use bindings::cosmonic::agent::models::OpenError;
 use bindings::cosmonic::agent::session::{
     self, CommitOptions, CommitResult, JournalEnd, NewEntry, Snapshot, StateCondition,
 };
@@ -150,7 +154,9 @@ async fn history() -> Response {
         let page = match session::read(start, 1000).await {
             Ok(page) if page.is_empty() => break,
             Ok(page) => page,
-            Err(e) => return error_response(500, &format!("{e:?}")),
+            Err(e) => {
+                return store_failed(&e);
+            }
         };
         for entry in page {
             start = entry.seq.saturating_add(1);
@@ -182,7 +188,9 @@ async fn run_task(request: Request) -> Response {
     // and state version this turn's commits are conditioned on.
     let snapshot = match session::current().await {
         Ok(snapshot) => snapshot,
-        Err(e) => return error_response(500, &format!("{e:?}")),
+        Err(e) => {
+            return store_failed(&e);
+        }
     };
     let conversation = snapshot
         .state
@@ -215,7 +223,9 @@ async fn run_task(request: Request) -> Response {
         Ok(CommitResult::Stale(_)) => {
             return error_response(409, "another request is writing this session; retry");
         }
-        Err(e) => return error_response(500, &format!("{e:?}")),
+        Err(e) => {
+            return store_failed(&e);
+        }
     };
 
     // Return the response now and write its lines as the turn happens.
@@ -299,7 +309,7 @@ async fn answer(body: &mut StreamWriter<u8>, messages: Vec<Message>) -> Answer {
     let model = match models::open(MODEL_ALIAS.to_string()).await {
         Ok(model) => model,
         Err(e) => {
-            let error = format!("no model for {MODEL_ALIAS:?}: {e:?}");
+            let error = format!("no model for the alias {MODEL_ALIAS}: {}", e.describe());
             // Never dispatched, so the call is recorded as cancelled.
             return Answer::Failed {
                 outcome: "cancelled",
@@ -325,7 +335,7 @@ async fn answer(body: &mut StreamWriter<u8>, messages: Vec<Message>) -> Answer {
     let (mut chunks, outcome) = match chat::chat(&model, msg_rx, done_rx, options()).await {
         Ok(reply) => reply,
         Err(e) => {
-            let error = format!("the model refused the request: {e:?}");
+            let error = format!("the model refused the request: {}", e.describe());
             return Answer::Failed {
                 outcome: "failed",
                 error,
@@ -349,7 +359,7 @@ async fn answer(body: &mut StreamWriter<u8>, messages: Vec<Message>) -> Answer {
     match outcome.await {
         Ok(completion) => Answer::Done(completion),
         Err(e) => {
-            let error = format!("generation failed: {e:?}");
+            let error = format!("generation failed: {}", e.describe());
             Answer::Failed {
                 outcome: "failed",
                 error,
@@ -386,7 +396,7 @@ async fn close_turn(
         // moved the journal on, so this commit carries no conditions.
         return match commit(entries, None, None, None).await {
             Ok(_) => None,
-            Err(e) => Some(format!("not recorded: {e:?}")),
+            Err(e) => Some(format!("not recorded: {}", e.describe())),
         };
     };
     let state = to_json(&next);
@@ -402,9 +412,9 @@ async fn close_turn(
             Ok(_) => {
                 Some("another request changed the session; this turn is journaled only".into())
             }
-            Err(e) => Some(format!("not recorded: {e:?}")),
+            Err(e) => Some(format!("not recorded: {}", e.describe())),
         },
-        Err(e) => Some(format!("not saved: {e:?}")),
+        Err(e) => Some(format!("not saved: {}", e.describe())),
     }
 }
 
@@ -552,6 +562,10 @@ fn streaming(status: u16, content_type: &str) -> (Response, StreamWriter<u8>) {
     (response, body_tx)
 }
 
+fn store_failed(e: &session::Error) -> Response {
+    error_response(500, &format!("the session store failed: {}", e.describe()))
+}
+
 fn error_response(status: u16, error: &str) -> Response {
     respond(status, "application/json", to_json(&ErrorBody { error }))
 }
@@ -562,4 +576,107 @@ fn respond(status: u16, content_type: &str, bytes: Vec<u8>) -> Response {
         let _ = body.write_all(bytes).await;
     });
     response
+}
+
+/// Error messages a person can read. The generated types implement `Display`
+/// and `Debug` too, but both print Rust syntax, and the formatting code behind
+/// them is a good part of the component's size.
+trait Describe {
+    fn describe(&self) -> String;
+}
+
+impl Describe for OpenError {
+    fn describe(&self) -> String {
+        match self {
+            Self::UnknownAlias(d) => format!("the host has no model by that alias ({d})"),
+            Self::Denied(d) => format!("this workload may not use it ({d})"),
+            Self::Unavailable(d) => format!("the model is unavailable ({d})"),
+            Self::TooLarge(limit) => format!("the alias is over the {limit}-byte limit"),
+            Self::Other(d) => d.clone(),
+        }
+    }
+}
+
+impl Describe for RequestError {
+    fn describe(&self) -> String {
+        match self {
+            Self::ContextLengthExceeded(c) => c.describe(),
+            Self::InvalidOptions(d) => format!("invalid options ({d})"),
+            Self::MessagesIncomplete(d) => format!("the conversation was incomplete ({d})"),
+            Self::Unrepresentable(changes) => {
+                let details: Vec<&str> = changes.iter().map(|c| c.detail.as_str()).collect();
+                format!(
+                    "the provider cannot carry this request ({})",
+                    details.join("; ")
+                )
+            }
+            Self::NotAuthenticated(d) => {
+                format!("the host's credentials for the provider were rejected ({d})")
+            }
+            Self::RateLimited(r) => format!("rate limited: {}", r.describe()),
+            Self::QuotaExhausted(q) => q.describe(),
+            Self::TemporarilyUnavailable(r) => format!("temporarily unavailable: {}", r.describe()),
+            Self::TooLarge(s) => s.describe(),
+            Self::Other(d) => d.clone(),
+        }
+    }
+}
+
+impl Describe for GenerationError {
+    fn describe(&self) -> String {
+        match self {
+            Self::RateLimited(r) => format!("rate limited: {}", r.describe()),
+            Self::TemporarilyUnavailable(r) => format!("temporarily unavailable: {}", r.describe()),
+            Self::ContextLengthExceeded(c) => c.describe(),
+            Self::Other(d) => d.clone(),
+        }
+    }
+}
+
+impl Describe for ContextOverflow {
+    fn describe(&self) -> String {
+        format!(
+            "the conversation is too long for the model ({})",
+            self.detail
+        )
+    }
+}
+
+impl Describe for RateLimit {
+    fn describe(&self) -> String {
+        match self.retry_after_seconds {
+            Some(s) => format!("{}; retry in {s}s", self.detail),
+            None => self.detail.clone(),
+        }
+    }
+}
+
+impl Describe for Quota {
+    fn describe(&self) -> String {
+        let out = format!("the provider account is out of quota ({})", self.detail);
+        match &self.top_up_url {
+            Some(url) => format!("{out}; top up at {url}"),
+            None => out,
+        }
+    }
+}
+
+impl Describe for SizeLimit {
+    fn describe(&self) -> String {
+        format!(
+            "the {} is over the host's {}-byte limit",
+            self.what, self.limit
+        )
+    }
+}
+
+impl Describe for session::Error {
+    fn describe(&self) -> String {
+        match self {
+            Self::TooLarge(t) => format!("the session is full ({}-byte limit)", t.limit),
+            Self::InvalidArgument(d) => format!("invalid request ({d})"),
+            Self::Unavailable(d) => format!("unavailable ({d})"),
+            Self::Other(d) => d.clone(),
+        }
+    }
 }
