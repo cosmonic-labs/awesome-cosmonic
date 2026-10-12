@@ -1,0 +1,61 @@
+package cosmonic:cron@0.1.0;
+
+/// Being called when a schedule comes due.
+///
+/// This is the trigger. A workload exports it, and whatever implements
+/// `scheduler` calls it, so the workload holds no timer and does not have to
+/// exist between firings: an instance starts when a schedule is due and can
+/// retire when the call returns.
+///
+/// ## Delivery semantics
+///
+/// - **At most one firing of a schedule is handled at a time.** If a schedule
+///   comes due while its previous firing is still being handled, that firing
+///   is skipped and counted in the next delivered firing's `missed`. Different
+///   schedules are independent and their firings may be handled concurrently.
+/// - **A firing is a signal, not a durable message.** One that cannot be
+///   delivered, because the workload is stopped or the implementer was not
+///   running, is skipped and counted, not stored and replayed.
+/// - **A firing may be delivered more than once**, when the handler asks for
+///   that with `retry`. `name` and `scheduled-at` together identify it, and
+///   `attempt` counts the deliveries.
+@since(version = 0.1.0)
+interface handler {
+    @since(version = 0.1.0)
+    use types.{firing};
+
+    /// Why a firing was not handled.
+    ///
+    /// The cases are what the caller cannot work out for itself: whether
+    /// delivering the same firing again could help.
+    @since(version = 0.1.0)
+    variant handler-error {
+        /// Deliver this firing again. It may succeed later: a dependency was
+        /// unavailable, a lock was held, a quota was spent.
+        ///
+        /// The caller redelivers after a delay, a bounded number of times, and
+        /// gives up once the schedule's next firing is due, so a retry never
+        /// overlaps or delays the schedule itself.
+        retry(option<string>),
+        /// Do not deliver this firing again. The schedule itself carries on
+        /// and its next firing is delivered as usual.
+        failed(option<string>),
+        /// A failure not captured above, treated as `failed`.
+        ///
+        /// This is also the case a caller sees when the call could not be
+        /// completed at all (the handler trapped, ran past a deadline, or its
+        /// workload stopped mid-call) and the runtime in between had to
+        /// produce the error on the handler's behalf.
+        other(option<string>),
+    }
+
+    /// Handle one firing.
+    ///
+    /// Returning `ok` means the firing was handled. Returning an error never
+    /// cancels the schedule; a handler that wants its schedule to stop calls
+    /// `scheduler.unregister`.
+    ///
+    /// The detail carried by an error is for a log, not for matching on.
+    @since(version = 0.1.0)
+    handle: async func(firing: firing) -> result<_, handler-error>;
+}

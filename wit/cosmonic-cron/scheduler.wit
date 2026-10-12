@@ -1,0 +1,62 @@
+package cosmonic:cron@0.1.0;
+
+/// Managing the schedules that call the caller's workload.
+///
+/// Importing this grants one power: the caller may decide when its own
+/// workload's `handler` is called. It cannot schedule another workload, and it
+/// cannot name what gets called, because there is no parameter for either. A
+/// firing always lands on the `handler` export of the workload that registered
+/// the schedule.
+///
+/// A workload whose schedules are known when it is deployed does not need this
+/// interface at all. Those are declared with the workload and it only exports
+/// `handler`. Import `scheduler` when the set of schedules is decided at run
+/// time: a poll that starts when a user asks for it and stops when its work is
+/// done.
+///
+/// ## Registrations outlive the caller
+///
+/// A component instance may exist only for the length of one call, so a
+/// registration is held by the implementer under its name rather than by a
+/// handle the caller would have to keep alive. It lasts until `unregister`
+/// removes it or the caller's workload stops. Whether it also survives a
+/// restart of the implementer is up to the implementer, and
+/// `list-registrations` is how a caller finds out what is still held.
+@since(version = 0.1.0)
+interface scheduler {
+    @since(version = 0.1.0)
+    use types.{schedule-name, schedule, registration, schedule-error};
+
+    /// Start calling the caller's workload on `schedule`, under `name`.
+    ///
+    /// Registering a name that is already registered replaces its schedule,
+    /// and the new one takes effect from now: an `interval` starts a fresh
+    /// period. A firing of the old schedule that is already being handled is
+    /// allowed to finish.
+    ///
+    /// Registering a name with exactly the schedule it already has changes
+    /// nothing, including the phase of an `interval`. A component can
+    /// therefore call this every time it starts, without tracking whether it
+    /// has done so before.
+    ///
+    /// The implementer validates the schedule before returning, so an `ok`
+    /// means it will fire.
+    @since(version = 0.1.0)
+    register: async func(name: schedule-name, schedule: schedule)
+        -> result<_, schedule-error>;
+
+    /// Stop calling the caller's workload for `name`.
+    ///
+    /// Removing a name that is not registered succeeds, so the call is safe to
+    /// repeat. A firing already being handled is allowed to finish and is not
+    /// redelivered.
+    @since(version = 0.1.0)
+    unregister: async func(name: schedule-name) -> result<_, schedule-error>;
+
+    /// Every schedule held for the caller's workload, ordered by name: the
+    /// ones it registered and the ones declared for it.
+    ///
+    /// Never lists another workload's schedules.
+    @since(version = 0.1.0)
+    list-registrations: async func() -> result<list<registration>, schedule-error>;
+}
