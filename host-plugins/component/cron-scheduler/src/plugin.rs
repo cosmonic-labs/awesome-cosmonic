@@ -80,8 +80,23 @@ fn wake() {
     });
 }
 
+/// The longest line the plugin writes to its log, in characters.
+const MAX_LOG_LINE: usize = 512;
+
+/// Write one line to the plugin's log.
+///
+/// Much of what is logged was chosen by a workload: a schedule's text, the
+/// detail of a handler's error. Control characters are replaced and the line
+/// is cut off, so a workload can neither forge a line of this log, which is
+/// the only record of why a schedule stopped, nor flood it.
 fn log(message: impl AsRef<str>) {
-    eprintln!("cron-scheduler: {}", message.as_ref());
+    let line: String = message
+        .as_ref()
+        .chars()
+        .take(MAX_LOG_LINE)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    eprintln!("cron-scheduler: {line}");
 }
 
 fn to_spec(schedule: Schedule) -> Result<Spec, SpecError> {
@@ -205,10 +220,10 @@ impl LifecycleGuest for Plugin {
                 .iter()
                 .filter(|binding| binding.namespace == "cosmonic" && binding.package == "cron")
         };
-        let config = ours().flat_map(|binding| {
+        let entries = ours().map(|binding| {
             binding.config.iter().map(|(key, value)| (key.as_str(), value.as_str()))
         });
-        let binding = Binding::parse(config).map_err(|err| {
+        let binding = Binding::parse_entries(entries).map_err(|err| {
             format!("cosmonic:cron binding of workload '{}': {err}", workload.name)
         })?;
         let can_register =
@@ -227,6 +242,7 @@ impl LifecycleGuest for Plugin {
             if can_register { "; may register its own" } else { "" },
         ));
         ENGINE.with_borrow_mut(|engine| engine.bind(&workload.id, binding, can_register, now()));
+        log_ended();
         wake();
         Ok(())
     }
@@ -279,6 +295,7 @@ fn log_ended() {
             EndReason::Undelivered => "was dropped, the workload was not running when it came due",
             EndReason::MaxLifetime => "was removed, it was held for the workload's max-lifetime",
             EndReason::MaxFirings => "was removed, it delivered the workload's max-firings",
+            EndReason::Rebound => "was removed, the workload's new binding does not permit it",
         };
         log(format!("'{}' of workload {} {why}", ended.name, ended.workload));
     }

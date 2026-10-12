@@ -69,6 +69,12 @@ impl fmt::Display for SpecError {
     }
 }
 
+/// Look an IANA time zone up by name.
+fn parse_zone(name: &str) -> Result<Tz, SpecError> {
+    name.parse()
+        .map_err(|_| SpecError::InvalidSchedule(format!("unknown time zone '{name}'")))
+}
+
 /// A parsed crontab schedule. Keeps the text it was given, so a listing
 /// returns what the caller wrote rather than a normalized form.
 #[derive(Clone, Debug)]
@@ -88,12 +94,7 @@ impl CronSpec {
     /// `InvalidSchedule` when the expression does not parse, the zone is not
     /// in the IANA database, or the expression can never match.
     pub fn parse(expression: &str, timezone: Option<&str>) -> Result<Self, SpecError> {
-        let tz = match timezone {
-            None => Tz::UTC,
-            Some(name) => name.parse::<Tz>().map_err(|_| {
-                SpecError::InvalidSchedule(format!("unknown time zone '{name}'"))
-            })?,
-        };
+        let tz = timezone.map_or(Ok(Tz::UTC), parse_zone)?;
         // Five fields exactly: a seconds field would promise a resolution the
         // contract gives to `interval`, and a year field is no crontab.
         let cron = CronParser::builder()
@@ -135,6 +136,18 @@ impl CronSpec {
         Some(Wall {
             seconds: next.timestamp(),
             nanoseconds: next.timestamp_subsec_nanos(),
+        })
+    }
+
+    /// The latest instant the expression matches that is not after `at`, or
+    /// `None` if it has no earlier match.
+    pub fn last_at_or_before(&self, at: Wall) -> Option<Wall> {
+        let utc: DateTime<Utc> = Utc.timestamp_opt(at.seconds, at.nanoseconds).single()?;
+        let local = utc.with_timezone(&self.tz);
+        let last = self.cron.find_previous_occurrence(&local, true).ok()?;
+        Some(Wall {
+            seconds: last.timestamp(),
+            nanoseconds: last.timestamp_subsec_nanos(),
         })
     }
 }
@@ -300,85 +313,55 @@ pub struct Binding {
 }
 
 impl Binding {
-    /// Read a binding's `config` key/value pairs.
+    /// Read one binding entry's `config` key/value pairs.
+    ///
+    /// # Errors
+    ///
+    /// As [`Binding::parse_entries`].
+    pub fn parse<'a>(
+        config: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<Self, String> {
+        Self::parse_entries([config])
+    }
+
+    /// Read every `cosmonic:cron` entry a workload was bound with.
+    ///
+    /// The entries declare schedules separately and share one set of limits.
+    /// A `timezone` covers the `schedule.*` keys of its own entry only. A
+    /// limit belongs to the workload, so it may be set by any one entry, and
+    /// every entry's schedules are checked against it.
     ///
     /// # Errors
     ///
     /// A message for the first key that is not recognized, value that cannot
-    /// be read, or name declared twice. The caller fails the bind with it.
-    pub fn parse<'a>(
-        config: impl IntoIterator<Item = (&'a str, &'a str)>,
-    ) -> Result<Self, String> {
-        let mut limits = Limits::default();
-        let mut timezone: Option<&str> = None;
-        let mut crons: Vec<(&str, &str)> = Vec::new();
-        let mut intervals: Vec<(&str, &str)> = Vec::new();
+    /// be read, schedule name declared twice, or limit set by two entries. The
+    /// caller fails the bind with it.
+    pub fn parse_entries<'a, E>(entries: impl IntoIterator<Item = E>) -> Result<Self, String>
+    where
+        E: IntoIterator<Item = (&'a str, &'a str)>,
+    {
+        let entries: Vec<Vec<(&str, &str)>> = entries
+            .into_iter()
+            .map(|entry| entry.into_iter().map(|(key, value)| (key, value.trim())).collect())
+            .collect();
 
-        for (key, value) in config {
-            let value = value.trim();
-            if let Some(name) = key.strip_prefix("schedule.") {
-                crons.push((name, value));
-            } else if let Some(name) = key.strip_prefix("interval.") {
-                intervals.push((name, value));
-            } else {
-                match key {
-                    "timezone" => timezone = Some(value),
-                    "max-registrations" => {
-                        limits.max_registrations = value
-                            .parse()
-                            .map_err(|_| format!("max-registrations: '{value}' is not a count"))?;
-                    }
-                    "min-interval" => {
-                        let period = parse_duration(value).map_err(|e| format!("min-interval: {e}"))?;
-                        if period < HARD_MIN_INTERVAL {
-                            return Err(format!(
-                                "min-interval: {} is below the {} this plugin supports",
-                                format_duration(period),
-                                format_duration(HARD_MIN_INTERVAL)
-                            ));
-                        }
-                        limits.min_interval = period;
-                    }
-                    "retry.max-attempts" => {
-                        limits.retry_max_attempts = match value.parse() {
-                            Ok(attempts) if attempts >= 1 => attempts,
-                            _ => {
-                                return Err(format!(
-                                    "retry.max-attempts: '{value}' is not a count of at least 1"
-                                ));
-                            }
-                        };
-                    }
-                    "retry.backoff" => {
-                        limits.retry_backoff =
-                            parse_duration(value).map_err(|e| format!("retry.backoff: {e}"))?;
-                    }
-                    "max-lifetime" => {
-                        limits.max_lifetime = match parse_duration(value) {
-                            Ok(0) => return Err("max-lifetime: cannot be zero".to_string()),
-                            Ok(lifetime) => Some(lifetime),
-                            Err(e) => return Err(format!("max-lifetime: {e}")),
-                        };
-                    }
-                    "max-firings" => {
-                        limits.max_firings = match value.parse() {
-                            Ok(firings) if firings >= 1 => Some(firings),
-                            _ => {
-                                return Err(format!(
-                                    "max-firings: '{value}' is not a count of at least 1"
-                                ));
-                            }
-                        };
-                    }
-                    other => {
-                        return Err(format!(
-                            "unknown key '{other}'; expected schedule.<name>, interval.<name>, \
-                             timezone, max-registrations, min-interval, max-lifetime, \
-                             max-firings, retry.max-attempts or retry.backoff"
-                        ));
-                    }
-                }
+        // Limits first, across every entry: a schedule in one entry has to be
+        // checked against a `min-interval` that another may set.
+        let mut limits = Limits::default();
+        let mut set: Vec<&str> = Vec::new();
+        for (key, value) in entries.iter().flatten().copied() {
+            if key.starts_with("schedule.") || key.starts_with("interval.") || key == "timezone" {
+                continue;
             }
+            if set.contains(&key) {
+                // Two values for one limit cannot both hold, and choosing one
+                // would quietly drop what the other entry asked for.
+                return Err(format!(
+                    "{key} is set by more than one cosmonic:cron entry; set it on one"
+                ));
+            }
+            set.push(key);
+            limits.set(key, value)?;
         }
 
         let mut declared = BTreeMap::new();
@@ -390,20 +373,71 @@ impl Binding {
             }
             Ok(())
         };
-        for (name, expression) in crons {
-            let key = format!("schedule.{name}");
-            let spec = CronSpec::parse(expression, timezone).map_err(|e| format!("{key}: {e}"))?;
-            declare(key, name, Spec::Cron(spec))?;
-        }
-        for (name, period) in intervals {
-            let key = format!("interval.{name}");
-            let period = parse_duration(period).map_err(|e| format!("{key}: {e}"))?;
-            if period == 0 {
-                return Err(format!("{key}: a period cannot be zero"));
+        for entry in &entries {
+            let timezone = entry.iter().find(|(key, _)| *key == "timezone").map(|(_, zone)| *zone);
+            if let Some(zone) = timezone {
+                // Checked here and not only when a crontab uses it, so a
+                // misspelled zone is refused even in an entry with none.
+                parse_zone(zone).map_err(|e| format!("timezone: {e}"))?;
             }
-            declare(key, name, Spec::Interval(period))?;
+            for (key, value) in entry.iter().copied() {
+                if let Some(name) = key.strip_prefix("schedule.") {
+                    let cron =
+                        CronSpec::parse(value, timezone).map_err(|e| format!("{key}: {e}"))?;
+                    declare(key.to_string(), name, Spec::Cron(cron))?;
+                } else if let Some(name) = key.strip_prefix("interval.") {
+                    let period = parse_duration(value).map_err(|e| format!("{key}: {e}"))?;
+                    if period == 0 {
+                        return Err(format!("{key}: a period cannot be zero"));
+                    }
+                    declare(key.to_string(), name, Spec::Interval(period))?;
+                }
+            }
         }
         Ok(Self { declared, limits })
+    }
+}
+
+impl Limits {
+    /// Set one limit from its binding key.
+    fn set(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let count = |least: u32| match value.parse::<u32>() {
+            Ok(count) if count >= least => Ok(count),
+            _ if least == 0 => Err(format!("{key}: '{value}' is not a count")),
+            _ => Err(format!("{key}: '{value}' is not a count of at least {least}")),
+        };
+        let duration = || parse_duration(value).map_err(|e| format!("{key}: {e}"));
+        match key {
+            "max-registrations" => self.max_registrations = count(0)? as usize,
+            "min-interval" => {
+                let period = duration()?;
+                if period < HARD_MIN_INTERVAL {
+                    return Err(format!(
+                        "min-interval: {} is below the {} this plugin supports",
+                        format_duration(period),
+                        format_duration(HARD_MIN_INTERVAL)
+                    ));
+                }
+                self.min_interval = period;
+            }
+            "retry.max-attempts" => self.retry_max_attempts = count(1)?,
+            "retry.backoff" => self.retry_backoff = duration()?,
+            "max-lifetime" => {
+                self.max_lifetime = match duration()? {
+                    0 => return Err("max-lifetime: cannot be zero".to_string()),
+                    lifetime => Some(lifetime),
+                };
+            }
+            "max-firings" => self.max_firings = Some(count(1)?),
+            other => {
+                return Err(format!(
+                    "unknown key '{other}'; expected schedule.<name>, interval.<name>, \
+                     timezone, max-registrations, min-interval, max-lifetime, \
+                     max-firings, retry.max-attempts or retry.backoff"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -441,6 +475,14 @@ mod tests {
         assert_eq!(spec.next_after(at(MONDAY)), Some(at(MONDAY + 900)));
         assert_eq!(spec.next_after(at(MONDAY + 1)), Some(at(MONDAY + 900)));
         assert_eq!(spec.next_after(at(MONDAY + 900)), Some(at(MONDAY + 1800)));
+    }
+
+    #[test]
+    fn cron_finds_the_latest_match_at_or_before() {
+        let spec = CronSpec::parse("*/15 * * * *", None).unwrap();
+        assert_eq!(spec.last_at_or_before(at(MONDAY + 900)), Some(at(MONDAY + 900)));
+        assert_eq!(spec.last_at_or_before(at(MONDAY + 1_799)), Some(at(MONDAY + 900)));
+        assert_eq!(spec.last_at_or_before(at(MONDAY + 899)), Some(at(MONDAY)));
     }
 
     #[test]
@@ -576,6 +618,64 @@ mod tests {
             panic!("schedule.a should be a cron schedule");
         };
         assert_eq!(spec.timezone(), Some("Asia/Tokyo"));
+    }
+
+    #[test]
+    fn a_misspelled_zone_is_refused_even_with_no_crontab_to_use_it() {
+        for config in [
+            vec![("timezone", "America/New_Yrok")],
+            vec![("timezone", "America/New_Yrok"), ("interval.poll", "30s")],
+        ] {
+            let err = Binding::parse(config.clone()).unwrap_err();
+            assert!(err.contains("timezone") && err.contains("unknown time zone"), "{config:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn each_entry_reads_its_crontabs_in_its_own_zone() {
+        let binding = Binding::parse_entries([
+            vec![("schedule.report", "0 9 * * *"), ("timezone", "America/New_York")],
+            vec![("schedule.sync", "0 9 * * *"), ("timezone", "Asia/Tokyo")],
+            vec![("schedule.plain", "0 9 * * *")],
+        ])
+        .unwrap();
+        let zone = |name: &str| match binding.declared.get(name) {
+            Some(Spec::Cron(spec)) => spec.timezone().map(str::to_string),
+            other => panic!("{name} should be a cron schedule, got {other:?}"),
+        };
+        assert_eq!(zone("report").as_deref(), Some("America/New_York"));
+        assert_eq!(zone("sync").as_deref(), Some("Asia/Tokyo"));
+        assert_eq!(zone("plain"), None);
+    }
+
+    #[test]
+    fn limits_are_shared_by_every_entry_whichever_one_sets_them() {
+        // The interval is in the first entry; the floor that admits it is in
+        // the second.
+        let binding = Binding::parse_entries([
+            vec![("interval.fast", "100ms")],
+            vec![("min-interval", "50ms"), ("max-firings", "7")],
+        ])
+        .unwrap();
+        assert_eq!(binding.declared.get("fast"), Some(&Spec::Interval(100 * NANOS_PER_MILLI)));
+        assert_eq!(binding.limits.max_firings, Some(7));
+    }
+
+    #[test]
+    fn entries_may_not_disagree() {
+        for (entries, expect) in [
+            (
+                [vec![("max-firings", "5")], vec![("max-firings", "9")]],
+                "max-firings is set by more than one",
+            ),
+            (
+                [vec![("schedule.a", "0 2 * * *")], vec![("interval.a", "30s")]],
+                "declared more than once",
+            ),
+        ] {
+            let err = Binding::parse_entries(entries.clone()).unwrap_err();
+            assert!(err.contains(expect), "{entries:?} gave {err:?}");
+        }
     }
 
     #[test]
