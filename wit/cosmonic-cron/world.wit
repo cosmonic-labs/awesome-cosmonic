@@ -1,0 +1,138 @@
+package cosmonic:cron@0.1.0;
+
+/// A workload that is called on schedules declared when it is deployed.
+///
+/// The workload is granted nothing by this package: it imports only the types
+/// `handler` is written in. Its schedules come with its deployment, so it
+/// cannot add, change or remove one; it only handles firings.
+@since(version = 0.1.0)
+world scheduled-handler {
+    @since(version = 0.1.0)
+    export handler;
+}
+
+/// A workload that decides at run time when it is called.
+///
+/// It registers and removes its own schedules through `scheduler`, and handles
+/// their firings, and those of any schedule declared for it, through
+/// `handler`.
+@since(version = 0.1.0)
+world scheduler-client {
+    @since(version = 0.1.0)
+    import scheduler;
+
+    @since(version = 0.1.0)
+    export handler;
+}
+
+/// The scheduling capability implemented as a wasmCloud host component plugin.
+///
+/// One long-lived plugin serves every workload on the host. It keeps the
+/// schedules of each workload apart by the workload's identity, sleeps on
+/// `wasi:clocks/monotonic-clock` until the next one is due, and delivers a
+/// firing by calling the `handler` export of the workload that owns it.
+///
+/// ## Declaring schedules with a binding
+///
+/// A workload asks for this capability with a host-interface entry. The
+/// entry's `config` declares schedules, so a workload that only exports
+/// `handler` needs no code to be scheduled:
+///
+/// ```yaml
+/// hostInterfaces:
+///   - namespace: cosmonic
+///     package: cron
+///     version: "0.1.0"
+///     interfaces: [handler]
+///     config:
+///       schedule.nightly-report: "0 2 * * *"
+///       schedule.business-hours: "*/15 9-17 * * mon-fri"
+///       interval.poll-inbox: 30s
+///       timezone: America/New_York
+/// ```
+///
+/// - `schedule.<name>` declares a `cron` schedule called `<name>`. The value
+///   is a crontab expression.
+/// - `interval.<name>` declares an `interval` schedule called `<name>`. The
+///   value is a period written as a number and a unit, `ms`, `s`, `m`, `h` or
+///   `d`, and several may be joined: `500ms`, `30s`, `1h30m`.
+/// - `timezone` is the IANA zone every `schedule.*` in the entry is read in.
+///   Absent means UTC.
+///
+/// A name may be declared once: `schedule.x` beside `interval.x` is refused.
+///
+/// To let components register schedules of their own, list `scheduler` among
+/// the interfaces as well:
+///
+/// ```yaml
+///     interfaces: [handler, scheduler]
+///     config:
+///       max-registrations: "8"
+///       min-interval: 5s
+/// ```
+///
+/// - `max-registrations` is how many schedules the workload's components may
+///   hold through `scheduler.register` at once. Declared schedules do not
+///   count against it.
+/// - `min-interval` is the shortest `interval` period the workload may use,
+///   declared or registered.
+/// - `retry.max-attempts` is how many times one firing is delivered when the
+///   handler keeps answering `retry`, counting the first delivery.
+/// - `retry.backoff` is the delay before the first redelivery. It doubles for
+///   each one after.
+///
+/// The provider chooses the defaults and documents them. A key it does not
+/// recognize, or a value it cannot read, fails the bind and the workload does
+/// not deploy: a schedule that silently never fires is worse than one that is
+/// refused.
+///
+/// ## What a declared schedule guarantees
+///
+/// Declared schedules are rebuilt from the binding every time the workload is
+/// bound, including after the plugin restarts, so they need no storage.
+/// Registered schedules live in the plugin's memory. A provider that persists
+/// them says so; one that does not loses them when it restarts, which is why a
+/// component should register again whenever it starts rather than only once.
+@since(version = 0.1.0)
+world host-plugin {
+    /// Exported so the host has one owner for the types `scheduler` and
+    /// `handler` are written in. A plugin that only imported them would be
+    /// asking a workload to provide them.
+    @since(version = 0.1.0)
+    export types;
+    @since(version = 0.1.0)
+    export scheduler;
+
+    /// Per-workload provisioning and cleanup: declared schedules are read from
+    /// the binding when a workload binds, and every schedule a workload holds
+    /// is dropped when it unbinds.
+    @since(version = 0.1.0)
+    export wasmcloud:host/workload-lifecycle@0.1.3;
+
+    /// The plugin's own long-running work: the loop that waits for the next
+    /// schedule to come due and dispatches it.
+    @since(version = 0.1.0)
+    export wasi:cli/run@0.3.0;
+
+    /// Imported because the workload exports it and the plugin calls into it.
+    @since(version = 0.1.0)
+    import handler;
+
+    /// Names which workload a firing is delivered to.
+    @since(version = 0.1.0)
+    import wasmcloud:host/workload-call@0.1.3;
+
+    /// Identifies the workload calling `scheduler`, so its schedules are kept
+    /// apart from every other workload's.
+    @since(version = 0.1.0)
+    import wasmcloud:host/identity@0.1.3;
+
+    /// Waiting for the next schedule to come due, and measuring `interval`
+    /// periods.
+    @since(version = 0.1.0)
+    import wasi:clocks/monotonic-clock@0.3.0;
+
+    /// Reading the wall-clock time that `cron` schedules are matched against.
+    @since(version = 0.1.0)
+    import wasi:clocks/system-clock@0.3.0;
+}

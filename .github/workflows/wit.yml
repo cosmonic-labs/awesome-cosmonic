@@ -1,5 +1,5 @@
-# Validates the cosmonic:agent, cosmonic:kafka and cosmonic:notifications WIT packages and publishes
-# them to GHCR as ghcr.io/cosmonic-labs/<namespace>/<package>.
+# Validates the cosmonic:agent, cosmonic:cron, cosmonic:kafka and cosmonic:notifications WIT
+# packages and publishes them to GHCR as ghcr.io/cosmonic-labs/<namespace>/<package>.
 #
 # The version in each package's `package` declaration is the release version.
 # A merge to main that bumps it publishes that version. A change without a bump
@@ -65,6 +65,9 @@ jobs:
           - package: agent
             id: cosmonic:agent
             dir: wit/cosmonic-agent
+          - package: cron
+            id: cosmonic:cron
+            dir: wit/cosmonic-cron
           - package: kafka
             id: cosmonic:kafka
             dir: wit/cosmonic-kafka
@@ -122,6 +125,9 @@ jobs:
           - package: agent
             namespace: cosmonic
             id: cosmonic:agent
+          - package: cron
+            namespace: cosmonic
+            id: cosmonic:cron
           - package: kafka
             namespace: cosmonic
             id: cosmonic:kafka

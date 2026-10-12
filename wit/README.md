@@ -10,6 +10,7 @@ arrive on a future or stream.
 | Package | Contract |
 | --- | --- |
 | [`cosmonic:agent`](cosmonic-agent/world.wit) 0.4.2 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:cron`](cosmonic-cron/world.wit) 0.1.0 | An API for being called on crontab and interval schedules, declared with a workload or registered at run time, with time spelled in `wasi:clocks@0.3.0` types. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
 | [`cosmonic:notifications`](cosmonic-notifications/world.wit) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams. |
 
@@ -88,8 +89,9 @@ client -> cosmonic:agent inference -> local provider
 agent -> authorized model aliases + chat + tools + session
 ```
 
-`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, and `cosmonic:agent`
-and `cosmonic:notifications` import `wasi:clocks` for `duration`. Each package's
+`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, `cosmonic:cron`
+imports those and `wasi:clocks`, and `cosmonic:agent` and
+`cosmonic:notifications` import `wasi:clocks` for `duration`. Each package's
 `wkg.lock` pins them by digest. The build script fetches them and checks the
 lock still reproduces:
 
@@ -97,7 +99,21 @@ lock still reproduces:
 node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notifications
 node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
 node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
+node .github/scripts/wit/build.mjs wit/cosmonic-cron cosmonic:cron
 ```
+
+## Scheduling worlds
+
+| World | Imports | Exports |
+| --- | --- | --- |
+| `scheduled-handler` | None | `handler` |
+| `scheduler-client` | `scheduler` | `handler` |
+| `host-plugin` | `handler`, `wasi:clocks`, `wasmcloud:host` | `types`, `scheduler`, `wasi:cli/run`, `wasmcloud:host/workload-lifecycle` |
+
+A workload whose schedules are known at deploy time declares them in its
+binding and implements `scheduled-handler`. One that decides at run time
+implements `scheduler-client`. [`cron-scheduler`](../host-plugins/component/cron-scheduler/)
+implements `host-plugin`.
 
 ## Notification worlds
 
