@@ -36,6 +36,19 @@ package cosmonic:agent@0.4.0-draft;
 /// errors, and reasons are host-authored. The child's journal is observable
 /// only on the host's own API, by a person or the auditor, never by the caller.
 ///
+/// Open and sealed. `spawn` returns an open agent whose final replies come
+/// back to the caller, under the ceiling above. `spawn-sealed` returns a
+/// sealed agent that sends nothing back but progress and a host-authored
+/// finish code; its results go to a host-named sink. Sealed is for privileged
+/// workers whose results the caller should never see. The host enforces:
+/// - the sink is not a volume the caller can read;
+/// - the child's writable reach does not overlap the caller's readable reach;
+/// - child and caller use distinct credentials and egress identities;
+/// - grants beyond the caller's ceiling still need approval.
+/// Residual risk, stated plainly: a sealed child and its caller can still
+/// signal each other through an external service both can reach, and through
+/// timing. Sealing narrows the channel; it does not close every covert one.
+///
 /// Credentials never pass through this interface. Models and secrets are
 /// named; the host resolves them and keeps values out of every agent's memory.
 interface spawn {
@@ -243,4 +256,44 @@ interface spawn {
     /// Check the request against policy and start the agent. Resolves once
     /// accepted, not once its components are running.
     spawn: async func(request: spawn-request) -> result<agent, spawn-error>;
+
+    /// Where a sealed agent's results go. Names only host-known destinations;
+    /// the caller cannot name an address, a path, or itself.
+    variant sink {
+        /// The person who owns the caller's workload, through the host UI.
+        person,
+        /// The host's approval queue, for a person or the auditor to release.
+        approval-queue,
+        /// A host volume by name. Rejected if the caller can read it.
+        volume(string),
+        other(string),
+    }
+
+    /// How a sealed turn ended. Host-authored codes only.
+    variant sealed-finish {
+        /// The agent finished and its results went to the sink.
+        completed,
+        /// The turn was cancelled by dropping its progress stream.
+        cancelled,
+        /// A limit in the request was reached.
+        over-limit,
+        /// A host-authored failure code. Details are on the host API.
+        failed(string),
+        other(string),
+    }
+
+    /// Progress followed by a finish code. No reply, no structured output.
+    /// The host coarsens step counters and reports usage as unreported (none).
+    type sealed-turn = tuple<stream<progress>, future<result<sealed-finish, turn-error>>>;
+
+    /// A spawned agent with no content channel back to its caller. Dropping
+    /// the handle ends the child.
+    resource sealed-agent {
+        /// Start one turn. One turn at a time; dropping the stream cancels it.
+        send: async func(turn: user-message) -> result<sealed-turn, turn-error>;
+    }
+
+    /// Check the request against the sealed rules and policy, and start the
+    /// agent. The request's `output` limits what reaches the sink, not the caller.
+    spawn-sealed: async func(request: spawn-request, sink: sink) -> result<sealed-agent, spawn-error>;
 }

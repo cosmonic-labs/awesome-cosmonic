@@ -4,9 +4,8 @@ A scaffold for the design jam on 2026-10-13, up for argument. The WIT is in
 [`spawn.wit`](spawn.wit) and [`world.wit`](world.wit). It declares
 `cosmonic:agent@0.4.0-draft` and uses published `cosmonic:agent@0.3.0` types
 through `wkg.lock`; the published package is unchanged and CI does not build
-`wit/drafts/`. To check it locally (the `WKG_CONFIG_FILE` is needed because no
-default registry knows the `cosmonic` namespace, a gap `build.mjs` will hit for
-any package that depends on `cosmonic:agent`):
+`wit/drafts/`. To check it locally (`build.mjs` needs `WKG_CONFIG_FILE` for any
+package that depends on `cosmonic:*`):
 
 ```sh
 WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
@@ -22,14 +21,13 @@ it owns. Victor's point is the reason. A guest that can start any workload can
 ask for anything a workload can do, so the blast radius (everything a mistake or
 an attack can reach) is the whole workload API. A guest that can only spawn an
 agent with a declared tool list can only ask for that, and the request is
-semantic enough to write policy against. This is not session durability, which
-iterates on the existing `cosmonic:agent/session` separately.
+semantic enough to write policy against. Session durability is separate work.
 
 ## Decisions
 
 - **Native plugin.** Settled: the spawn plugin is native on Desktop and
   Control. It needs the host's workload API and the caller's identity anyway.
-- **The handle is `resource agent`.** Bailey's full rule: a resource defines a
+- **The handle is `resource agent`** (decided). Bailey's full rule: a resource defines a
   lifetime and a proper noun; if she sees a resource she tries to remove it; it
   must be cohesive across the other APIs. Applied:
   - *Why not one session resource across APIs.* WIT cannot scope methods by
@@ -40,7 +38,6 @@ iterates on the existing `cosmonic:agent/session` separately.
     durability work.
   - *Why `agent` survives removal.* It carries ownership and lifetime: dropping
     it ends the child. Nothing else in the API expresses that.
-  - Fallback name `delegate`, if the clash with `world agent` bothers Bailey.
 - **One method, `send`, shaped like `chat.reply`.** It returns a contentless
   `stream<progress>` and a `future` of the outcome. Dropping the stream cancels
   the turn and the agent stays idle. One turn at a time (`busy`). The outcome
@@ -85,6 +82,21 @@ The host enforces these; the native plugin sees the caller's workload definition
 - **Plainly:** redaction is not a security boundary, because the model
   paraphrases. The final reply is a declassification channel by nature.
 
+## Open vs sealed
+
+| | `spawn` returns `agent` (open) | `spawn-sealed` returns `sealed-agent` |
+| --- | --- | --- |
+| Use when | the caller needs the result: research, review, a subtask | the child needs grants whose results the caller must never see: a privileged worker that writes to prod, files a ticket, or reads data the caller cannot |
+| Back to the caller | final reply parts, optional `structured`, usage, counts | progress and a host-authored `sealed-finish` code only |
+| Results go to | the caller, within `output` | a host-named `sink`: `person`, `approval-queue`, or a host `volume` |
+| Guarantee | the child's read and egress reach fit inside the caller's, unless approved as declassification | no content channel to the caller; the sink is not caller-readable; the child's writable reach does not overlap the caller's readable reach; distinct credentials and egress identities |
+
+Both need approval for grants beyond the caller's ceiling. Sealed is not
+airtight: a child and caller that share an external service, or watch timing,
+can still signal each other. The WIT ships both now because the choice shapes
+the resource model; the host may implement sealed in a later phase and return
+`unavailable` until then.
+
 ## Usage sketch
 
 Victor's `a = new agent(); a.addTool(...); a.prompt(...); a.spawn()` becomes an
@@ -116,29 +128,26 @@ separate investigation of the wash-runtime `active_ctx` race (concurrent calls
 into one store seeing the wrong context) is underway, and we will not decide on
 the basis of that bug. The WIT is agnostic: grants are per component either way.
 
-**(b) Sealed agents, later.** A `spawn-sealed` returning a handle with no
-content channel, whose output goes to a host-named sink. For a child that must
-hold grants the parent should never see results of. Proposed for v1 unless
-Bailey wants it now.
+**(b) Sink semantics.** What do `person` and `approval-queue` deliver to on
+Desktop (a notification and the session view?) versus Control (an audit store,
+a ticket, the auditor's queue)? Is `volume` enough for machine consumers?
 
-**(c) `agent` or `delegate`** for the handle name.
-
-**(d) Lifetime versus store.** A resource dies with its store, so a parent that
+**(c) Lifetime versus store.** A resource dies with its store, so a parent that
 lives for one request kills its children when the request ends. Do we need
 host-owned agents a parent can reattach to? Decide together with durability.
 
-**(e) What "fits inside" means.** Strict subset, or policy-defined containment
+**(d) What "fits inside" means.** Strict subset, or policy-defined containment
 that understands wildcards (is `api.github.com` inside `*.github.com`)?
 
-**(f) Progress stream or host UI only.** Is `blocked` worth telling the parent,
+**(e) Progress stream or host UI only.** Is `blocked` worth telling the parent,
 or should blocked state live only in the host UI?
 
-**(g) `tools` and the `tool-workload` sibling.** Tool components export
+**(f) `tools` and the `tool-workload` sibling.** Tool components export
 `cosmonic:agent/tools` today; accept `tool-workload` too while it is a sibling,
 so the later switch is a rename. Ask whether Bailey wants to iterate `tools`
 now. Dynamic loading later becomes a method on the handle, through approval.
 
-**(h) Taint propagation, long term.** Labelling data with where it came from
+**(g) Taint propagation, long term.** Labelling data with where it came from
 and narrowing egress as a child reads would beat a fixed ceiling. It needs
 runtime revocation of `allowedHosts` in wash-runtime.
 
