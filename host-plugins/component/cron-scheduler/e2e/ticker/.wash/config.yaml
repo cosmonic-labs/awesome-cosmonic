@@ -25,3 +25,6 @@ dev:
         max-registrations: "3"
         min-interval: 500ms
         retry.backoff: 500ms
+        # Short, so the test can watch a forgotten schedule being removed.
+        max-lifetime: 12s
+        max-firings: "10"

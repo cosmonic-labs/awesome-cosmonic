@@ -7,6 +7,8 @@
 //! - `GET  /schedules`                              every schedule held, a line each
 //! - `POST /register?name=N&every-ms=MS`            an `interval` schedule
 //! - `POST /register?name=N&cron=EXPR[&tz=ZONE]`    a `cron` schedule
+//! - `POST /register?name=N&once-after-ms=MS`       a `once-after` schedule
+//! - `POST /register?name=N&once-at=UNIX_SECONDS`   a `once-at` schedule
 //! - `POST /register?name=N&other=TEXT`             a schedule kind nobody provides
 //! - `POST /unregister?name=N`
 //!
@@ -30,6 +32,7 @@ use bindings::cosmonic::cron::types::{CronSchedule, Firing, Schedule, ScheduleEr
 use bindings::exports::cosmonic::cron::handler::{Guest as HandlerGuest, HandlerError};
 use bindings::exports::wasi::http::handler::Guest as HttpGuest;
 use bindings::wasi::clocks::monotonic_clock;
+use bindings::wasi::clocks::system_clock::Instant;
 use bindings::wasi::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Ticker;
@@ -66,7 +69,10 @@ impl HttpGuest for Ticker {
             (Method::Get, "/schedules") => list().await,
             (Method::Post, "/register") => match schedule_from(query) {
                 Some(schedule) => scheduler::register(name(), schedule).await.map(|()| "ok\n".into()),
-                None => return Ok(respond(400, "give one of every-ms, cron or other\n".into())),
+                None => {
+                    let kinds = "every-ms, cron, once-after-ms, once-at or other";
+                    return Ok(respond(400, format!("give one of {kinds}\n")));
+                }
             },
             (Method::Post, "/unregister") => {
                 scheduler::unregister(name()).await.map(|()| "ok\n".into())
@@ -94,6 +100,8 @@ async fn list() -> Result<String, ScheduleError> {
                     format!("cron {expression}")
                 }
                 Schedule::Interval(period) => format!("interval {}ms", period / 1_000_000),
+                Schedule::OnceAt(at) => format!("once-at {}", at.seconds),
+                Schedule::OnceAfter(delay) => format!("once-after {}ms", delay / 1_000_000),
                 Schedule::Other(text) => format!("other {text}"),
             };
             format!("{}\t{origin}\t{schedule}\n", held.name)
@@ -104,6 +112,12 @@ async fn list() -> Result<String, ScheduleError> {
 fn schedule_from(query: &str) -> Option<Schedule> {
     if let Some(millis) = param(query, "every-ms") {
         return Some(Schedule::Interval(millis.parse::<u64>().ok()? * 1_000_000));
+    }
+    if let Some(millis) = param(query, "once-after-ms") {
+        return Some(Schedule::OnceAfter(millis.parse::<u64>().ok()? * 1_000_000));
+    }
+    if let Some(seconds) = param(query, "once-at") {
+        return Some(Schedule::OnceAt(Instant { seconds: seconds.parse().ok()?, nanoseconds: 0 }));
     }
     if let Some(expression) = param(query, "cron") {
         return Some(Schedule::Cron(CronSchedule { expression, timezone: param(query, "tz") }));

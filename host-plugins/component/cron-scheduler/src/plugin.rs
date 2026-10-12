@@ -31,7 +31,7 @@ use bindings::cosmonic::cron::handler::{self, HandlerError};
 use bindings::cosmonic::cron::types::Firing;
 use bindings::exports::cosmonic::cron::scheduler::Guest as SchedulerGuest;
 use bindings::exports::cosmonic::cron::types::{
-    CronSchedule, Registration, Schedule, ScheduleError,
+    CronSchedule, Instant as ServedInstant, Registration, Schedule, ScheduleError,
 };
 use bindings::exports::wasi::cli::run::Guest as RunGuest;
 use bindings::exports::wasmcloud::host::workload_lifecycle::{
@@ -42,7 +42,7 @@ use bindings::wasi::clocks::{monotonic_clock, system_clock};
 use bindings::wasmcloud::host::identity;
 use bindings::wasmcloud::host::workload_call::{self, Target};
 
-use crate::engine::{Completion, Dispatch, Engine, Now, Outcome, RegisterError};
+use crate::engine::{Completion, Dispatch, EndReason, Engine, Now, Outcome, RegisterError};
 use crate::spec::{Binding, CronSpec, Spec, SpecError, Wall, format_duration};
 
 /// The interface this plugin calls on a workload, spelled the way
@@ -90,8 +90,13 @@ fn to_spec(schedule: Schedule) -> Result<Spec, SpecError> {
             CronSpec::parse(&cron.expression, cron.timezone.as_deref()).map(Spec::Cron)
         }
         Schedule::Interval(period) => Ok(Spec::Interval(period)),
+        Schedule::OnceAt(at) => Ok(Spec::OnceAt(Wall {
+            seconds: at.seconds,
+            nanoseconds: at.nanoseconds,
+        })),
+        Schedule::OnceAfter(delay) => Ok(Spec::OnceAfter(delay)),
         Schedule::Other(text) => Err(SpecError::Unsupported(format!(
-            "'{text}': this plugin provides cron and interval schedules"
+            "'{text}': this plugin provides cron, interval, once-at and once-after schedules"
         ))),
     }
 }
@@ -103,6 +108,11 @@ fn from_spec(spec: Spec) -> Schedule {
             timezone: cron.timezone().map(str::to_string),
         }),
         Spec::Interval(period) => Schedule::Interval(period),
+        Spec::OnceAt(at) => Schedule::OnceAt(ServedInstant {
+            seconds: at.seconds,
+            nanoseconds: at.nanoseconds,
+        }),
+        Spec::OnceAfter(delay) => Schedule::OnceAfter(delay),
     }
 }
 
@@ -113,6 +123,8 @@ fn describe(spec: &Spec) -> String {
             None => format!("cron '{}'", cron.expression()),
         },
         Spec::Interval(period) => format!("every {}", format_duration(*period)),
+        Spec::OnceAt(at) => format!("once at {}s since the epoch", at.seconds),
+        Spec::OnceAfter(delay) => format!("once in {}", format_duration(*delay)),
     }
 }
 
@@ -257,9 +269,25 @@ async fn deliver(dispatch: Dispatch) -> (Dispatch, Outcome, Option<String>) {
     }
 }
 
+/// Log the schedules the engine removed on its own. Nothing tells the
+/// workload, so the log is the only record of why a schedule stopped.
+fn log_ended() {
+    for ended in ENGINE.with_borrow_mut(Engine::take_ended) {
+        let why = match ended.reason {
+            // A one-shot doing what it was registered to do is not news.
+            EndReason::Fired => continue,
+            EndReason::Undelivered => "was dropped, the workload was not running when it came due",
+            EndReason::MaxLifetime => "was removed, it was held for the workload's max-lifetime",
+            EndReason::MaxFirings => "was removed, it delivered the workload's max-firings",
+        };
+        log(format!("'{}' of workload {} {why}", ended.name, ended.workload));
+    }
+}
+
 /// Tell the engine a delivery ended, and log anything but plain success.
 fn settle(dispatch: &Dispatch, outcome: Outcome, detail: Option<String>) {
     let completion = ENGINE.with_borrow_mut(|engine| engine.complete(dispatch, outcome, now()));
+    log_ended();
     let Dispatch { workload, firing, .. } = dispatch;
     let detail = detail.map(|d| format!(": {d}")).unwrap_or_default();
     let what = match (outcome, completion) {
@@ -290,6 +318,7 @@ impl RunGuest for Plugin {
         loop {
             let now = now();
             let due = ENGINE.with_borrow_mut(|engine| engine.poll(now));
+            log_ended();
             deliveries.extend(due.into_iter().map(deliver));
 
             let wait = ENGINE.with_borrow(|engine| engine.next_wake(now));
