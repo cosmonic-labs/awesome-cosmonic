@@ -1,6 +1,6 @@
 package cosmonic:agent@0.4.0-draft;
 
-/// DRAFT. An agent that can spawn sub-agent sessions with their own tools.
+/// DRAFT. An agent that can spawn sub-agents with their own tools.
 world spawner {
     include cosmonic:agent/agent@0.3.0;
 

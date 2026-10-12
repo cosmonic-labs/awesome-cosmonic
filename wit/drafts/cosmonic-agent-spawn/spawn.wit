@@ -2,35 +2,47 @@ package cosmonic:agent@0.4.0-draft;
 
 /// DRAFT for discussion. Not published, not a contract; see DESIGN-NOTES.md.
 ///
-/// Spawn a sub-agent session with a declared set of tools, and keep talking
-/// to it. This is scoped to agents on purpose: a caller describes an agent,
-/// its tools and their grants, not an arbitrary workload. How the host fulfils
-/// a spawn (a wasmCloud workload today, something else later) is not part of
-/// the contract.
+/// Spawn a sub-agent with a declared set of tools, give it turns, and get
+/// back its final replies. Scoped to agents on purpose: a caller describes an
+/// agent, its tools and their grants, not an arbitrary workload. How the host
+/// fulfils a spawn (a wasmCloud workload today) is not part of the contract.
 ///
-/// The host sees the caller. Every call arrives at the implementing plugin
-/// with the caller's workload definition: its components, its granted
-/// interfaces, allowed hosts, volumes, and named secrets. Policy runs twice:
-/// once here, on the semantic request (which agent, which tools, which
-/// grants), and again when the host admits whatever it builds from it.
+/// The host sees the caller. The implementing plugin receives the caller's
+/// workload definition from the host: its components, interfaces, allowed
+/// hosts, volumes, secret names, and model bindings. Policy runs on the
+/// semantic request here and again when the host admits what it builds.
 ///
-/// Attenuation. A caller may request grants beyond its own, but it can never
-/// grant them. The host is the sole grantor, through policy or a person.
-/// Grants within the caller's own are checked by policy as usual. Anything
-/// beyond them returns needs-approval, and an approval is bound to the digest
-/// of the exact request it covers. A request never widens itself, and a
-/// spawned session never inherits more than the host granted at spawn.
+/// Reach. A request's read reach is the union, over the agent and every tool,
+/// of its read grants: volumes, secrets, interfaces the host classifies as
+/// reading, and the model binding. Its egress reach is the union of allowed
+/// hosts and interfaces the host classifies as writing. A read-write volume
+/// counts both ways.
+///
+/// Ceiling. By default the child's read reach and egress reach must each fit
+/// inside the caller's. Within that ceiling, results flowing up to the caller
+/// are not a leak: the caller could have read the same data itself.
+///
+/// Attenuation. A caller may request more than the ceiling but cannot grant
+/// it. The host is the sole grantor, by policy or a person, and returns
+/// needs-approval. An approval is an explicit declassification: it is bound
+/// to a digest over the caller's identity, the whole request, and its output
+/// and limits, and its detail says what returns to whom. Turns the caller
+/// sends are content that can reach the child's egress; an approval of
+/// egress beyond the ceiling says so too.
+///
+/// The final reply is a declassification channel by nature, and redaction is
+/// not a security boundary, because a model can paraphrase anything it read.
+/// So nothing else the caller sees carries child-authored text: progress,
+/// errors, and reasons are host-authored. The child's journal is observable
+/// only on the host's own API, by a person or the auditor, never by the caller.
 ///
 /// Credentials never pass through this interface. Models and secrets are
-/// named; the host resolves the names and keeps the values out of every
-/// agent's memory, the caller's and the child's.
+/// named; the host resolves them and keeps values out of every agent's memory.
 interface spawn {
-    use cosmonic:agent/inference-types@0.3.0.{user-message};
-    use cosmonic:agent/session@0.3.0.{entry};
+    use cosmonic:agent/inference-types@0.3.0.{json, attachment, opaque-block, usage, user-message};
 
-    /// A component image pinned by content digest. The host refuses a
-    /// reference it cannot verify against the digest, so a tag that moves
-    /// cannot change what was approved.
+    /// A component image pinned by content digest. A moving tag cannot change
+    /// what was approved.
     record component-ref {
         /// An OCI reference such as `ghcr.io/acme/agents/coder:1.2.0`.
         image: string,
@@ -38,39 +50,35 @@ interface spawn {
         digest: string,
     }
 
-    /// A host volume mounted into one component.
+    /// A host volume mounted into one component. Read-write counts toward
+    /// both read and egress reach.
     record volume-mount {
         /// The name of a volume the host knows. Never a host path.
         volume: string,
-        /// Where the component sees it.
         mount-path: string,
         read-only: bool,
     }
 
-    /// A host interface granted to one component, such as
-    /// `wasi:keyvalue/store@0.2.0` or a `cosmonic:kafka` binding.
+    /// A host interface granted to one component. The host, not the request,
+    /// classifies it as reading, writing, or both.
     record interface-grant {
-        /// Fully qualified interface name, with version.
+        /// Fully qualified interface name with version, such as
+        /// `wasi:keyvalue/store@0.2.0`.
         name: string,
         /// Interface-specific configuration, such as a bucket or topic.
         config: list<tuple<string, string>>,
     }
 
-    /// What one component may touch. Empty lists grant nothing; there is no
-    /// inherit-everything default.
+    /// What one component may touch. Empty grants nothing; nothing is inherited.
     record grants {
-        /// Hostnames this component may reach, matched as the host's egress
-        /// policy matches them.
         allowed-hosts: list<string>,
         volumes: list<volume-mount>,
         interfaces: list<interface-grant>,
-        /// Names of secrets the host injects into this component. Names only;
-        /// values never pass through the caller or the agent.
+        /// Secret names the host injects into this component. Names only.
         secrets: list<string>,
     }
 
-    /// A tool for the spawned agent: a component with its own grants. A
-    /// tool's grants belong to the tool, not to the agent that calls it.
+    /// A tool for the child: a component with its own grants.
     record tool-request {
         /// Unique within the request. Used for routing, display, and audit.
         name: string,
@@ -79,119 +87,160 @@ interface spawn {
         grants: grants,
     }
 
-    /// The agent's instructions.
-    variant prompt {
-        text(string),
-        /// A component that supplies the prompt, so it can be versioned,
-        /// pinned, and reviewed like any other component.
-        component(component-ref),
+    /// What may come back to the caller. Covered by the approval digest.
+    record output-spec {
+        /// JSON Schema the host validates `structured` against. None means
+        /// reply parts only.
+        schema: option<json>,
+        /// Ceiling on the encoded outcome of one turn, in bytes.
+        max-bytes: u32,
     }
 
-    /// Everything needed to start a sub-agent session. Declarative: the tool
-    /// set is fixed for the session's lifetime.
+    /// Bounds on the child's lifetime work. Covered by the approval digest.
+    /// None takes the host's default, which policy may cap.
+    record limits {
+        max-turns: option<u32>,
+        max-tokens: option<u64>,
+        /// Wall-clock budget from spawn, in milliseconds.
+        deadline-ms: option<u64>,
+    }
+
+    /// Everything needed to start a sub-agent. Declarative: the tool set is
+    /// fixed for the agent's lifetime.
     record spawn-request {
         /// A component targeting the `agent` world.
         agent: component-ref,
-        /// A host-level inference binding, by name, as `models.open` takes
-        /// it. The child opens it like any agent; it never sees a key.
+        /// A host-level inference binding by name, as `models.open` takes it.
+        /// Counts toward read reach like any other grant.
         model: string,
-        prompt: prompt,
-        /// The first user turn. None starts the session idle.
-        task: option<user-message>,
+        /// The child's instructions.
+        instructions: string,
         /// Hosts the agent component itself may reach. Tools carry their own.
         allowed-hosts: list<string>,
         tools: list<tool-request>,
-        /// Key-value labels for logs, audit, and display. Not policy input
-        /// the caller can rely on to authorize anything.
+        output: output-spec,
+        limits: limits,
+        /// For logs, audit, and display. Never policy input.
         labels: list<tuple<string, string>>,
     }
 
     /// A request that needs a grantor's decision before it can run.
     record approval {
-        /// Host-issued id, to correlate with the host's approval UI or audit log.
+        /// Host-issued id, to correlate with the host's approval UI and audit log.
         id: string,
-        /// Digest of the canonical request this approval is bound to.
+        /// Digest over the caller's identity, the request, its output, and limits.
         request-digest: string,
-        /// What exceeded the caller's grants, for a person to read.
-        /// Not for branching on.
+        /// Host-authored. States what is declassified, for example "results of
+        /// this agent (schema S, at most N bytes) return to <caller>".
         detail: string,
     }
 
-    /// A limit the host refuses to exceed.
     record over-limit {
-        /// Human-readable scope, such as sessions, tools, or memory.
+        /// Host-authored scope, such as agents, depth, or memory.
         what: string,
-        /// The limit, where it is a number.
         limit: option<u64>,
     }
 
-    /// Why a spawn did not start a session.
+    /// Why a spawn did not start an agent. All strings are host-authored.
     variant spawn-error {
-        /// A policy or a person refused. Carries a reason fit to show the
-        /// caller's model or a person.
+        /// A policy or a person refused.
         denied(string),
-        /// The request asks for more than the caller holds and has been sent
-        /// to a grantor. Resend the identical request once it is approved;
-        /// the host matches it by digest. A changed request is a new request.
+        /// Beyond the ceiling and sent to a grantor. Resend the identical
+        /// request once approved; a changed request is a new request.
         needs-approval(approval),
-        /// Quota or capacity, such as concurrent sessions per caller.
         over-limit(over-limit),
         /// Malformed: a missing digest, a duplicate tool name, an unknown
-        /// model binding, a component that does not target the right world.
+        /// binding, a component that does not target the right world.
         invalid-request(string),
         /// The host could not serve the call; the detail is for logs.
         unavailable(string),
         other(string),
     }
 
-    /// Where a session is. Readers treat an unknown case as other.
-    variant status {
-        /// Accepted; components are still being fetched or started.
-        starting,
-        /// Working on a turn.
-        working,
-        /// Waiting for a turn.
-        idle,
-        /// Paused on a decision, such as a tool call a person must approve.
-        blocked(string),
-        /// Ended with an error. The journal remains readable while the handle lives.
-        failed(string),
+    /// A final reply part. No tool use, reasoning, or continuation data.
+    variant reply-part {
+        text(string),
+        attachment(attachment),
+        other(opaque-block),
+    }
+
+    /// Why a turn ended. Host-authored.
+    variant finish {
+        /// The agent ended its reply.
+        done,
+        max-turns,
+        max-tokens,
+        deadline,
         other(string),
     }
 
-    variant session-error {
-        /// The session has ended; carries why.
-        ended(string),
-        invalid-argument(string),
-        /// The host could not serve the call; the detail is for logs.
+    /// The result of one turn: the final reply and what it cost.
+    record turn-outcome {
+        reply: list<reply-part>,
+        /// Validated against `output.schema`; present only when one was set.
+        structured: option<json>,
+        usage: usage,
+        /// Model calls made in this turn.
+        steps: u32,
+        tool-calls: u32,
+        finish: finish,
+    }
+
+    /// Cumulative counters across this turn.
+    record step-counts {
+        steps: u32,
+        tool-calls: u32,
+        usage: usage,
+    }
+
+    /// Why a turn is paused. Host-authored codes.
+    variant blocked-reason {
+        /// A tool call waits on a person or the auditor.
+        tool-approval,
+        /// Policy holds the outcome until a person or the auditor releases it.
+        outcome-release,
+        other(string),
+    }
+
+    /// Contentless progress. The host coalesces it and never blocks on an
+    /// unread stream.
+    variant progress {
+        working,
+        blocked(blocked-reason),
+        steps(step-counts),
+        other(string),
+    }
+
+    /// Why a turn failed. All strings are host-authored, never the child's.
+    variant turn-error {
+        /// A turn is already in progress. One turn at a time.
+        busy,
+        /// The turn was cancelled by dropping its progress stream.
+        cancelled,
+        /// The agent's limits are spent; it takes no more turns.
+        exhausted(finish),
+        /// The reply failed `output.schema` or exceeded `output.max-bytes`.
+        output-rejected(string),
+        /// A person or the auditor declined to release the outcome.
+        withheld,
+        /// The child failed. A host-authored code; details are on the host API.
+        failed(string),
         unavailable(string),
         other(string),
     }
 
-    /// A spawned agent session, owned by the caller that spawned it. The
-    /// session is the proper noun: one agent, one model binding, one tool
-    /// set, one context, one lifetime. Dropping the handle ends the session
-    /// and releases everything the host started for it.
-    resource session {
-        /// Host-assigned and stable, for logs and audit.
-        id: async func() -> string;
+    /// Progress frames followed by the outcome. Dropping the stream cancels
+    /// the turn; the agent stays idle and can take another.
+    type turn = tuple<stream<progress>, future<result<turn-outcome, turn-error>>>;
 
-        /// Queue a user turn. Resolves when the host accepts it, not when the
-        /// agent finishes. Turns run in the order they were sent.
-        send: async func(turn: user-message) -> result<_, session-error>;
-
-        /// The child's journal from seq >= start, then new entries as they
-        /// are written, in `cosmonic:agent/session` format. Read-only.
-        /// Dropping the stream stops following; the session keeps running.
-        follow: async func(start: u64) -> result<stream<entry>, session-error>;
-
-        status: async func() -> status;
-
-        /// Stop the turn in progress. The session stays open and idle.
-        cancel: async func() -> result<_, session-error>;
+    /// A spawned agent, owned by its caller. Dropping the handle ends the
+    /// child and releases everything the host started for it.
+    resource agent {
+        /// Start one turn. Resolves when the host accepts it.
+        send: async func(turn: user-message) -> result<turn, turn-error>;
     }
 
-    /// Check the request against policy and start a session. Resolves once
-    /// the session is accepted, not once its components are running.
-    spawn: async func(request: spawn-request) -> result<session, spawn-error>;
+    /// Check the request against policy and start the agent. Resolves once
+    /// accepted, not once its components are running.
+    spawn: async func(request: spawn-request) -> result<agent, spawn-error>;
 }
