@@ -70,7 +70,11 @@ interface types {
         /// At the wall-clock times a crontab expression matches.
         ///
         /// Firing times are read from a system clock, so they follow that
-        /// clock when it is corrected.
+        /// clock when it is corrected. When it moves forward, the matches it
+        /// passed over are reported as `missed`. When it moves back, an
+        /// implementer either waits for the clock to reach where it had been,
+        /// so the repeated stretch is not run twice, or schedules again from
+        /// the new time; which one, and for how large a step, is its choice.
         cron(cron-schedule),
         /// Repeatedly, one period apart, measured on a monotonic clock: the
         /// shape of a poll loop. The first firing is one period after the
@@ -144,6 +148,10 @@ interface types {
         /// that must account for every period reads this; one that only needs
         /// to run "about now" can ignore it. Always 0 for a schedule that
         /// fires once.
+        ///
+        /// After a long gap an implementer may stop counting, so a large
+        /// value is a lower bound. `scheduled-at` is exact regardless: it is
+        /// the most recent occurrence, the one this firing stands for.
         missed: u32,
         /// Which delivery of this firing this is: 1 the first time, and one
         /// more each time the handler answers `retry` and it is redelivered.
@@ -154,7 +162,8 @@ interface types {
     @since(version = 0.1.0)
     variant schedule-error {
         /// The name is empty, too long, or uses a character outside the set
-        /// `schedule-name` permits. Carries detail for a log.
+        /// `schedule-name` permits, whether it is being registered or
+        /// removed. Carries detail for a log.
         invalid-name(string),
         /// The schedule cannot be read or can never fire: a malformed crontab
         /// expression, an unknown time zone, a zero period, a period or delay

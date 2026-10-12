@@ -63,6 +63,16 @@ world scheduler-client {
 /// Only repeating schedules are declared. A schedule that fires once would
 /// fire again every time the workload was bound.
 ///
+/// Two keys set how a firing is retried, for declared and registered
+/// schedules alike:
+///
+/// - `retry.max-attempts` is how many times one firing is delivered when the
+///   handler keeps answering `retry`, counting the first delivery.
+/// - `retry.backoff` is the delay before the first redelivery. It doubles for
+///   each one after.
+///
+/// ## Letting components register schedules
+///
 /// To let components register schedules of their own, list `scheduler` among
 /// the interfaces as well:
 ///
@@ -85,20 +95,29 @@ world scheduler-client {
 /// - `max-firings` is how many firings a registered schedule delivers before
 ///   it is removed. A redelivery asked for with `retry` is not another firing.
 ///
-/// The last two are the operator's bound on a schedule the component stops
-/// tending: a poll that costs something each time it fires cannot outlive
-/// them. They never apply to declared schedules, which are the operator's
-/// own. Registering a name again with the schedule it already has does not
-/// reset either one; registering it after it was removed starts afresh.
-/// - `retry.max-attempts` is how many times one firing is delivered when the
-///   handler keeps answering `retry`, counting the first delivery.
-/// - `retry.backoff` is the delay before the first redelivery. It doubles for
-///   each one after.
+/// `max-lifetime` and `max-firings` are the operator's bound on a schedule
+/// the component stops tending: a poll that costs something each time it
+/// fires cannot outlive them. They never apply to declared schedules, which
+/// are the operator's own. Registering a name again with the schedule it
+/// already has does not reset either one; registering it after it was removed
+/// starts afresh.
+///
+/// ## What the provider does with a binding
 ///
 /// The provider chooses the defaults and documents them. A key it does not
 /// recognize, or a value it cannot read, fails the bind and the workload does
 /// not deploy: a schedule that silently never fires is worse than one that is
 /// refused.
+///
+/// A workload bound with several `cosmonic:cron` entries has their schedules
+/// taken together. A `timezone` covers the `schedule.*` keys of its own entry
+/// only. The other keys are limits on the workload as a whole, so each may be
+/// set by one entry; two entries setting the same one is refused.
+///
+/// When a workload that is already bound is bound again, the new binding is
+/// applied to the schedules its components had registered: one it no longer
+/// permits is removed, and `max-lifetime` is counted again from that moment
+/// without extending what a schedule already had left.
 ///
 /// ## What a declared schedule guarantees
 ///
