@@ -1,0 +1,6 @@
+# `cosmonic:cron` is read from this repository rather than the registry, so the
+# plugin always builds against the interface beside it. Its own dependencies
+# (`wasi:clocks`, `wasi:cli`, `wasmcloud:host`) still come from their
+# registries, pinned by `wkg.lock`.
+[overrides]
+"cosmonic:cron" = { path = "../../../wit/cosmonic-cron" }
