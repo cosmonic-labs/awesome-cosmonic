@@ -20,6 +20,7 @@
 //! - `fail-*`  answers `failed`
 //! - `slow-*`  takes 2.5 seconds
 //! - `trap-*`  panics
+//! - `again-*` registers itself again as a one-second `once-after`
 //! - anything else answers `ok`
 
 mod bindings {
@@ -54,6 +55,9 @@ impl HandlerGuest for Ticker {
                 Ok(())
             }
             Some("trap") => panic!("deliberate trap in the handler"),
+            Some("again") => scheduler::register(firing.name, Schedule::OnceAfter(1_000_000_000))
+                .await
+                .map_err(|err| HandlerError::Failed(Some(describe(&err)))),
             _ => Ok(()),
         }
     }

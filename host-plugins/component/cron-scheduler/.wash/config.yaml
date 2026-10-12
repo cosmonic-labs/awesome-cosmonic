@@ -13,4 +13,4 @@ build:
 
 # No `dev:` block. A host component plugin is not a workload: it is loaded by
 # another project's `dev.plugins`, or by `wash host --host-plugin`. The test
-# workload in tests/ticker does exactly that; see the README.
+# workload in e2e/ticker does exactly that; see the README.

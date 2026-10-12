@@ -11,8 +11,10 @@ package cosmonic:cron@0.1.0;
 ///
 /// - **At most one firing of a schedule is handled at a time.** If a schedule
 ///   comes due while its previous firing is still being handled, that firing
-///   is skipped and counted in the next delivered firing's `missed`. Different
-///   schedules are independent and their firings may be handled concurrently.
+///   is skipped and counted in the next delivered firing's `missed`. A
+///   schedule is its name: the rule holds across the name being registered
+///   again. Different schedules are independent and their firings may be
+///   handled concurrently.
 /// - **A firing is a signal, not a durable message.** One that cannot be
 ///   delivered, because the workload is stopped or the implementer was not
 ///   running, is skipped and counted, not stored and replayed.
@@ -35,7 +37,8 @@ interface handler {
         ///
         /// The caller redelivers after a delay, a bounded number of times. For
         /// a repeating schedule it also gives up once the next firing is due,
-        /// so a retry never overlaps or delays the schedule itself.
+        /// or came due while this one was being handled, so a retry never
+        /// overlaps or delays the schedule itself.
         retry(option<string>),
         /// Do not deliver this firing again. A repeating schedule carries on
         /// and its next firing is delivered as usual.

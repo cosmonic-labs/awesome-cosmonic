@@ -71,7 +71,7 @@ The host matches a `hostInterfaces` entry against one component at a time, so th
 | `retry.max-attempts` | Deliveries of one firing when the handler keeps answering `retry`, counting the first. | `3` |
 | `retry.backoff` | Delay before the first redelivery. Doubles for each one after. | `1s` |
 
-An unknown key or an unreadable value fails the bind, and the workload does not deploy.
+An unknown key or an unreadable value fails the bind, and the workload does not deploy. If a workload is bound with several `cosmonic:cron` entries, each `timezone` covers its own entry's `schedule.*` keys, and each of the other keys may be set by only one entry.
 
 `max-lifetime` and `max-firings` are the operator's bound on a schedule that a component registers and then stops tending. They never apply to declared schedules. Registering a name again with the schedule it already has does not reset either one. A schedule removed this way is not announced to the workload; the plugin logs it, and it is gone from `list-registrations`.
 
@@ -79,12 +79,13 @@ An unknown key or an unreadable value fails the bind, and the workload does not 
 
 The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../wit/cosmonic-cron/). In short:
 
-- One schedule never overlaps itself. A firing that comes due while the previous one is still being handled is skipped, and the next delivered firing reports how many were skipped in `missed`. Different schedules are delivered concurrently.
+- One schedule never overlaps itself. A firing that comes due while the previous one is still being handled is skipped, and the next delivered firing reports how many were skipped in `missed`. This holds by name, so replacing a schedule, or removing it and registering it again, waits for the firing in flight. Different schedules are delivered concurrently.
 - A firing is not stored. If the workload is not running when it comes due, it is skipped and counted in `missed`.
-- A handler that answers `retry` gets the same firing again, with `attempt` one higher, until `retry.max-attempts` or until the schedule's next firing is due. A handler that answers `failed`, traps or times out is not called again for that firing.
+- A handler that answers `retry` gets the same firing again, with `attempt` one higher, until `retry.max-attempts`, or until the schedule's next firing is due or came due while the handler was running. A handler that answers `failed`, traps or times out is not called again for that firing.
 - An interval is a fixed rate on the monotonic clock. A late wake-up does not shift later firings.
 - A crontab firing's `scheduled-at` is the instant the expression matched, not the time the handler ran.
-- A schedule that fires once is removed when its firing has been handled or given up on. It is retried like any other firing, with nothing to cut the retries short. An instant that has already passed is refused, as is one the workload's `max-lifetime` would end first.
+- A schedule that fires once is removed when its firing has been handled or given up on. It is retried like any other firing, with nothing to cut the retries short. An instant that has already passed is refused, as is one the workload's `max-lifetime` would end first. Its handler may register the same name again to be called once more.
+- If a bound workload is bound again, registered schedules the new binding does not permit are removed: all of them if `scheduler` is no longer granted, and any interval below a raised `min-interval`.
 
 ### Limits of this implementation
 
@@ -93,6 +94,8 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 - **Crontab parsing is [croner](https://docs.rs/croner) 4**, restricted to five fields. It also accepts `@hourly`-style nicknames and the `L`, `#` and `W` modifiers, which are outside what `cosmonic:cron` promises. In a zone with daylight saving, croner's rules apply to local times that are skipped or repeated.
 - **The time zone database is compiled in** (chrono-tz 0.10), so new zone rules need a rebuild.
 - While a crontab schedule is pending the loop wakes at least every 30 seconds to re-read the system clock, so a firing can be up to 30 seconds late after the system clock is set forward.
+- **Clock steps follow Vixie cron's rule.** If the system clock moves back by three hours or less, crontab schedules wait for it to reach where it had been, so the repeated stretch is not run twice. A larger step back is taken as the clock being set, and they are scheduled again from the new time. After a step forward, or a long sleep, a schedule fires once for its most recent match, and `missed` stops counting at 1,000.
+- **The log is sanitized.** Names, schedule text and handler error details come from workloads, so control characters are replaced and lines are cut at 512 characters.
 
 ## Build
 

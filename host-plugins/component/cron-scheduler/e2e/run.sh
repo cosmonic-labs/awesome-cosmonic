@@ -106,6 +106,7 @@ expect "an unknown time zone" '/register?name=c&cron=0+9+*+*+*&tz=Mars/Phobos' 4
 expect "a schedule kind the plugin lacks" '/register?name=o&other=every+full+moon' 400 unsupported
 expect "replacing a declared schedule" '/register?name=heartbeat&every-ms=1000' 403 access-denied
 expect "removing a declared schedule" '/unregister?name=heartbeat' 403 access-denied
+expect "removing a name no schedule could have" '/unregister?name=bad%20name' 400 invalid-name
 
 echo "limits"
 expect "a crontab in a named zone" '/register?name=ny&cron=0+9+*+*+mon-fri&tz=America/New_York' 200 ok
@@ -191,6 +192,17 @@ check "it is redelivered up to the third attempt" wait_for 'name=retry-once .* a
 sleep 0.5
 check "it was delivered three times in all" test "$(fired retry-once)" = 3
 check "it is removed after the last attempt" test "$(held retry-once)" = 0
+# The handler registers its own name again, with the same delay, each time.
+expect "a one-shot whose handler registers itself again" '/register?name=again-job&once-after-ms=1000' 200 ok
+check "it keeps being called" wait_for 'ticker: fired name=again-job .*' 3
+sleep 2.6
+AGAIN=$(fired again-job)
+if [ "$AGAIN" -ge 3 ]; then
+  pass "each firing schedules the next ($AGAIN firings)"
+else
+  fail "each firing schedules the next" "$AGAIN firings, expected at least 3"
+fi
+expect "unregister it" '/unregister?name=again-job' 200 ok
 
 echo "operator limits on a registration"
 check "a forgotten schedule is removed at max-lifetime" \

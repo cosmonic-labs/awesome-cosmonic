@@ -45,7 +45,9 @@ interface scheduler {
     /// Registering a name that is already registered replaces its schedule,
     /// and the new one takes effect from now: an `interval` starts a fresh
     /// period. A firing of the old schedule that is already being handled is
-    /// allowed to finish.
+    /// allowed to finish, and the new schedule does not fire until it has:
+    /// replacing a schedule never puts two of its firings in a handler at
+    /// once.
     ///
     /// Registering a name with exactly the schedule it already has changes
     /// nothing: the phase of an `interval` is kept, a pending `once-after`
@@ -53,6 +55,11 @@ interface scheduler {
     /// implementer puts on the registration's lifetime is not extended. A
     /// component can therefore call this every time it starts, without
     /// tracking whether it has done so before.
+    ///
+    /// A schedule whose last firing is already being handled is not "the
+    /// schedule it already has": there is nothing left of it to keep. So the
+    /// handler of a `once-after` schedule may register its own name again,
+    /// with the same delay, to be called once more.
     ///
     /// The implementer validates the schedule before returning, so an `ok`
     /// means it will fire.
@@ -64,7 +71,8 @@ interface scheduler {
     ///
     /// Removing a name that is not registered succeeds, so the call is safe to
     /// repeat. A firing already being handled is allowed to finish and is not
-    /// redelivered.
+    /// redelivered. If the name is registered again before it has finished,
+    /// the new schedule waits for it.
     @since(version = 0.1.0)
     unregister: async func(name: schedule-name) -> result<_, schedule-error>;
 
