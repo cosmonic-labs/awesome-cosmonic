@@ -1,6 +1,6 @@
 # cron-scheduler
 
-A host component plugin that implements [`cosmonic:cron@0.1.0`](../../../wit/cosmonic-cron/): it calls a workload's `handler` export on crontab schedules and on fixed intervals. The workload holds no timer and runs no loop, so its components only exist while a firing is being handled.
+A host component plugin that implements [`cosmonic:cron@0.1.0`](../../../wit/cosmonic-cron/): it calls a workload's `handler` export on crontab schedules, on fixed intervals, and once at a chosen time. The workload holds no timer and runs no loop, so its components only exist while a firing is being handled.
 
 The plugin is a WebAssembly component (`wasm32-wasip2`, WASI 0.3 interfaces). All of its timing comes from `wasi:clocks@0.3.0`: it sleeps on `monotonic-clock.wait-for`, measures intervals with `monotonic-clock.now`, and matches crontab expressions against `system-clock.now`.
 
@@ -43,9 +43,15 @@ impl Guest for Component {
 ```
 
 ```rust
+// Every five seconds, until it is unregistered.
 scheduler::register("poll-orders".into(), Schedule::Interval(5_000_000_000)).await?;
 scheduler::unregister("poll-orders".into()).await?;
+
+// Once, ten minutes from now. It is removed after it fires.
+scheduler::register("check-back".into(), Schedule::OnceAfter(600_000_000_000)).await?;
 ```
+
+A registered schedule is a crontab (`Schedule::Cron`), an interval, or one of two that fire once: `OnceAfter` a delay on the monotonic clock, or `OnceAt` an instant on the system clock. Declared schedules are always repeating.
 
 The host matches a `hostInterfaces` entry against one component at a time, so the component that imports `scheduler` must be the one that exports `handler`.
 
@@ -59,11 +65,15 @@ The host matches a `hostInterfaces` entry against one component at a time, so th
 | `interval.<name>` | Declares an interval schedule. A period such as `500ms`, `30s` or `1h30m` (units `ms`, `s`, `m`, `h`, `d`). | |
 | `timezone` | IANA zone that every `schedule.*` in the entry is read in. | UTC |
 | `max-registrations` | Schedules the workload may hold through `scheduler.register`. Declared schedules do not count. | `32` |
-| `min-interval` | Shortest interval period the workload may use. Cannot be set below `10ms`. | `1s` |
+| `min-interval` | Shortest interval period and shortest `once-after` delay the workload may use. Cannot be set below `10ms`. | `1s` |
+| `max-lifetime` | How long a registered schedule is held before the plugin removes it. | no limit |
+| `max-firings` | How many firings a registered schedule delivers before the plugin removes it. Retries are not counted. | no limit |
 | `retry.max-attempts` | Deliveries of one firing when the handler keeps answering `retry`, counting the first. | `3` |
 | `retry.backoff` | Delay before the first redelivery. Doubles for each one after. | `1s` |
 
 An unknown key or an unreadable value fails the bind, and the workload does not deploy.
+
+`max-lifetime` and `max-firings` are the operator's bound on a schedule that a component registers and then stops tending. They never apply to declared schedules. Registering a name again with the schedule it already has does not reset either one. A schedule removed this way is not announced to the workload; the plugin logs it, and it is gone from `list-registrations`.
 
 ### What the plugin guarantees
 
@@ -74,6 +84,7 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 - A handler that answers `retry` gets the same firing again, with `attempt` one higher, until `retry.max-attempts` or until the schedule's next firing is due. A handler that answers `failed`, traps or times out is not called again for that firing.
 - An interval is a fixed rate on the monotonic clock. A late wake-up does not shift later firings.
 - A crontab firing's `scheduled-at` is the instant the expression matched, not the time the handler ran.
+- A schedule that fires once is removed when its firing has been handled or given up on. It is retried like any other firing, with nothing to cut the retries short. An instant that has already passed is refused, as is one the workload's `max-lifetime` would end first.
 
 ### Limits of this implementation
 
@@ -133,7 +144,7 @@ The schedule logic has no dependency on a clock or on the WIT bindings, so its u
 cargo test
 ```
 
-The end-to-end test loads the plugin into `wash dev` beside the ticker workload and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, and a crontab firing. It takes between half a minute and a minute and a half, depending on how soon the next minute starts:
+The end-to-end test loads the plugin into `wash dev` beside the ticker workload and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, one-shot schedules, `max-lifetime` and `max-firings`, and a crontab firing. It takes between 40 seconds and a minute and a half, depending on how soon the next minute starts:
 
 ```sh
 WASH=/path/to/wash-with-plugins e2e/run.sh

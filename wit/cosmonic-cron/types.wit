@@ -58,10 +58,13 @@ interface types {
 
     /// When a schedule fires.
     ///
+    /// `cron` and `interval` repeat until they are removed. `once-at` and
+    /// `once-after` fire a single time and are then gone.
+    ///
     /// A `variant` with a trailing `other` rather than a closed set, because
     /// the kinds of schedule are the part of this package most likely to grow
-    /// (a single future instant, a recurrence rule) and a WIT variant cannot
-    /// gain a case without breaking every component built against it.
+    /// (a recurrence rule, a calendar) and a WIT variant cannot gain a case
+    /// without breaking every component built against it.
     @since(version = 0.1.0)
     variant schedule {
         /// At the wall-clock times a crontab expression matches.
@@ -78,6 +81,21 @@ interface types {
         /// period. An implementer has a shortest period it permits, and
         /// refuses a shorter one with `invalid-schedule`.
         interval(duration),
+        /// Once, at this instant on the system clock.
+        ///
+        /// The instant must be in the future when the schedule is registered;
+        /// one that has already passed is refused with `invalid-schedule`
+        /// instead of firing at once, so that registering the same schedule a
+        /// second time, after it has fired, cannot fire it again.
+        once-at(instant),
+        /// Once, after this much time has elapsed on a monotonic clock: "check
+        /// back in ten minutes". The caller needs no clock of its own to say
+        /// when.
+        ///
+        /// The delay is counted from when the schedule takes effect. It is
+        /// subject to the same shortest duration as an `interval` period, so
+        /// a handler that registers a new one each time it runs cannot spin.
+        once-after(duration),
         /// A kind of schedule this version does not name, spelled in the
         /// implementer's own syntax.
         ///
@@ -112,8 +130,10 @@ interface types {
         /// When this firing was due, which is earlier than when the handler
         /// runs. For a `cron` schedule this is the exact instant the
         /// expression matched, so it is stable across redeliveries and usable
-        /// as an idempotency key together with `name`. For an `interval`
-        /// schedule it is the system-clock reading when the period elapsed.
+        /// as an idempotency key together with `name`. For a `once-at`
+        /// schedule it is the instant the schedule named. For an `interval` or
+        /// `once-after` schedule it is the system-clock reading when the
+        /// period or delay elapsed.
         scheduled-at: instant,
         /// How many firings of this schedule were skipped since the last one
         /// delivered, and so are represented by this one.
@@ -122,7 +142,8 @@ interface types {
         /// the same schedule is still being handled, when the workload could
         /// not be called, or when the implementer was not running. A handler
         /// that must account for every period reads this; one that only needs
-        /// to run "about now" can ignore it.
+        /// to run "about now" can ignore it. Always 0 for a schedule that
+        /// fires once.
         missed: u32,
         /// Which delivery of this firing this is: 1 the first time, and one
         /// more each time the handler answers `retry` and it is redelivered.
@@ -136,8 +157,10 @@ interface types {
         /// `schedule-name` permits. Carries detail for a log.
         invalid-name(string),
         /// The schedule cannot be read or can never fire: a malformed crontab
-        /// expression, an unknown time zone, a zero period, or a period
-        /// shorter than the implementer permits. Carries detail for a log.
+        /// expression, an unknown time zone, a zero period, a period or delay
+        /// shorter than the implementer permits, an instant that is not in
+        /// the future, or a single firing that would fall after the
+        /// implementer has ended the registration. Carries detail for a log.
         invalid-schedule(string),
         /// The implementer does not provide this kind of schedule. Carries
         /// detail for a log.

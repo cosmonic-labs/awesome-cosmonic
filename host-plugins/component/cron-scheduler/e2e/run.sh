@@ -116,6 +116,8 @@ expect "a fourth, past max-registrations" '/register?name=fourth&every-ms=60000'
 expect "unregister" '/unregister?name=third' 200 ok
 expect "unregister again" '/unregister?name=third' 200 ok
 expect "unregister the crontab" '/unregister?name=ny' 200 ok
+# Registered and then left alone, for the max-lifetime check further down.
+expect "register a schedule and forget it" '/register?name=linger&every-ms=60000' 200 ok
 
 echo "unregistering stops the calls"
 expect "unregister the interval" '/unregister?name=poll' 200 ok
@@ -167,6 +169,40 @@ check "the trap reaches the plugin as an error, not a crash" wait_for "'trap-job
 expect "unregister it" '/unregister?name=trap-job' 200 ok
 check "the plugin is still serving" curl -sf -o /dev/null "$BASE/schedules"
 check "the plugin was not restarted" test "$(grep -c 'dispatch loop started' "$LOG")" = 1
+
+echo "one-shot schedules"
+held() { curl -s "$BASE/schedules" | grep -c "^$1"$'\t' || true; }
+expect "register a delay" '/register?name=once-job&once-after-ms=1000' 200 ok
+check "a pending one-shot is listed" \
+  grep -q $'^once-job\tregistered\tonce-after 1000ms$' <<<"$(curl -s "$BASE/schedules")"
+expect "registering it again is accepted" '/register?name=once-job&once-after-ms=1000' 200 ok
+check "it fires" wait_for 'ticker: fired name=once-job ' 4
+sleep 2.2
+check "it fires exactly once" test "$(fired once-job)" = 1
+check "it is removed once it has fired" test "$(held once-job)" = 0
+AT=$(($(date +%s) + 3))
+expect "register an instant" "/register?name=at-job&once-at=$AT" 200 ok
+check "it fires with that instant as scheduled-at" wait_for "ticker: fired name=at-job scheduled-at=$AT " 6
+expect "an instant in the past" "/register?name=late&once-at=$((AT - 3600))" 400 invalid-schedule
+expect "a delay under min-interval" '/register?name=soon&once-after-ms=100' 400 invalid-schedule
+expect "a delay past max-lifetime" '/register?name=far&once-after-ms=60000' 400 invalid-schedule
+expect "a one-shot whose handler asks for a retry" '/register?name=retry-once&once-after-ms=1000' 200 ok
+check "it is redelivered up to the third attempt" wait_for 'name=retry-once .* attempt=3' 6
+sleep 0.5
+check "it was delivered three times in all" test "$(fired retry-once)" = 3
+check "it is removed after the last attempt" test "$(held retry-once)" = 0
+
+echo "operator limits on a registration"
+check "a forgotten schedule is removed at max-lifetime" \
+  wait_for "'linger' .* was removed, it was held for the workload's max-lifetime" 14
+check "it never fired" test "$(fired linger)" = 0
+check "it is no longer listed" test "$(held linger)" = 0
+expect "register a fast poll" '/register?name=capped&every-ms=500' 200 ok
+check "it is removed at max-firings" \
+  wait_for "'capped' .* was removed, it delivered the workload's max-firings" 8
+check "it fired exactly max-firings times" test "$(fired capped)" = 10
+check "it is no longer listed" test "$(held capped)" = 0
+check "declared schedules are not subject to either limit" test "$(held heartbeat)" = 1
 
 echo "crontab (waiting for the minute to turn)"
 if wait_for 'ticker: fired name=minutely ' 65; then

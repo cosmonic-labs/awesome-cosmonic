@@ -156,6 +156,17 @@ pub enum Spec {
     Cron(CronSpec),
     /// A period in nanoseconds.
     Interval(u64),
+    /// A single firing at this instant.
+    OnceAt(Wall),
+    /// A single firing after this many nanoseconds.
+    OnceAfter(u64),
+}
+
+impl Spec {
+    /// Whether the schedule fires a single time and is then spent.
+    pub fn is_once(&self) -> bool {
+        matches!(self, Self::OnceAt(_) | Self::OnceAfter(_))
+    }
 }
 
 /// Check a schedule name against what `schedule-name` permits.
@@ -238,6 +249,12 @@ pub struct Limits {
     pub retry_max_attempts: u32,
     /// Delay before the first redelivery, in nanoseconds. Doubles after.
     pub retry_backoff: u64,
+    /// How long a registered schedule is held, in nanoseconds. `None` holds
+    /// it until it is removed.
+    pub max_lifetime: Option<u64>,
+    /// How many firings a registered schedule delivers before it is removed.
+    /// `None` puts no bound on them.
+    pub max_firings: Option<u32>,
 }
 
 impl Default for Limits {
@@ -247,6 +264,8 @@ impl Default for Limits {
             min_interval: NANOS_PER_SEC,
             retry_max_attempts: 3,
             retry_backoff: NANOS_PER_SEC,
+            max_lifetime: None,
+            max_firings: None,
         }
     }
 }
@@ -256,13 +275,14 @@ impl Limits {
     ///
     /// # Errors
     ///
-    /// `InvalidSchedule` for an `interval` shorter than `min_interval`.
+    /// `InvalidSchedule` for an `interval` period or `once-after` delay
+    /// shorter than `min_interval`.
     pub fn check(&self, spec: &Spec) -> Result<(), SpecError> {
         match spec {
-            Spec::Interval(period) if *period < self.min_interval => {
+            Spec::Interval(wait) | Spec::OnceAfter(wait) if *wait < self.min_interval => {
                 Err(SpecError::InvalidSchedule(format!(
-                    "a period of {} is shorter than the {} this workload is permitted",
-                    format_duration(*period),
+                    "{} is shorter than the {} this workload is permitted",
+                    format_duration(*wait),
                     format_duration(self.min_interval)
                 )))
             }
@@ -333,11 +353,28 @@ impl Binding {
                         limits.retry_backoff =
                             parse_duration(value).map_err(|e| format!("retry.backoff: {e}"))?;
                     }
+                    "max-lifetime" => {
+                        limits.max_lifetime = match parse_duration(value) {
+                            Ok(0) => return Err("max-lifetime: cannot be zero".to_string()),
+                            Ok(lifetime) => Some(lifetime),
+                            Err(e) => return Err(format!("max-lifetime: {e}")),
+                        };
+                    }
+                    "max-firings" => {
+                        limits.max_firings = match value.parse() {
+                            Ok(firings) if firings >= 1 => Some(firings),
+                            _ => {
+                                return Err(format!(
+                                    "max-firings: '{value}' is not a count of at least 1"
+                                ));
+                            }
+                        };
+                    }
                     other => {
                         return Err(format!(
                             "unknown key '{other}'; expected schedule.<name>, interval.<name>, \
-                             timezone, max-registrations, min-interval, retry.max-attempts or \
-                             retry.backoff"
+                             timezone, max-registrations, min-interval, max-lifetime, \
+                             max-firings, retry.max-attempts or retry.backoff"
                         ));
                     }
                 }
@@ -510,6 +547,8 @@ mod tests {
             ("min-interval", "5s"),
             ("retry.max-attempts", "5"),
             ("retry.backoff", "250ms"),
+            ("max-lifetime", "24h"),
+            ("max-firings", "500"),
         ])
         .unwrap();
         assert_eq!(
@@ -524,6 +563,8 @@ mod tests {
                 min_interval: 5 * NANOS_PER_SEC,
                 retry_max_attempts: 5,
                 retry_backoff: 250 * NANOS_PER_MILLI,
+                max_lifetime: Some(86_400 * NANOS_PER_SEC),
+                max_firings: Some(500),
             }
         );
     }
@@ -557,11 +598,23 @@ mod tests {
             (vec![("timezone", "Nowhere/Land"), ("schedule.a", "0 2 * * *")], "unknown time zone"),
             (vec![("min-interval", "1ms")], "below"),
             (vec![("retry.max-attempts", "0")], "at least 1"),
+            (vec![("max-lifetime", "0s")], "cannot be zero"),
+            (vec![("max-lifetime", "forever")], "max-lifetime"),
+            (vec![("max-firings", "0")], "at least 1"),
             (vec![("max-registrations", "many")], "not a count"),
         ] {
             let err = Binding::parse(config.clone()).unwrap_err();
             assert!(err.contains(expect), "{config:?} gave {err:?}, expected {expect:?}");
         }
+    }
+
+    #[test]
+    fn limits_hold_a_one_shot_delay_to_the_interval_floor() {
+        let limits = Limits::default();
+        assert!(limits.check(&Spec::OnceAfter(NANOS_PER_SEC / 2)).is_err());
+        assert_eq!(limits.check(&Spec::OnceAfter(NANOS_PER_SEC)), Ok(()));
+        // An instant has no rate to bound.
+        assert_eq!(limits.check(&Spec::OnceAt(at(MONDAY))), Ok(()));
     }
 
     #[test]

@@ -18,10 +18,23 @@ package cosmonic:cron@0.1.0;
 ///
 /// A component instance may exist only for the length of one call, so a
 /// registration is held by the implementer under its name rather than by a
-/// handle the caller would have to keep alive. It lasts until `unregister`
-/// removes it or the caller's workload stops. Whether it also survives a
-/// restart of the implementer is up to the implementer, and
-/// `list-registrations` is how a caller finds out what is still held.
+/// handle the caller would have to keep alive.
+///
+/// ## How a registration ends
+///
+/// - `unregister` removes it.
+/// - A schedule that fires once is removed when its firing has been handled,
+///   or given up on.
+/// - The implementer may end it. Whoever grants this interface can bound how
+///   long a registration is held and how many times it fires, so that a
+///   schedule its component forgot does not run forever. A registration ended
+///   this way simply stops; nothing is delivered to say so.
+/// - The caller's workload stops.
+///
+/// Whether a registration survives a restart of the implementer is also up to
+/// the implementer. In every case `list-registrations` is how a caller finds
+/// out what is still held, and registering again is how it restores what is
+/// not.
 @since(version = 0.1.0)
 interface scheduler {
     @since(version = 0.1.0)
@@ -35,9 +48,11 @@ interface scheduler {
     /// allowed to finish.
     ///
     /// Registering a name with exactly the schedule it already has changes
-    /// nothing, including the phase of an `interval`. A component can
-    /// therefore call this every time it starts, without tracking whether it
-    /// has done so before.
+    /// nothing: the phase of an `interval` is kept, a pending `once-after`
+    /// keeps counting from when it was first registered, and any bound the
+    /// implementer puts on the registration's lifetime is not extended. A
+    /// component can therefore call this every time it starts, without
+    /// tracking whether it has done so before.
     ///
     /// The implementer validates the schedule before returning, so an `ok`
     /// means it will fire.
