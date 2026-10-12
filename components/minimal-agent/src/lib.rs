@@ -39,7 +39,11 @@ use wasip3::wit_bindgen::{StreamResult, StreamWriter};
 /// answers is the operator's choice, made in the workload's binding.
 const MODEL_ALIAS: &str = "default";
 
-const SYSTEM_PROMPT: &str = "You are a concise, helpful assistant.";
+/// Tells the model what it is, so it does not offer to browse or run code.
+const SYSTEM_PROMPT: &str = "You are a small agent running as a sandboxed WebAssembly \
+    component. You have no network access of your own: you reach the outside world only \
+    through the tools you are given, and you may have none. Use a tool when it helps, and \
+    never claim a result a tool did not return. Answer concisely.";
 
 /// Required on `POST /task`. A browser cannot add a custom header to a
 /// cross-origin request without a CORS preflight this agent never answers, so
