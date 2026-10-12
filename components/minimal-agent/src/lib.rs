@@ -55,10 +55,42 @@ const STEP_KIND: &str = "agent.step.v1";
 
 const USAGE: &str = "POST /task with {\"task\": \"...\"}";
 
+/// The stored conversation is kept under both limits, oldest exchanges first
+/// out, so it neither outgrows the session nor crowds the model's context.
+const MAX_TURNS: usize = 40;
+const MAX_STATE_BYTES: usize = 64 * 1024;
+
 /// The conversation, as this agent stores it in the session's opaque state.
 #[derive(Default, Serialize, Deserialize)]
 struct Conversation {
     turns: Vec<Turn>,
+}
+
+impl Conversation {
+    /// Drop the oldest exchange: the first turn and the replies that follow it.
+    fn drop_oldest(&mut self) -> bool {
+        if self.turns.is_empty() {
+            return false;
+        }
+        let next = self.turns.iter().skip(1).position(|t| t.role == "user");
+        self.turns.drain(..next.map_or(self.turns.len(), |i| i + 1));
+        true
+    }
+
+    /// Keep the conversation under `MAX_TURNS` and `MAX_STATE_BYTES`.
+    fn trim(&mut self) {
+        while (self.turns.len() > MAX_TURNS || to_json(self).len() > MAX_STATE_BYTES)
+            && self.drop_oldest()
+        {}
+    }
+
+    /// Drop the oldest half, for a model whose context the conversation
+    /// overflowed. False if there was nothing to drop.
+    fn halve(&mut self) -> bool {
+        let before = self.turns.len();
+        while self.turns.len() > before / 2 && self.drop_oldest() {}
+        self.turns.len() < before
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -158,9 +190,7 @@ async fn history() -> Response {
         let page = match session::read(start, 1000).await {
             Ok(page) if page.is_empty() => break,
             Ok(page) => page,
-            Err(e) => {
-                return store_failed(&e);
-            }
+            Err(e) => return store_failed(&e),
         };
         for entry in page {
             start = entry.seq.saturating_add(1);
@@ -192,9 +222,7 @@ async fn run_task(request: Request) -> Response {
     // and state version this turn's commits are conditioned on.
     let snapshot = match session::current().await {
         Ok(snapshot) => snapshot,
-        Err(e) => {
-            return store_failed(&e);
-        }
+        Err(e) => return store_failed(&e),
     };
     let conversation = snapshot
         .state
@@ -227,9 +255,7 @@ async fn run_task(request: Request) -> Response {
         Ok(CommitResult::Stale(_)) => {
             return error_response(409, "another request is writing this session; retry");
         }
-        Err(e) => {
-            return store_failed(&e);
-        }
+        Err(e) => return store_failed(&e),
     };
 
     // Return the response now and write its lines as the turn happens.
@@ -246,6 +272,8 @@ enum Answer {
         outcome: &'static str,
         error: String,
     },
+    /// The model refused the request as too long for its context window.
+    TooLong(String),
     /// The client went away while the reply streamed.
     Gone,
 }
@@ -255,15 +283,22 @@ enum Answer {
 async fn turn(
     mut body: StreamWriter<u8>,
     task: String,
-    conversation: Conversation,
+    mut conversation: Conversation,
     before: Snapshot,
     op: String,
     end: JournalEnd,
 ) {
-    let messages = to_messages(&conversation, &task);
-    let (outcome, role, text, completion) = match answer(&mut body, messages).await {
+    let mut reply = answer(&mut body, to_messages(&conversation, &task)).await;
+    // Too long for the model: forget the oldest half of the conversation and
+    // try once more. The refused call generated nothing, so the turn's model
+    // op covers the retry.
+    if matches!(reply, Answer::TooLong(_)) && conversation.halve() {
+        reply = answer(&mut body, to_messages(&conversation, &task)).await;
+    }
+    let (outcome, role, text, completion) = match reply {
         Answer::Done(c) => ("succeeded", "assistant", text_of(&c.message), Some(c)),
         Answer::Failed { outcome, error } => (outcome, "error", error, None),
+        Answer::TooLong(error) => ("failed", "error", error, None),
         Answer::Gone => ("cancelled", "error", "the client disconnected".into(), None),
     };
     let Some(completion) = completion else {
@@ -285,6 +320,7 @@ async fn turn(
         text: text.clone(),
     });
     let context_messages = next.turns.len() + 1;
+    next.trim();
     // Recorded before `done` is sent, so a client that redraws on `done`
     // finds the turn already stored.
     if let Some(error) = close_turn(&op, outcome, role, &text, &before, end, Some(next)).await {
@@ -338,6 +374,7 @@ async fn answer(body: &mut StreamWriter<u8>, messages: Vec<Message>) -> Answer {
     });
     let (mut chunks, outcome) = match chat::chat(&model, msg_rx, done_rx, options()).await {
         Ok(reply) => reply,
+        Err(e @ RequestError::ContextLengthExceeded(_)) => return Answer::TooLong(e.describe()),
         Err(e) => {
             let error = format!("the model refused the request: {}", e.describe());
             return Answer::Failed {
