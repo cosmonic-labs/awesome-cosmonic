@@ -26,8 +26,8 @@ use bindings::cosmonic::agent::session::{
 };
 use bindings::cosmonic::agent::{chat, models};
 use bindings::{wit_future, wit_stream};
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use wasip3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use wasip3::wit_bindgen::{StreamResult, StreamWriter};
 
@@ -60,6 +60,71 @@ struct Turn {
     text: String,
 }
 
+/// One line of the `/task` response.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum Line<'a> {
+    /// A piece of reply text as it arrives.
+    Delta { text: &'a str },
+    /// The finished message, which replaces the deltas shown so far.
+    Step(&'a Step<'a>),
+    /// The turn is stored.
+    Done {
+        context_messages: usize,
+        answer: &'a str,
+        turns: u32,
+        input_tokens: u32,
+        output_tokens: u32,
+        model: ModelInfo<'a>,
+    },
+    /// The turn failed.
+    Failed { error: &'a str },
+}
+
+/// An `agent.step.v1` entry and the `step` line: the shape a UI draws.
+#[derive(Serialize)]
+struct Step<'a> {
+    role: &'a str,
+    text: &'a str,
+    blocks: [&'a str; 1],
+    /// This agent calls no tools.
+    tools: [(); 0],
+}
+
+/// `agent.op.v1`: a model call is about to be made.
+#[derive(Serialize)]
+struct OpStarted<'a> {
+    op: &'a str,
+    target: &'a str,
+    name: &'a str,
+}
+
+/// `agent.op-result.v1`: how that call ended.
+#[derive(Serialize)]
+struct OpResult<'a> {
+    op: &'a str,
+    outcome: &'a str,
+}
+
+#[derive(Serialize)]
+struct ModelInfo<'a> {
+    alias: &'a str,
+    provider: &'a str,
+    resolved: Option<&'a str>,
+}
+
+/// The body of every error response: `{"error": "..."}`.
+#[derive(Serialize)]
+struct ErrorBody<'a> {
+    error: &'a str,
+}
+
+/// `POST /task`'s body. Other fields are ignored.
+#[derive(Deserialize)]
+struct TaskRequest {
+    task: String,
+}
+
 struct Agent;
 
 impl wasip3::exports::http::handler::Guest for Agent {
@@ -77,42 +142,47 @@ wasip3::http::service::export!(Agent);
 
 /// `{"steps": [...]}`: every step in the session journal, oldest first.
 async fn history() -> Response {
-    let mut steps = Vec::new();
+    // Each step is already JSON, so it is copied into the array as stored.
+    let mut steps = b"{\"steps\":[".to_vec();
     let mut start = 0;
     loop {
         // A short page does not mean the end; an empty one does.
         let page = match session::read(start, 1000).await {
             Ok(page) if page.is_empty() => break,
             Ok(page) => page,
-            Err(e) => return json_response(500, json!({ "error": format!("{e:?}") })),
+            Err(e) => return error_response(500, &format!("{e:?}")),
         };
         for entry in page {
             start = entry.seq.saturating_add(1);
-            if entry.kind == STEP_KIND
-                && let Ok(step) = serde_json::from_slice::<Value>(&entry.data)
-            {
-                steps.push(step);
+            // Skip anything that is not well-formed JSON rather than break the array.
+            let valid = str::from_utf8(&entry.data).is_ok()
+                && serde_json::from_slice::<IgnoredAny>(&entry.data).is_ok();
+            if entry.kind == STEP_KIND && valid {
+                if !steps.ends_with(b"[") {
+                    steps.push(b',');
+                }
+                steps.extend_from_slice(&entry.data);
             }
         }
     }
-    json_response(200, json!({ "steps": steps }))
+    steps.extend_from_slice(b"]}");
+    respond(200, "application/json", steps)
 }
 
 async fn run_task(request: Request) -> Response {
     if request.get_headers().get(SESSION_HEADER).is_empty() {
-        let error = format!("missing {SESSION_HEADER} header");
-        return json_response(403, json!({ "error": error }));
+        return error_response(403, &format!("missing {SESSION_HEADER} header"));
     }
     let task = match read_body(request).await.ok().and_then(|b| parse_task(&b)) {
         Some(task) => task,
-        None => return json_response(400, json!({ "error": USAGE })),
+        None => return error_response(400, USAGE),
     };
 
     // What the session holds now: the conversation so far, and the journal end
     // and state version this turn's commits are conditioned on.
     let snapshot = match session::current().await {
         Ok(snapshot) => snapshot,
-        Err(e) => return json_response(500, json!({ "error": format!("{e:?}") })),
+        Err(e) => return error_response(500, &format!("{e:?}")),
     };
     let conversation = snapshot
         .state
@@ -125,10 +195,14 @@ async fn run_task(request: Request) -> Response {
     let op = random_id();
     let started = commit(
         vec![
-            step("user", &task),
+            entry(STEP_KIND, &step("user", &task)),
             entry(
                 "agent.op.v1",
-                json!({ "op": op, "target": "model", "name": MODEL_ALIAS }),
+                &OpStarted {
+                    op: &op,
+                    target: "model",
+                    name: MODEL_ALIAS,
+                },
             ),
         ],
         None,
@@ -139,10 +213,9 @@ async fn run_task(request: Request) -> Response {
     let end = match started {
         Ok(CommitResult::Committed(c)) => c.end,
         Ok(CommitResult::Stale(_)) => {
-            let error = "another request is writing this session; retry";
-            return json_response(409, json!({ "error": error }));
+            return error_response(409, "another request is writing this session; retry");
         }
-        Err(e) => return json_response(500, json!({ "error": format!("{e:?}") })),
+        Err(e) => return error_response(500, &format!("{e:?}")),
     };
 
     // Return the response now and write its lines as the turn happens.
@@ -181,15 +254,12 @@ async fn turn(
     };
     let Some(completion) = completion else {
         close_turn(&op, outcome, role, &text, &before, end, None).await;
-        send(&mut body, json!({ "type": "failed", "error": text })).await;
+        send(&mut body, &Line::Failed { error: &text }).await;
         return;
     };
 
     // The finished message replaces the deltas the client has shown so far.
-    let step_line = json!({
-        "type": "step", "role": role, "text": text, "blocks": ["text"], "tools": [],
-    });
-    send(&mut body, step_line).await;
+    send(&mut body, &Line::Step(&step(role, &text))).await;
 
     let mut next = conversation;
     next.turns.push(Turn {
@@ -204,21 +274,23 @@ async fn turn(
     // Recorded before `done` is sent, so a client that redraws on `done`
     // finds the turn already stored.
     if let Some(error) = close_turn(&op, outcome, role, &text, &before, end, Some(next)).await {
-        send(&mut body, json!({ "type": "failed", "error": error })).await;
+        send(&mut body, &Line::Failed { error: &error }).await;
         return;
     }
     let usage = &completion.usage;
-    let resolved = Some(completion.model.clone()).filter(|m| !m.is_empty());
-    let done = json!({
-        "type": "done",
-        "context_messages": context_messages,
-        "answer": text,
-        "turns": 1,
-        "input_tokens": usage.prompt_tokens.unwrap_or(0),
-        "output_tokens": usage.completion_tokens.unwrap_or(0),
-        "model": { "alias": MODEL_ALIAS, "provider": "cosmonic", "resolved": resolved },
-    });
-    send(&mut body, done).await;
+    let done = Line::Done {
+        context_messages,
+        answer: &text,
+        turns: 1,
+        input_tokens: usage.prompt_tokens.unwrap_or(0),
+        output_tokens: usage.completion_tokens.unwrap_or(0),
+        model: ModelInfo {
+            alias: MODEL_ALIAS,
+            provider: "cosmonic",
+            resolved: Some(completion.model.as_str()).filter(|m| !m.is_empty()),
+        },
+    };
+    send(&mut body, &done).await;
 }
 
 /// One chat call, streaming its text to the client as `delta` lines.
@@ -265,7 +337,7 @@ async fn answer(body: &mut StreamWriter<u8>, messages: Vec<Message>) -> Answer {
         // Only text is streamed. Anything else is in the completion.
         if let ChunkDelta::Text(text) = chunk.delta
             && !text.is_empty()
-            && !send(body, json!({ "type": "delta", "text": text })).await
+            && !send(body, &Line::Delta { text: &text }).await
         {
             // Dropping the chunk stream cancels generation at the host.
             return Answer::Gone;
@@ -287,8 +359,8 @@ async fn answer(body: &mut StreamWriter<u8>, messages: Vec<Message>) -> Answer {
 }
 
 /// Write one NDJSON line. False once the client has gone away.
-async fn send(body: &mut StreamWriter<u8>, line: Value) -> bool {
-    let mut bytes = line.to_string().into_bytes();
+async fn send(body: &mut StreamWriter<u8>, line: &Line<'_>) -> bool {
+    let mut bytes = to_json(line);
     bytes.push(b'\n');
     body.write_all(bytes).await.is_empty()
 }
@@ -306,11 +378,8 @@ async fn close_turn(
     next: Option<Conversation>,
 ) -> Option<String> {
     let entries = vec![
-        entry(
-            "agent.op-result.v1",
-            json!({ "op": op, "outcome": outcome }),
-        ),
-        step(role, text),
+        entry("agent.op-result.v1", &OpResult { op, outcome }),
+        entry(STEP_KIND, &step(role, text)),
     ];
     let Some(next) = next else {
         // Entry-only: the call still has to be recorded even if another writer
@@ -320,7 +389,7 @@ async fn close_turn(
             Err(e) => Some(format!("not recorded: {e:?}")),
         };
     };
-    let state = serde_json::to_vec(&next).unwrap_or_default();
+    let state = to_json(&next);
     let require = match &before.state {
         Some(s) => StateCondition::Version(s.version.clone()),
         None => StateCondition::Absent,
@@ -354,20 +423,27 @@ async fn commit(
     session::commit(entries, state, options).await
 }
 
-fn entry(kind: &str, data: serde_json::Value) -> NewEntry {
+fn entry(kind: &str, data: &impl Serialize) -> NewEntry {
     NewEntry {
         kind: kind.into(),
-        data: data.to_string().into_bytes(),
+        data: to_json(data),
     }
 }
 
-/// An `agent.step.v1` entry, the shape a UI reading the journal draws.
-fn step(role: &str, text: &str) -> NewEntry {
-    let blocks = if role == "error" { ["error"] } else { ["text"] };
-    entry(
-        "agent.step.v1",
-        json!({ "role": role, "text": text, "blocks": blocks, "tools": [] }),
-    )
+fn step<'a>(role: &'a str, text: &'a str) -> Step<'a> {
+    let block = if role == "error" { "error" } else { "text" };
+    Step {
+        role,
+        text,
+        blocks: [block],
+        tools: [],
+    }
+}
+
+/// Serializing this file's types cannot fail: they have no maps with
+/// non-string keys and no custom serializers.
+fn to_json(value: &impl Serialize) -> Vec<u8> {
+    serde_json::to_vec(value).unwrap_or_default()
 }
 
 fn random_id() -> String {
@@ -442,8 +518,8 @@ fn options() -> ChatOptions {
 }
 
 fn parse_task(body: &[u8]) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let task = value.get("task")?.as_str()?.trim();
+    let request: TaskRequest = serde_json::from_slice(body).ok()?;
+    let task = request.task.trim();
     (!task.is_empty()).then(|| task.to_string())
 }
 
@@ -476,8 +552,8 @@ fn streaming(status: u16, content_type: &str) -> (Response, StreamWriter<u8>) {
     (response, body_tx)
 }
 
-fn json_response(status: u16, value: Value) -> Response {
-    respond(status, "application/json", value.to_string().into_bytes())
+fn error_response(status: u16, error: &str) -> Response {
+    respond(status, "application/json", to_json(&ErrorBody { error }))
 }
 
 fn respond(status: u16, content_type: &str, bytes: Vec<u8>) -> Response {
