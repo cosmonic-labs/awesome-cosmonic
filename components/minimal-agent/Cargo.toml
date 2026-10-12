@@ -1,11 +1,11 @@
 [package]
 name = "minimal-agent"
 edition = "2024"
-version = "0.1.0"
+version = "0.2.0"
 # wasip3 0.7's component-type section needs the wasm-component-ld bundled with
 # Rust 1.94 or newer.
 rust-version = "1.94"
-description = "A minimal sandboxed agent on cosmonic:agent@0.3.0: one streamed chat turn per request, remembered in the workload's session. WebAssembly component: wasi:http@0.3.0, wasm32-wasip2."
+description = "A minimal sandboxed agent on cosmonic:agent@0.3.0: a tool-calling loop per request, streamed back and remembered in the workload's session. WebAssembly component: wasi:http@0.3.0, wasm32-wasip2."
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
 
@@ -48,7 +48,8 @@ wasip3 = "0.7.1"
 # and future intrinsics.
 wit-bindgen = { version = "0.57.1", features = ["async-spawn"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# raw_value journals each tool call's arguments as the JSON the model wrote.
+serde_json = { version = "1", features = ["raw_value"] }
 
 # Tuned for size: this example is about how small an agent can be.
 [profile.release]

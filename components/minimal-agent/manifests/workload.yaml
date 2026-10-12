@@ -1,8 +1,11 @@
-# Workload for the minimal agent on Cosmonic Desktop or wasmCloud.
+# Workload for the minimal agent on Cosmonic Desktop or wasmCloud, with the
+# ISS tools beside it.
 #
 # The agent component holds no egress (allowedHosts: []). Everything it can do
 # beyond answering HTTP is listed under hostInterfaces: inference by alias and
-# a session store, both served by the host and scoped to this workload.
+# a session store, both served by the host and scoped to this workload. Its
+# tools come from the `tools` component, which holds the workload's one
+# network grant. allowedHosts is per component, so the agent cannot use it.
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: Workload
 metadata:
@@ -27,8 +30,7 @@ spec:
       interfaces:
         - session
       # Granted to the component named agent only, the way Desktop scopes its
-      # agent sessions, so a tool component added to this workload later
-      # cannot read the conversation.
+      # agent sessions, so the tools component cannot read the conversation.
       config:
         components: agent
     # Inference. The agent asks for the alias "default"; this entry decides
@@ -46,9 +48,27 @@ spec:
         components: agent
         # backend: <one of the host's named model sources>
         # model: <a model on that source>
+    # To run the agent with no tools, delete the tools component below and
+    # declare this entry instead. The host then serves an empty tool list.
+    # - namespace: cosmonic
+    #   package: agent
+    #   version: 0.3.0
+    #   interfaces:
+    #     - tools
+    #   config:
+    #     components: agent
   components:
     - name: agent
-      image: ghcr.io/cosmonic-labs/components/minimal-agent:0.1.0
+      image: ghcr.io/cosmonic-labs/components/minimal-agent:0.2.0
       poolSize: 1
       localResources:
         allowedHosts: []
+    # The agent's `tools` import links to this component's `tools` export:
+    # iss_position (a live API), distance_km and plot_ground_track (an image).
+    # The same signed image Desktop's ISS tracker uses.
+    - name: tools
+      image: ghcr.io/cosmonic/agents/tools@sha256:cde3c61c2632096f2976906d63665c39c6b826abf52fd58e55bdb7b317070508
+      poolSize: 1
+      localResources:
+        allowedHosts:
+          - https://api.wheretheiss.at

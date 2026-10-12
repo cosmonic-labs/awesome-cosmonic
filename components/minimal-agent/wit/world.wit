@@ -1,12 +1,10 @@
 package cosmonic:minimal-agent;
 
-// The four cosmonic:agent@0.3.0 interfaces this agent calls, and nothing else.
-//
-// The published `cosmonic:agent/agent` world also imports `tools`. A component
-// that imports an interface must have it bound when it is deployed, so
-// including that world would make every workload running this example declare
-// a tools provider it never calls. Naming the imports keeps the manifest, and
-// the list of capabilities an operator reviews, down to what the code uses.
+// Every cosmonic:agent@0.3.0 interface this agent calls: the model by alias
+// (inference-types, models, chat), the tools the workload grants (tools), and
+// the conversation (session). That is the same set as the published
+// `cosmonic:agent/agent` world, named one by one so the list of capabilities an
+// operator reviews reads here at a glance.
 //
 // wasi:http/handler@0.3.0 is exported through the `wasip3` crate, which
 // carries its own WIT, so it is not named here.
@@ -15,4 +13,5 @@ world minimal-agent {
   import cosmonic:agent/models@0.3.0;
   import cosmonic:agent/chat@0.3.0;
   import cosmonic:agent/session@0.3.0;
+  import cosmonic:agent/tools@0.3.0;
 }
