@@ -75,6 +75,37 @@ fn parse_zone(name: &str) -> Result<Tz, SpecError> {
         .map_err(|_| SpecError::InvalidSchedule(format!("unknown time zone '{name}'")))
 }
 
+/// The years searched to decide whether an expression matches any date: 28 of
+/// them, the period after which this century's calendar repeats. Every
+/// combination of month, day and weekday that occurs at all occurs in them,
+/// leap days included.
+const PROBE_YEARS: (i32, i32) = (2000, 2027);
+
+/// Whether a crontab expression that parses matches any date at all.
+///
+/// Asking the parsed expression for its next match would answer this, but for
+/// an expression with none that search runs to the end of the calendar, and a
+/// component can ask as often as it likes on a loop every workload shares.
+/// The same expression confined to [`PROBE_YEARS`] has the same answer and a
+/// search that ends.
+fn ever_matches(expression: &str) -> bool {
+    // croner only takes a year field alongside a seconds field.
+    let confined = format!("0 {expression} {}-{}", PROBE_YEARS.0, PROBE_YEARS.1);
+    let Ok(probe) = CronParser::builder()
+        .seconds(Seconds::Required)
+        .year(Year::Required)
+        .build()
+        .parse(&confined)
+    else {
+        // Only an expression that is not made of fields, a nickname such as
+        // `@daily`, parses alone and not with a year after it. Those match.
+        return true;
+    };
+    Utc.with_ymd_and_hms(PROBE_YEARS.0, 1, 1, 0, 0, 0)
+        .single()
+        .is_some_and(|start| probe.find_next_occurrence(&start, true).is_ok())
+}
+
 /// A parsed crontab schedule. Keeps the text it was given, so a listing
 /// returns what the caller wrote rather than a normalized form.
 #[derive(Clone, Debug)]
@@ -103,20 +134,19 @@ impl CronSpec {
             .build()
             .parse(expression)
             .map_err(|e| SpecError::InvalidSchedule(format!("'{expression}': {e}")))?;
-        let spec = Self {
-            expression: expression.to_string(),
-            timezone: timezone.map(str::to_string),
-            cron,
-            tz,
-        };
         // `0 0 30 2 *` parses and never fires. Registering it would succeed
         // and then do nothing, which is the failure a caller cannot see.
-        if spec.next_after(Wall { seconds: 0, nanoseconds: 0 }).is_none() {
+        if !ever_matches(expression) {
             return Err(SpecError::InvalidSchedule(format!(
                 "'{expression}' never matches a date"
             )));
         }
-        Ok(spec)
+        Ok(Self {
+            expression: expression.to_string(),
+            timezone: timezone.map(str::to_string),
+            cron,
+            tz,
+        })
     }
 
     pub fn expression(&self) -> &str {
@@ -535,6 +565,37 @@ mod tests {
                 matches!(CronSpec::parse(expression, zone), Err(SpecError::InvalidSchedule(_))),
                 "{expression:?} in {zone:?} should be refused"
             );
+        }
+    }
+
+    #[test]
+    fn cron_accepts_what_matches_only_rarely() {
+        for expression in [
+            "0 0 29 2 *",  // leap days
+            "0 0 31 * *",  // seven months a year
+            "0 0 29 2 1",  // POSIX: the 29th of February, or any Monday
+            "@daily",
+        ] {
+            assert!(CronSpec::parse(expression, None).is_ok(), "{expression:?}");
+        }
+        let leap = CronSpec::parse("0 0 29 2 *", None).unwrap();
+        // 2028-02-29T00:00:00Z.
+        assert_eq!(leap.next_after(at(MONDAY)), Some(at(1_835_395_200)));
+    }
+
+    #[test]
+    fn cron_refuses_every_spelling_of_a_date_that_does_not_exist() {
+        for minute in 0..60 {
+            for expression in [
+                format!("{minute} 0 30 2 *"),
+                format!("{minute} 0 31 2,4,6,9,11 *"),
+                format!("{minute} 0 30,31 feb *"),
+            ] {
+                assert!(
+                    matches!(CronSpec::parse(&expression, None), Err(SpecError::InvalidSchedule(_))),
+                    "{expression:?} should be refused"
+                );
+            }
         }
     }
 

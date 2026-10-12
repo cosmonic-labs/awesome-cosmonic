@@ -144,14 +144,17 @@ interface types {
         ///
         /// A firing is skipped rather than queued when the previous firing of
         /// the same schedule is still being handled, when the workload could
-        /// not be called, or when the implementer was not running. A handler
-        /// that must account for every period reads this; one that only needs
-        /// to run "about now" can ignore it. Always 0 for a schedule that
-        /// fires once.
+        /// not be called, or when the implementer fell behind. A handler that
+        /// only needs to run "about now" can ignore it. Always 0 for a
+        /// schedule that fires once.
         ///
-        /// After a long gap an implementer may stop counting, so a large
-        /// value is a lower bound. `scheduled-at` is exact regardless: it is
-        /// the most recent occurrence, the one this firing stands for.
+        /// The count is a lower bound, not a ledger. After a long gap an
+        /// implementer may stop counting, and one that was not running at
+        /// all, and keeps no record across restarts, cannot count what came
+        /// due while it was down. A handler that must account for every
+        /// period works from `scheduled-at` and its own record of the last
+        /// one it handled. `scheduled-at` is exact regardless: it is the most
+        /// recent occurrence, the one this firing stands for.
         missed: u32,
         /// Which delivery of this firing this is: 1 the first time, and one
         /// more each time the handler answers `retry` and it is redelivered.
