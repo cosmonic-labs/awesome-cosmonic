@@ -33,11 +33,11 @@ interface handler {
         /// Deliver this firing again. It may succeed later: a dependency was
         /// unavailable, a lock was held, a quota was spent.
         ///
-        /// The caller redelivers after a delay, a bounded number of times, and
-        /// gives up once the schedule's next firing is due, so a retry never
-        /// overlaps or delays the schedule itself.
+        /// The caller redelivers after a delay, a bounded number of times. For
+        /// a repeating schedule it also gives up once the next firing is due,
+        /// so a retry never overlaps or delays the schedule itself.
         retry(option<string>),
-        /// Do not deliver this firing again. The schedule itself carries on
+        /// Do not deliver this firing again. A repeating schedule carries on
         /// and its next firing is delivered as usual.
         failed(option<string>),
         /// A failure not captured above, treated as `failed`.
@@ -52,8 +52,9 @@ interface handler {
     /// Handle one firing.
     ///
     /// Returning `ok` means the firing was handled. Returning an error never
-    /// cancels the schedule; a handler that wants its schedule to stop calls
-    /// `scheduler.unregister`.
+    /// cancels a repeating schedule; a handler that wants its schedule to stop
+    /// calls `scheduler.unregister`. A schedule that fires once is spent
+    /// whatever its handler returns, once any retries are over.
     ///
     /// The detail carried by an error is for a log, not for matching on.
     @since(version = 0.1.0)

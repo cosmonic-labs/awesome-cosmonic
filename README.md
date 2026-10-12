@@ -101,7 +101,7 @@ The same seven patterns in Go, built with [componentize-go](https://github.com/b
 Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/cosmonic/<package>`. Call them from any component; resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Source lives in [`wit/`](wit/).
 
 - [cosmonic:agent](wit/cosmonic-agent/): An API for calling models, tools, and durable sessions without tying a component to one inference provider.
-- [cosmonic:cron](wit/cosmonic-cron/): An API for being called on crontab and interval schedules, declared with a workload or registered at run time, with time spelled in `wasi:clocks@0.3.0` types.
+- [cosmonic:cron](wit/cosmonic-cron/): An API for being called on crontab, interval and one-shot schedules, declared with a workload or registered at run time, with time spelled in `wasi:clocks@0.3.0` types.
 - [cosmonic:kafka](wit/cosmonic-kafka/): An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions.
 - [cosmonic:notify](wit/cosmonic-notify/): An API for sending notifications to users and getting their responses, with actions such as links and callbacks.
 
@@ -119,7 +119,7 @@ _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
 Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-host-component-plugins/) and deployed into a host at runtime as trigger services with a capability ingress, so you ship, version, and sandbox them like any other component. Currently opt-in via the `host-component-plugins` feature, so check the docs for the state of play before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
 
-- [cron-scheduler](host-plugins/component/cron-scheduler/) (hosted): Implements `cosmonic:cron@0.1.0` by calling a workload's `handler` export on crontab and interval schedules, read from the workload's binding or registered through `scheduler`, with per-schedule overlap protection and bounded retry. Rust, timed by `wasi:clocks@0.3.0`, dispatching through `wasmcloud:host/workload-call`; registered schedules are held in memory.
+- [cron-scheduler](host-plugins/component/cron-scheduler/) (hosted): Implements `cosmonic:cron@0.1.0` by calling a workload's `handler` export on crontab, interval and one-shot schedules, read from the workload's binding or registered through `scheduler`, with per-schedule overlap protection, bounded retry, and operator limits on how long a registered schedule lives. Rust, timed by `wasi:clocks@0.3.0`, dispatching through `wasmcloud:host/workload-call`; registered schedules are held in memory.
 
 ## Workload Examples
 

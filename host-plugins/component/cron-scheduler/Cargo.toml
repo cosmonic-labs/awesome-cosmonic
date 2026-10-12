@@ -18,11 +18,12 @@ crate-type = ["cdylib", "rlib"]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
 croner = "4"
-futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 
-# The bindings exist only in the component. Keeping them out of a native build
-# is what lets `cargo test` run the schedule logic on the host.
+# The bindings and the dispatch loop exist only in the component. Keeping them
+# out of a native build is what lets `cargo test` run the schedule logic on
+# the host.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 # 0.60+ is required: every function a host component plugin serves or calls is
 # an `async func`, and earlier releases encode those names in a form current
 # wit-component rejects.

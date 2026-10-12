@@ -60,6 +60,8 @@ world scheduler-client {
 ///   Absent means UTC.
 ///
 /// A name may be declared once: `schedule.x` beside `interval.x` is refused.
+/// Only repeating schedules are declared. A schedule that fires once would
+/// fire again every time the workload was bound.
 ///
 /// To let components register schedules of their own, list `scheduler` among
 /// the interfaces as well:
@@ -69,13 +71,25 @@ world scheduler-client {
 ///     config:
 ///       max-registrations: "8"
 ///       min-interval: 5s
+///       max-lifetime: 24h
+///       max-firings: "500"
 /// ```
 ///
 /// - `max-registrations` is how many schedules the workload's components may
 ///   hold through `scheduler.register` at once. Declared schedules do not
 ///   count against it.
 /// - `min-interval` is the shortest `interval` period the workload may use,
-///   declared or registered.
+///   declared or registered, and the shortest `once-after` delay.
+/// - `max-lifetime` is how long a registered schedule is held. Once it has
+///   been held that long it is removed, whether or not it has fired.
+/// - `max-firings` is how many firings a registered schedule delivers before
+///   it is removed. A redelivery asked for with `retry` is not another firing.
+///
+/// The last two are the operator's bound on a schedule the component stops
+/// tending: a poll that costs something each time it fires cannot outlive
+/// them. They never apply to declared schedules, which are the operator's
+/// own. Registering a name again with the schedule it already has does not
+/// reset either one; registering it after it was removed starts afresh.
 /// - `retry.max-attempts` is how many times one firing is delivered when the
 ///   handler keeps answering `retry`, counting the first delivery.
 /// - `retry.backoff` is the delay before the first redelivery. It doubles for
