@@ -1,0 +1,197 @@
+package cosmonic:agent@0.4.0-draft;
+
+/// DRAFT for discussion. Not published, not a contract; see DESIGN-NOTES.md.
+///
+/// Spawn a sub-agent session with a declared set of tools, and keep talking
+/// to it. This is scoped to agents on purpose: a caller describes an agent,
+/// its tools and their grants, not an arbitrary workload. How the host fulfils
+/// a spawn (a wasmCloud workload today, something else later) is not part of
+/// the contract.
+///
+/// The host sees the caller. Every call arrives at the implementing plugin
+/// with the caller's workload definition: its components, its granted
+/// interfaces, allowed hosts, volumes, and named secrets. Policy runs twice:
+/// once here, on the semantic request (which agent, which tools, which
+/// grants), and again when the host admits whatever it builds from it.
+///
+/// Attenuation. A caller may request grants beyond its own, but it can never
+/// grant them. The host is the sole grantor, through policy or a person.
+/// Grants within the caller's own are checked by policy as usual. Anything
+/// beyond them returns needs-approval, and an approval is bound to the digest
+/// of the exact request it covers. A request never widens itself, and a
+/// spawned session never inherits more than the host granted at spawn.
+///
+/// Credentials never pass through this interface. Models and secrets are
+/// named; the host resolves the names and keeps the values out of every
+/// agent's memory, the caller's and the child's.
+interface spawn {
+    use cosmonic:agent/inference-types@0.3.0.{user-message};
+    use cosmonic:agent/session@0.3.0.{entry};
+
+    /// A component image pinned by content digest. The host refuses a
+    /// reference it cannot verify against the digest, so a tag that moves
+    /// cannot change what was approved.
+    record component-ref {
+        /// An OCI reference such as `ghcr.io/acme/agents/coder:1.2.0`.
+        image: string,
+        /// `sha256:<hex>`. Authoritative; the tag in `image` is for display.
+        digest: string,
+    }
+
+    /// A host volume mounted into one component.
+    record volume-mount {
+        /// The name of a volume the host knows. Never a host path.
+        volume: string,
+        /// Where the component sees it.
+        mount-path: string,
+        read-only: bool,
+    }
+
+    /// A host interface granted to one component, such as
+    /// `wasi:keyvalue/store@0.2.0` or a `cosmonic:kafka` binding.
+    record interface-grant {
+        /// Fully qualified interface name, with version.
+        name: string,
+        /// Interface-specific configuration, such as a bucket or topic.
+        config: list<tuple<string, string>>,
+    }
+
+    /// What one component may touch. Empty lists grant nothing; there is no
+    /// inherit-everything default.
+    record grants {
+        /// Hostnames this component may reach, matched as the host's egress
+        /// policy matches them.
+        allowed-hosts: list<string>,
+        volumes: list<volume-mount>,
+        interfaces: list<interface-grant>,
+        /// Names of secrets the host injects into this component. Names only;
+        /// values never pass through the caller or the agent.
+        secrets: list<string>,
+    }
+
+    /// A tool for the spawned agent: a component with its own grants. A
+    /// tool's grants belong to the tool, not to the agent that calls it.
+    record tool-request {
+        /// Unique within the request. Used for routing, display, and audit.
+        name: string,
+        /// A component exporting `cosmonic:agent/tools`.
+        component: component-ref,
+        grants: grants,
+    }
+
+    /// The agent's instructions.
+    variant prompt {
+        text(string),
+        /// A component that supplies the prompt, so it can be versioned,
+        /// pinned, and reviewed like any other component.
+        component(component-ref),
+    }
+
+    /// Everything needed to start a sub-agent session. Declarative: the tool
+    /// set is fixed for the session's lifetime.
+    record spawn-request {
+        /// A component targeting the `agent` world.
+        agent: component-ref,
+        /// A host-level inference binding, by name, as `models.open` takes
+        /// it. The child opens it like any agent; it never sees a key.
+        model: string,
+        prompt: prompt,
+        /// The first user turn. None starts the session idle.
+        task: option<user-message>,
+        /// Hosts the agent component itself may reach. Tools carry their own.
+        allowed-hosts: list<string>,
+        tools: list<tool-request>,
+        /// Key-value labels for logs, audit, and display. Not policy input
+        /// the caller can rely on to authorize anything.
+        labels: list<tuple<string, string>>,
+    }
+
+    /// A request that needs a grantor's decision before it can run.
+    record approval {
+        /// Host-issued id, to correlate with the host's approval UI or audit log.
+        id: string,
+        /// Digest of the canonical request this approval is bound to.
+        request-digest: string,
+        /// What exceeded the caller's grants, for a person to read.
+        /// Not for branching on.
+        detail: string,
+    }
+
+    /// A limit the host refuses to exceed.
+    record over-limit {
+        /// Human-readable scope, such as sessions, tools, or memory.
+        what: string,
+        /// The limit, where it is a number.
+        limit: option<u64>,
+    }
+
+    /// Why a spawn did not start a session.
+    variant spawn-error {
+        /// A policy or a person refused. Carries a reason fit to show the
+        /// caller's model or a person.
+        denied(string),
+        /// The request asks for more than the caller holds and has been sent
+        /// to a grantor. Resend the identical request once it is approved;
+        /// the host matches it by digest. A changed request is a new request.
+        needs-approval(approval),
+        /// Quota or capacity, such as concurrent sessions per caller.
+        over-limit(over-limit),
+        /// Malformed: a missing digest, a duplicate tool name, an unknown
+        /// model binding, a component that does not target the right world.
+        invalid-request(string),
+        /// The host could not serve the call; the detail is for logs.
+        unavailable(string),
+        other(string),
+    }
+
+    /// Where a session is. Readers treat an unknown case as other.
+    variant status {
+        /// Accepted; components are still being fetched or started.
+        starting,
+        /// Working on a turn.
+        working,
+        /// Waiting for a turn.
+        idle,
+        /// Paused on a decision, such as a tool call a person must approve.
+        blocked(string),
+        /// Ended with an error. The journal remains readable while the handle lives.
+        failed(string),
+        other(string),
+    }
+
+    variant session-error {
+        /// The session has ended; carries why.
+        ended(string),
+        invalid-argument(string),
+        /// The host could not serve the call; the detail is for logs.
+        unavailable(string),
+        other(string),
+    }
+
+    /// A spawned agent session, owned by the caller that spawned it. The
+    /// session is the proper noun: one agent, one model binding, one tool
+    /// set, one context, one lifetime. Dropping the handle ends the session
+    /// and releases everything the host started for it.
+    resource session {
+        /// Host-assigned and stable, for logs and audit.
+        id: async func() -> string;
+
+        /// Queue a user turn. Resolves when the host accepts it, not when the
+        /// agent finishes. Turns run in the order they were sent.
+        send: async func(turn: user-message) -> result<_, session-error>;
+
+        /// The child's journal from seq >= start, then new entries as they
+        /// are written, in `cosmonic:agent/session` format. Read-only.
+        /// Dropping the stream stops following; the session keeps running.
+        follow: async func(start: u64) -> result<stream<entry>, session-error>;
+
+        status: async func() -> status;
+
+        /// Stop the turn in progress. The session stays open and idle.
+        cancel: async func() -> result<_, session-error>;
+    }
+
+    /// Check the request against policy and start a session. Resolves once
+    /// the session is accepted, not once its components are running.
+    spawn: async func(request: spawn-request) -> result<session, spawn-error>;
+}
