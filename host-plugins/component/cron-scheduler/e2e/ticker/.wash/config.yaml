@@ -1,0 +1,27 @@
+# wash v2 project configuration.
+version: "0.1.0"
+build:
+  command: wash wit fetch >/dev/null && cargo build --target wasm32-wasip2 --release
+  component_path: target/wasm32-wasip2/release/ticker.wasm
+
+dev:
+  address: 127.0.0.1:8787
+  # Loads the plugin from where `wash build` leaves it, two directories up.
+  # Needs a wash built with the `host-component-plugins` feature.
+  plugins:
+    - id: cron-scheduler
+      file: ../../target/wasm32-wasip2/release/cron_scheduler.wasm
+  # The workload's grant. `handler` lets the plugin call this component;
+  # `scheduler` lets the component register schedules of its own. `config`
+  # declares two schedules and sets this workload's limits.
+  host_interfaces:
+    - namespace: cosmonic
+      package: cron
+      version: "0.1.0"
+      interfaces: [handler, scheduler]
+      config:
+        interval.heartbeat: 5s
+        schedule.minutely: "* * * * *"
+        max-registrations: "3"
+        min-interval: 500ms
+        retry.backoff: 500ms
