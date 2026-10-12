@@ -17,7 +17,7 @@ mod bindings {
     wit_bindgen::generate!({ world: "plugin", generate_all });
 }
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::pending;
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -61,6 +61,10 @@ thread_local! {
         let (tx, rx) = unbounded();
         (tx, RefCell::new(Some(rx)))
     };
+    /// Whether a wake is already queued that the loop has not acted on. One
+    /// pass of the loop sees every change made before it, so further wakes
+    /// until then would only make it run again for nothing.
+    static WAKE_QUEUED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn now() -> Now {
@@ -74,6 +78,9 @@ fn now() -> Now {
 /// Have the loop look at the schedules again rather than sleep out a wait it
 /// computed before they changed.
 fn wake() {
+    if WAKE_QUEUED.replace(true) {
+        return;
+    }
     WAKE.with(|(tx, _)| {
         // Fails only if the loop has ended, and then there is nothing to wake.
         let _ = tx.unbounded_send(());
@@ -181,17 +188,23 @@ impl SchedulerGuest for Plugin {
             return Err(ScheduleError::NoHandler);
         }
         let described = describe(&spec);
-        ENGINE.with_borrow_mut(|engine| engine.register(&workload, &name, spec, now()))?;
-        log(format!("workload {workload} registered '{name}': {described}"));
-        wake();
+        // A component is told to register every time it starts, so most calls
+        // change nothing. Those are neither logged nor a reason to wake the
+        // loop: a workload that could write a line per call could bury the
+        // lines that say why a schedule stopped.
+        if ENGINE.with_borrow_mut(|engine| engine.register(&workload, &name, spec, now()))? {
+            log(format!("workload {workload} registered '{name}': {described}"));
+            wake();
+        }
         Ok(())
     }
 
     async fn unregister(name: String) -> Result<(), ScheduleError> {
         let workload = identity::get_workload_id();
-        ENGINE.with_borrow_mut(|engine| engine.unregister(&workload, &name))?;
-        log(format!("workload {workload} unregistered '{name}'"));
-        wake();
+        if ENGINE.with_borrow_mut(|engine| engine.unregister(&workload, &name))? {
+            log(format!("workload {workload} unregistered '{name}'"));
+            wake();
+        }
         Ok(())
     }
 
@@ -226,8 +239,20 @@ impl LifecycleGuest for Plugin {
         let binding = Binding::parse_entries(entries).map_err(|err| {
             format!("cosmonic:cron binding of workload '{}': {err}", workload.name)
         })?;
-        let can_register =
-            ours().any(|binding| binding.interfaces.iter().any(|name| name == "scheduler"));
+        let grants = |interface: &str| {
+            ours().any(|binding| binding.interfaces.iter().any(|name| name == interface))
+        };
+        let can_register = grants("scheduler");
+        if !grants("handler") && (can_register || !binding.declared.is_empty()) {
+            // Without `handler` the host routes no call from this plugin to
+            // the workload, so every firing would be skipped, forever and
+            // quietly. Refusing the bind is how the mistake gets seen.
+            return Err(format!(
+                "cosmonic:cron binding of workload '{}': no entry lists the `handler` \
+                 interface, so its schedules could never be delivered",
+                workload.name
+            ));
+        }
 
         let declared: Vec<String> = binding
             .declared
@@ -309,7 +334,12 @@ fn settle(dispatch: &Dispatch, outcome: Outcome, detail: Option<String>) {
     let detail = detail.map(|d| format!(": {d}")).unwrap_or_default();
     let what = match (outcome, completion) {
         (Outcome::Handled, _) | (_, Completion::Stale) => return,
-        (Outcome::Undeliverable, _) => "skipped, the workload is not running".to_string(),
+        // Said when it starts and not again each period; a dropped one-shot
+        // is reported by `log_ended`.
+        (Outcome::Undeliverable, Completion::Undelivered { first: true }) => {
+            "is being skipped, the workload cannot be called".to_string()
+        }
+        (Outcome::Undeliverable, _) => return,
         (Outcome::Failed, _) => format!("failed{detail}"),
         (Outcome::Retry, Completion::RetryIn(wait)) => {
             format!("will be retried in {}{detail}", format_duration(wait))
@@ -333,6 +363,11 @@ impl RunGuest for Plugin {
         log("dispatch loop started");
         let mut deliveries = FuturesUnordered::new();
         loop {
+            // Cleared before looking, so a change made from here on queues a
+            // wake of its own and cannot be missed. Any wake still queued is
+            // for a change this pass is about to see.
+            WAKE_QUEUED.set(false);
+            while let Ok(()) = woken.try_recv() {}
             let now = now();
             let due = ENGINE.with_borrow_mut(|engine| engine.poll(now));
             log_ended();

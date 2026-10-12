@@ -17,7 +17,8 @@ package cosmonic:cron@0.1.0;
 ///   handled concurrently.
 /// - **A firing is a signal, not a durable message.** One that cannot be
 ///   delivered, because the workload is stopped or the implementer was not
-///   running, is skipped and counted, not stored and replayed.
+///   running, is skipped, not stored and replayed. Skipped firings are
+///   counted in `missed` where the implementer was there to count them.
 /// - **A firing may be delivered more than once**, when the handler asks for
 ///   that with `retry`. `name` and `scheduled-at` together identify it, and
 ///   `attempt` counts the deliveries.
