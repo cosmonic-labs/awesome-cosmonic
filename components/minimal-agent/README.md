@@ -4,7 +4,7 @@ The smallest useful agent on the `cosmonic:agent@0.3.0` interfaces: it takes a t
 
 The point is what the component does not hold. It names no model endpoint, carries no API key and declares no outbound network access (`allowedHosts: []`). It asks the host for a model by an alias, `default`, and the workload's binding decides what that alias means. Its tools are other components in the same workload, each with its own grants: the example manifest pairs it with the ISS tools, which may reach one host, while the agent beside them may reach none. The conversation lives in a session store that the host binds to this one workload, so the agent cannot read another workload's history and the host deletes it with the workload.
 
-About 1,100 lines of Rust in [`src/lib.rs`](src/lib.rs), building to a 281 KB component (102 KB gzipped), with three dependencies besides serde: `wasip3` for the HTTP export, `wit-bindgen` for the agent interfaces, and `serde_json`.
+About 1,200 lines of Rust in [`src/`](src/), starting from the tool loop in [`src/turn.rs`](src/turn.rs), building to a 281 KB component (102 KB gzipped), with three dependencies besides serde: `wasip3` for the HTTP export, `wit-bindgen` for the agent interfaces, and `serde_json`.
 
 ## What it shows
 
