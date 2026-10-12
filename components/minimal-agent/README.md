@@ -4,7 +4,7 @@ The smallest useful agent on the `cosmonic:agent@0.3.0` interfaces: it takes a t
 
 The point is what the component does not hold. It names no model endpoint, carries no API key and declares no outbound network access (`allowedHosts: []`). It asks the host for a model by an alias, `default`, and the workload's binding decides what that alias means. The conversation lives in a session store that the host binds to this one workload, so the agent cannot read another workload's history and the host deletes it with the workload.
 
-About 490 lines of Rust in [`src/lib.rs`](src/lib.rs), building to a 290 KB component, with three dependencies besides serde: `wasip3` for the HTTP export, `wit-bindgen` for the agent interfaces, and `serde_json`.
+About 560 lines of Rust in [`src/lib.rs`](src/lib.rs), building to a 244 KB component (88 KB gzipped), with three dependencies besides serde: `wasip3` for the HTTP export, `wit-bindgen` for the agent interfaces, and `serde_json`.
 
 ## What it shows
 
@@ -45,6 +45,23 @@ wash build
 The component is written to `target/wasm32-wasip2/release/minimal_agent.wasm`.
 
 `cosmonic:agent@0.3.0` is fetched from `ghcr.io/cosmonic-labs/cosmonic/agent`, where this repository publishes it. [`wit/wkg-registries.toml`](../../wit/wkg-registries.toml) maps the `cosmonic` namespace there; outside this repository, use a copy of that file. [`wkg.lock`](wkg.lock) pins the package by digest, and `wit/deps` is generated and gitignored.
+
+### Smaller still
+
+The release profile in [`Cargo.toml`](Cargo.toml) is already tuned for size. [Binaryen](https://github.com/WebAssembly/binaryen)'s `wasm-opt` can take the build to about 199 KB (82 KB gzipped) with no change in behavior. It optimizes core modules, not components, so link the core module, optimize it, and wrap it again:
+
+```shell
+RUSTFLAGS=-Clink-arg=--skip-wit-component \
+  cargo build --target wasm32-wasip2 --release --target-dir target/core
+wasm-opt -Oz --enable-bulk-memory --enable-sign-ext --enable-mutable-globals \
+  --enable-nontrapping-float-to-int --enable-multivalue --enable-reference-types \
+  --strip-debug --strip-producers \
+  target/core/wasm32-wasip2/release/minimal_agent.wasm -o target/core/opt.wasm
+wasm-tools component new target/core/opt.wasm -o target/core/component.wasm
+wasm-tools strip --all target/core/component.wasm -o target/minimal_agent.opt.wasm
+```
+
+Name the features rather than passing `--all-features`: with every feature on, `wasm-opt` can write encodings, such as compact imports, that the runtime rejects when the component loads. The last step also drops the debugging names. None of this is part of `wash build`, because it needs Binaryen and [`wasm-tools`](https://github.com/bytecodealliance/wasm-tools) installed.
 
 ## Run on Cosmonic Desktop
 
