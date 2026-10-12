@@ -69,16 +69,18 @@ client -> cosmonic:agent inference -> local provider
 agent -> authorized model aliases + chat + tools + session
 ```
 
-`cosmonic:agent` and `cosmonic:notifications` are self-contained:
+`cosmonic:agent` is self-contained:
 
 ```sh
 wasm-tools component wit wit/cosmonic-agent
 ```
 
-`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, which `wkg.lock` pins by
-digest. The build script fetches them and checks the lock still reproduces:
+`cosmonic:notifications` uses the WASI clocks duration type. `cosmonic:kafka`
+imports `wasi:cli` and `wasmcloud:host`. Their `wkg.lock` files pin dependencies
+by digest; the build script fetches them and checks that each lock reproduces:
 
 ```sh
+node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notifications
 node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
 ```
 
