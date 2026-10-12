@@ -16,9 +16,10 @@ use crate::spec::{Binding, Limits, Spec, SpecError, Wall, format_duration, valid
 const WALL_RESYNC: u64 = 30_000_000_000;
 
 /// The most occurrences of one schedule the engine will walk through to count
-/// what was missed. Past this the count stops, rather than stall a loop that
-/// fell far behind, and is a lower bound.
-const MAX_CATCH_UP: u32 = 1_000;
+/// what was missed. Past this the count stops and is a lower bound. Every
+/// workload's schedules are caught up on the one loop, after a clock step
+/// that put all of them behind at once, so the walk is kept short.
+const MAX_CATCH_UP: u32 = 100;
 
 /// How far the system clock has to move backward, in nanoseconds, before the
 /// engine takes it as the clock being set rather than adjusted. Three hours is
@@ -83,6 +84,11 @@ pub enum Completion {
     /// The handler asked for a retry, but the schedule's next firing is due
     /// first or has already come due, so that takes its place.
     RetrySuperseded,
+    /// A repeating schedule's firing could not be delivered, because the
+    /// workload could not be called. `first` is whether its previous firing
+    /// was delivered, so a workload that stays unreachable is reported once
+    /// rather than once per period.
+    Undelivered { first: bool },
     /// The schedule was removed or replaced while the delivery was in flight.
     Stale,
 }
@@ -168,6 +174,8 @@ struct Entry {
     /// Whether the schedule came due again after its latest firing was
     /// dispatched. That firing is then out of date, and is not retried.
     overtaken: bool,
+    /// Whether the latest firing could not be delivered.
+    unreachable: bool,
     /// Firings delivered so far, counted against `max-firings`.
     fired: u32,
     /// Whether the schedule has had its last firing: a one-shot that has come
@@ -228,6 +236,7 @@ impl Engine {
             missed: 0,
             retry: None,
             overtaken: false,
+            unreachable: false,
             fired: 0,
             spent: false,
             expires: lifetime.map(|lifetime| now.mono.saturating_add(lifetime)),
@@ -247,9 +256,12 @@ impl Engine {
     /// interval.
     ///
     /// Schedules the workload registered for itself are kept only if the new
-    /// binding would still accept them. One it no longer permits is removed,
-    /// and `max-lifetime` is applied again from now, so tightening a binding
-    /// takes effect on what is already registered.
+    /// binding would still accept them, so tightening a binding takes effect
+    /// on what is already registered: `scheduler` no longer granted removes
+    /// them all, a raised `min-interval` removes what it rules out, a lowered
+    /// `max-registrations` removes the most recently registered beyond it, a
+    /// lowered `max-firings` removes what has already fired that often, and
+    /// `max-lifetime` is counted again from now.
     pub fn bind(&mut self, workload: &str, binding: Binding, can_register: bool, now: Now) {
         let Workload { mut entries, busy, .. } =
             self.workloads.remove(workload).unwrap_or_default();
@@ -271,11 +283,35 @@ impl Engine {
             }
             permitted
         });
-        for entry in entries.values_mut().filter(|entry| !entry.declared) {
-            entry.expires = binding.limits.max_lifetime.map(|lifetime| {
-                let renewed = now.mono.saturating_add(lifetime);
-                entry.expires.map_or(renewed, |held| held.min(renewed))
-            });
+        // Oldest first, so that when there are more than `max-registrations`
+        // now allows, the ones registered last are the ones to go.
+        let mut registered: Vec<(u64, String)> = entries
+            .iter()
+            .filter(|(_, entry)| !entry.declared)
+            .map(|(name, entry)| (entry.epoch, name.clone()))
+            .collect();
+        registered.sort();
+        for (kept, (_, name)) in registered.into_iter().enumerate() {
+            let Some(entry) = entries.get_mut(&name) else { continue };
+            let reason = if kept >= binding.limits.max_registrations {
+                Some(EndReason::Rebound)
+            } else if binding.limits.max_firings.is_some_and(|max| entry.fired >= max) {
+                Some(EndReason::MaxFirings)
+            } else {
+                None
+            };
+            match reason {
+                Some(reason) => {
+                    entries.remove(&name);
+                    self.ended.push(Ended { workload: workload.to_string(), name, reason });
+                }
+                None => {
+                    entry.expires = binding.limits.max_lifetime.map(|lifetime| {
+                        let renewed = now.mono.saturating_add(lifetime);
+                        entry.expires.map_or(renewed, |held| held.min(renewed))
+                    });
+                }
+            }
         }
         for (name, spec) in binding.declared {
             if let btree_map::Entry::Vacant(slot) = entries.entry(name) {
@@ -295,7 +331,8 @@ impl Engine {
         self.workloads.remove(workload);
     }
 
-    /// `scheduler.register`.
+    /// `scheduler.register`. Answers whether anything changed: `false` when
+    /// the name already had exactly this schedule.
     ///
     /// # Errors
     ///
@@ -308,11 +345,22 @@ impl Engine {
         name: &str,
         spec: Spec,
         now: Now,
-    ) -> Result<(), RegisterError> {
+    ) -> Result<bool, RegisterError> {
         let held = self.registrable(workload)?;
         validate_name(name)?;
         if spec == Spec::Interval(0) {
             return Err(SpecError::InvalidSchedule("a period cannot be zero".to_string()).into());
+        }
+        if let Spec::OnceAt(at) = &spec
+            && at.nanoseconds >= 1_000_000_000
+        {
+            // Not an instant at all, and the ordering of instants below
+            // depends on the field being in range.
+            return Err(SpecError::InvalidSchedule(format!(
+                "{} nanoseconds is a second or more",
+                at.nanoseconds
+            ))
+            .into());
         }
         held.limits.check(&spec)?;
         let wait = match &spec {
@@ -344,7 +392,7 @@ impl Engine {
             // it has had its last firing: then there is nothing left to keep,
             // and "the same again" is a request for a new one. That is what a
             // one-shot's handler is doing when it registers itself again.
-            Some(existing) if existing.spec == spec && !existing.spent => return Ok(()),
+            Some(existing) if existing.spec == spec && !existing.spent => return Ok(false),
             Some(_) => {}
             None => {
                 let registered = held.entries.values().filter(|e| !e.declared).count();
@@ -357,25 +405,23 @@ impl Engine {
         if let Some(held) = self.workloads.get_mut(workload) {
             held.entries.insert(name.to_string(), entry);
         }
-        Ok(())
+        Ok(true)
     }
 
-    /// `scheduler.unregister`. Removing a name that is not held succeeds.
+    /// `scheduler.unregister`. Removing a name that is not held succeeds, and
+    /// answers `false`: nothing changed.
     ///
     /// # Errors
     ///
     /// `AccessDenied` when the workload holds no grant to schedule or the name
     /// is a declared one, and `Spec` when the name is not one a schedule
     /// could have.
-    pub fn unregister(&mut self, workload: &str, name: &str) -> Result<(), RegisterError> {
+    pub fn unregister(&mut self, workload: &str, name: &str) -> Result<bool, RegisterError> {
         let held = self.registrable(workload)?;
         validate_name(name)?;
         match held.entries.get(name) {
             Some(existing) if existing.declared => Err(RegisterError::AccessDenied),
-            _ => {
-                held.entries.remove(name);
-                Ok(())
-            }
+            _ => Ok(held.entries.remove(name).is_some()),
         }
     }
 
@@ -484,17 +530,33 @@ impl Engine {
         if held.busy.get(name) == Some(&dispatch.epoch) {
             held.busy.remove(name);
         }
-        let Some(entry) = held.entries.get_mut(name).filter(|entry| entry.epoch == dispatch.epoch)
-        else {
+        let Some(entry) = held.entries.get_mut(name) else {
             return Completion::Stale;
         };
+        // The loop sets no timer for a schedule whose handler is running, so
+        // the periods that elapsed meanwhile are counted here, where there is
+        // a firing to compare them with. A one-shot is left alone: its firing
+        // was waiting for the handler, and is delivered now.
+        if !entry.spec.is_once()
+            && let Some((_, skipped)) = entry.advance(now)
+        {
+            entry.retry = None;
+            entry.missed = entry.missed.saturating_add(skipped).saturating_add(1);
+            entry.overtaken = true;
+        }
+        if entry.epoch != dispatch.epoch {
+            return Completion::Stale;
+        }
 
+        let delivered = outcome != Outcome::Undeliverable;
+        let first_attempt = dispatch.firing.attempt == 1;
         // A firing counts against `max-firings` once, when it is first
         // delivered: not when it is redelivered, and not when it never
         // arrived.
-        if outcome != Outcome::Undeliverable && dispatch.firing.attempt == 1 {
+        if delivered && first_attempt {
             entry.fired = entry.fired.saturating_add(1);
         }
+        let was_unreachable = std::mem::replace(&mut entry.unreachable, !delivered);
         if !entry.declared && held.limits.max_firings.is_some_and(|max| entry.fired >= max) {
             entry.spent = true;
         }
@@ -513,12 +575,20 @@ impl Engine {
         let completion = match outcome {
             Outcome::Handled | Outcome::Failed => Completion::Settled,
             Outcome::Undeliverable => {
-                // Never delivered, so it joins what the next firing reports.
-                entry.missed = entry
-                    .missed
-                    .saturating_add(dispatch.firing.missed)
-                    .saturating_add(1);
-                Completion::Settled
+                if first_attempt {
+                    // Never delivered, so it joins what the next firing
+                    // reports. A redelivery that could not be made is
+                    // different: that firing did reach the handler once.
+                    entry.missed = entry
+                        .missed
+                        .saturating_add(dispatch.firing.missed)
+                        .saturating_add(1);
+                }
+                if end.is_some() {
+                    Completion::Settled
+                } else {
+                    Completion::Undelivered { first: !was_unreachable }
+                }
             }
             Outcome::Retry if dispatch.firing.attempt >= held.limits.retry_max_attempts => {
                 Completion::RetriesExhausted
@@ -567,9 +637,11 @@ impl Engine {
             })
             .flat_map(|(entry, in_flight)| {
                 let regular = match entry.due {
-                    // Waiting on its handler, not on a clock: the delivery
-                    // finishing is what wakes the loop.
-                    _ if in_flight && entry.spec.is_once() => None,
+                    // Waiting on its handler, not on a clock. Whatever comes
+                    // due meanwhile is skipped or held, and the delivery
+                    // finishing is what wakes the loop to settle that. A
+                    // timer here would wake it every period to do nothing.
+                    _ if in_flight => None,
                     // Capped, because the wait is on the monotonic clock and
                     // this deadline is on the system clock.
                     Due::Wall(_) => entry.until_due(now).map(|wait| wait.min(WALL_RESYNC)),
@@ -618,7 +690,7 @@ impl Entry {
                             // Too far behind to walk. Jump to the most recent
                             // match, so the firing still names the occurrence
                             // it stands for, and leave the count where it
-                            // stopped.
+                            // stopped: a lower bound.
                             latest = cron.last_at_or_before(now.wall).unwrap_or(next);
                             break cron.next_after(now.wall);
                         }
@@ -901,18 +973,19 @@ mod tests {
         assert_eq!(engine.next_wake(at(100)), Some(5 * SEC));
         assert_eq!(names(&fire(&mut engine, at(105))), ["poll"]);
 
-        assert_eq!(engine.unregister("wl", "poll"), Ok(()));
+        assert_eq!(engine.unregister("wl", "poll"), Ok(true));
         assert!(fire(&mut engine, at(200)).is_empty());
         assert_eq!(engine.next_wake(at(200)), None);
-        // Removing it again is not an error.
-        assert_eq!(engine.unregister("wl", "poll"), Ok(()));
+        // Removing it again is not an error, and reports nothing changed.
+        assert_eq!(engine.unregister("wl", "poll"), Ok(false));
     }
 
     #[test]
     fn registering_the_same_schedule_again_keeps_its_phase() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(7)).unwrap();
+        assert_eq!(engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)), Ok(true));
+        // Accepted, and reported as having changed nothing.
+        assert_eq!(engine.register("wl", "poll", Spec::Interval(10 * SEC), at(7)), Ok(false));
         assert_eq!(names(&fire(&mut engine, at(10))), ["poll"]);
     }
 
@@ -967,9 +1040,9 @@ mod tests {
             Err(RegisterError::LimitExceeded)
         );
         // Replacing one already held is not a new registration.
-        assert_eq!(engine.register("wl", "a", Spec::Interval(20 * SEC), at(0)), Ok(()));
+        assert_eq!(engine.register("wl", "a", Spec::Interval(20 * SEC), at(0)), Ok(true));
         engine.unregister("wl", "b").unwrap();
-        assert_eq!(engine.register("wl", "c", Spec::Interval(10 * SEC), at(0)), Ok(()));
+        assert_eq!(engine.register("wl", "c", Spec::Interval(10 * SEC), at(0)), Ok(true));
     }
 
     #[test]
@@ -996,7 +1069,7 @@ mod tests {
         engine.bind("other", Binding::default(), true, at(0));
         engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
         assert_eq!(engine.list("other"), Ok(vec![]));
-        assert_eq!(engine.unregister("other", "poll"), Ok(()));
+        assert_eq!(engine.unregister("other", "poll"), Ok(false));
         let due = engine.poll(at(10));
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].workload, "wl");
@@ -1179,7 +1252,7 @@ mod tests {
             Err(RegisterError::LimitExceeded)
         );
         fire(&mut engine, at(10));
-        assert_eq!(engine.register("wl", "other", Spec::Interval(10 * SEC), at(10)), Ok(()));
+        assert_eq!(engine.register("wl", "other", Spec::Interval(10 * SEC), at(10)), Ok(true));
     }
 
     #[test]
@@ -1305,8 +1378,8 @@ mod tests {
         let refused = |result| matches!(result, Err(RegisterError::Spec(SpecError::InvalidSchedule(_))));
         assert!(refused(engine.register("wl", "a", Spec::OnceAfter(60 * SEC), at(0))));
         assert!(refused(engine.register("wl", "b", Spec::OnceAt(at(90).wall), at(0))));
-        assert_eq!(engine.register("wl", "c", Spec::OnceAfter(59 * SEC), at(0)), Ok(()));
-        assert_eq!(engine.register("wl", "d", Spec::OnceAt(at(30).wall), at(0)), Ok(()));
+        assert_eq!(engine.register("wl", "c", Spec::OnceAfter(59 * SEC), at(0)), Ok(true));
+        assert_eq!(engine.register("wl", "d", Spec::OnceAt(at(30).wall), at(0)), Ok(true));
         assert_eq!(names(&fire(&mut engine, at(30))), ["d"]);
         assert_eq!(names(&fire(&mut engine, at(59))), ["c"]);
     }
@@ -1331,7 +1404,7 @@ mod tests {
 
         // From inside the handler: the same name, the same delay. The firing
         // being handled is spent, so this is a new schedule, not a no-op.
-        assert_eq!(engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(11)), Ok(()));
+        assert_eq!(engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(11)), Ok(true));
         assert_eq!(engine.complete(&first[0], Outcome::Handled, at(12)), Completion::Stale);
         assert_eq!(listed(&mut engine), ["check"]);
 
@@ -1349,7 +1422,7 @@ mod tests {
         let last = engine.poll(at(10));
         // It asks for a retry, so it is spent but still held.
         assert_eq!(engine.complete(&last[0], Outcome::Retry, at(10)), Completion::RetryIn(SEC));
-        assert_eq!(engine.register("wl", "poll", Spec::Interval(10 * SEC), at(10)), Ok(()));
+        assert_eq!(engine.register("wl", "poll", Spec::Interval(10 * SEC), at(10)), Ok(true));
         // A fresh schedule: the old one's retry went with it.
         assert!(engine.poll(at(11)).is_empty());
         assert_eq!(names(&fire(&mut engine, at(20))), ["poll"]);
@@ -1547,5 +1620,113 @@ mod tests {
                 Err(RegisterError::Spec(SpecError::InvalidName(_)))
             ));
         }
+    }
+
+    #[test]
+    fn nothing_wakes_the_loop_for_a_schedule_whose_handler_is_running() {
+        let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
+        let running = engine.poll(at(10));
+        // Due again at 20 and 30, but there is nothing to do about that
+        // until the handler returns.
+        assert_eq!(engine.next_wake(at(10)), None);
+        // With no poll in between, the periods are counted when it does.
+        engine.complete(&running[0], Outcome::Handled, at(35));
+        assert_eq!(engine.next_wake(at(35)), Some(5 * SEC));
+        assert_eq!(engine.poll(at(40))[0].firing.missed, 2);
+    }
+
+    #[test]
+    fn a_retry_is_refused_when_the_period_elapsed_unseen_during_the_attempt() {
+        let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
+        let running = engine.poll(at(10));
+        // The handler takes 12s, then asks for a retry. No poll saw 20 pass.
+        assert_eq!(engine.complete(&running[0], Outcome::Retry, at(22)), Completion::RetrySuperseded);
+        assert_eq!(engine.poll(at(30))[0].firing.missed, 1);
+    }
+
+    #[test]
+    fn a_replacement_counts_what_it_skipped_while_it_waited() {
+        let mut engine = bound(&[], true);
+        engine.register("wl", "poll", Spec::Interval(60 * SEC), at(0)).unwrap();
+        let old = engine.poll(at(60));
+        engine.register("wl", "poll", Spec::Interval(SEC), at(61)).unwrap();
+        // No poll while the old handler runs: nothing is waking the loop.
+        assert_eq!(engine.next_wake(at(61)), None);
+        assert_eq!(engine.complete(&old[0], Outcome::Handled, at(64)), Completion::Stale);
+        assert!(engine.poll(at(64)).is_empty());
+        let next = engine.poll(at(65));
+        assert_eq!((names(&next), next[0].firing.missed), (vec!["poll"], 3));
+    }
+
+    #[test]
+    fn an_unreachable_workload_is_reported_once_until_it_is_reached_again() {
+        let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
+        let mut settle = |secs, outcome| {
+            let due = engine.poll(at(secs));
+            engine.complete(&due[0], outcome, at(secs))
+        };
+        assert_eq!(settle(10, Outcome::Undeliverable), Completion::Undelivered { first: true });
+        assert_eq!(settle(20, Outcome::Undeliverable), Completion::Undelivered { first: false });
+        assert_eq!(settle(30, Outcome::Handled), Completion::Settled);
+        assert_eq!(settle(40, Outcome::Undeliverable), Completion::Undelivered { first: true });
+    }
+
+    #[test]
+    fn a_redelivery_that_cannot_be_made_is_not_a_missed_firing() {
+        let mut engine = bound(&[("poll", Spec::Interval(60 * SEC))], false);
+        let first = engine.poll(at(60));
+        engine.complete(&first[0], Outcome::Retry, at(60));
+        let again = engine.poll(at(61));
+        assert_eq!(again[0].firing.attempt, 2);
+        // The firing reached the handler once; only its retry was lost.
+        engine.complete(&again[0], Outcome::Undeliverable, at(61));
+        assert_eq!(engine.poll(at(120))[0].firing.missed, 0);
+    }
+
+    #[test]
+    fn once_at_refuses_nanoseconds_that_are_not_a_fraction_of_a_second() {
+        let mut engine = bound(&[], true);
+        for seconds in [T0 - 2, T0 + 60] {
+            let instant = Wall { seconds, nanoseconds: 4_000_000_000 };
+            assert!(matches!(
+                engine.register("wl", "odd", Spec::OnceAt(instant), at(0)),
+                Err(RegisterError::Spec(SpecError::InvalidSchedule(_)))
+            ));
+        }
+        let instant = Wall { seconds: T0 + 60, nanoseconds: 999_999_999 };
+        assert_eq!(engine.register("wl", "fine", Spec::OnceAt(instant), at(0)), Ok(true));
+    }
+
+    #[test]
+    fn a_rebind_with_fewer_registrations_drops_the_newest() {
+        let mut engine = bound(&[("beat", Spec::Interval(10 * SEC))], true);
+        // Registered in this order, which is not the order of their names.
+        for name in ["m", "z", "a", "q"] {
+            engine.register("wl", name, Spec::Interval(10 * SEC), at(0)).unwrap();
+        }
+        let binding = Binding {
+            declared: [("beat".to_string(), Spec::Interval(10 * SEC))].into(),
+            limits: Limits { max_registrations: 2, ..Limits::default() },
+        };
+        engine.bind("wl", binding, true, at(1));
+        assert_eq!(
+            ended(&mut engine),
+            [("a".to_string(), EndReason::Rebound), ("q".to_string(), EndReason::Rebound)]
+        );
+        // The declared schedule is not one of the two.
+        assert_eq!(listed(&mut engine), ["beat", "m", "z"]);
+    }
+
+    #[test]
+    fn a_rebind_with_fewer_firings_drops_what_has_already_had_them() {
+        let mut engine = bound(&[], true);
+        engine.register("wl", "busy", Spec::Interval(10 * SEC), at(0)).unwrap();
+        fire(&mut engine, at(10));
+        fire(&mut engine, at(20));
+        engine.register("wl", "fresh", Spec::Interval(10 * SEC), at(20)).unwrap();
+
+        rebind(&mut engine, Limits { max_firings: Some(2), ..Limits::default() }, true, at(21));
+        assert_eq!(ended(&mut engine), [("busy".to_string(), EndReason::MaxFirings)]);
+        assert_eq!(listed(&mut engine), ["fresh"]);
     }
 }

@@ -65,7 +65,6 @@ echo "building the plugin and the ticker workload"
 echo "starting the host (log: $LOG)"
 (cd "$ROOT/e2e/ticker" && exec "$WASH" dev) >"$LOG" 2>&1 &
 DEV_PID=$!
-STARTED=$(date +%s)
 if ! curl -sf --retry 60 --retry-delay 1 --retry-all-errors -o /dev/null "$BASE/schedules"; then
   echo "the host never served the workload:"
   tail -20 "$LOG"
@@ -94,6 +93,8 @@ else
   fail "a new schedule wakes the sleeping loop" "$POLLS firings in 1.7s, expected at least 2"
 fi
 expect "registering the same schedule again is accepted" '/register?name=poll&every-ms=500' 200 ok
+check "and is not logged a second time, having changed nothing" \
+  test "$(grep -c "registered 'poll'" "$LOG")" = 1
 check "a registered schedule is listed as registered" \
   grep -q $'^poll\tregistered\tinterval 500ms$' <<<"$(curl -s "$BASE/schedules")"
 
@@ -108,18 +109,6 @@ expect "replacing a declared schedule" '/register?name=heartbeat&every-ms=1000' 
 expect "removing a declared schedule" '/unregister?name=heartbeat' 403 access-denied
 expect "removing a name no schedule could have" '/unregister?name=bad%20name' 400 invalid-name
 
-echo "limits"
-expect "a crontab in a named zone" '/register?name=ny&cron=0+9+*+*+mon-fri&tz=America/New_York' 200 ok
-check "the zone is kept in the listing" \
-  grep -q $'^ny\tregistered\tcron 0 9 \* \* mon-fri in America/New_York$' <<<"$(curl -s "$BASE/schedules")"
-expect "a third registration" '/register?name=third&every-ms=60000' 200 ok
-expect "a fourth, past max-registrations" '/register?name=fourth&every-ms=60000' 429 limit-exceeded
-expect "unregister" '/unregister?name=third' 200 ok
-expect "unregister again" '/unregister?name=third' 200 ok
-expect "unregister the crontab" '/unregister?name=ny' 200 ok
-# Registered and then left alone, for the max-lifetime check further down.
-expect "register a schedule and forget it" '/register?name=linger&every-ms=60000' 200 ok
-
 echo "unregistering stops the calls"
 expect "unregister the interval" '/unregister?name=poll' 200 ok
 sleep 0.3
@@ -131,6 +120,20 @@ if [ "$BEFORE" = "$AFTER" ]; then
 else
   fail "no firing after unregister" "$((AFTER - BEFORE)) more arrived"
 fi
+
+echo "limits"
+expect "a slow interval" '/register?name=second&every-ms=60000' 200 ok
+expect "a crontab in a named zone" '/register?name=ny&cron=0+9+*+*+mon-fri&tz=America/New_York' 200 ok
+check "the zone is kept in the listing" \
+  grep -q $'^ny\tregistered\tcron 0 9 \* \* mon-fri in America/New_York$' <<<"$(curl -s "$BASE/schedules")"
+expect "a third registration" '/register?name=third&every-ms=60000' 200 ok
+expect "a fourth, past max-registrations" '/register?name=fourth&every-ms=60000' 429 limit-exceeded
+expect "unregister" '/unregister?name=third' 200 ok
+expect "unregister again" '/unregister?name=third' 200 ok
+expect "unregister the crontab" '/unregister?name=ny' 200 ok
+expect "unregister the slow interval" '/unregister?name=second' 200 ok
+# Registered and then left alone, for the max-lifetime check further down.
+expect "register a schedule and forget it" '/register?name=linger&every-ms=60000' 200 ok
 
 echo "retry"
 expect "register a handler that asks for a retry" '/register?name=retry-job&every-ms=4000' 200 ok
@@ -226,12 +229,15 @@ else
 fi
 
 echo "interval rate"
-ELAPSED=$(($(date +%s) - STARTED))
+# Counted between the first and last heartbeat, not from when the host was
+# launched: how long it took to start says nothing about the schedule.
 BEATS=$(fired heartbeat)
-if [ "$BEATS" -ge $((ELAPSED / 5 - 2)) ] && [ "$BEATS" -le $((ELAPSED / 5 + 1)) ]; then
-  pass "the 5s heartbeat fired $BEATS times in ${ELAPSED}s"
+FIRST=$(grep 'ticker: fired name=heartbeat ' "$LOG" | head -1 | sed 's/.*scheduled-at=\([0-9]*\).*/\1/')
+LAST=$(grep 'ticker: fired name=heartbeat ' "$LOG" | tail -1 | sed 's/.*scheduled-at=\([0-9]*\).*/\1/')
+if [ "$BEATS" -ge 3 ] && [ "$BEATS" = $(((LAST - FIRST) / 5 + 1)) ]; then
+  pass "the 5s heartbeat fired $BEATS times over $((LAST - FIRST))s"
 else
-  fail "the 5s heartbeat keeps its rate" "$BEATS firings in ${ELAPSED}s"
+  fail "the 5s heartbeat keeps its rate" "$BEATS firings over $((LAST - FIRST))s"
 fi
 GAPS=$(grep 'ticker: fired name=heartbeat ' "$LOG" | sed 's/.*scheduled-at=\([0-9]*\).*/\1/' |
   awk 'NR > 1 { print $1 - prev } { prev = $1 }' | sort -u | tr '\n' ' ')
