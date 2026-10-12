@@ -1,13 +1,33 @@
 package cosmonic:agent@0.4.0-draft;
 
-/// DRAFT. An agent that can spawn sub-agents with their own tools.
+/// DRAFT. An agent that may spawn open sub-agents and read their final replies.
+@since(version = 0.4.0-draft)
 world spawner {
     include cosmonic:agent/agent@0.3.0;
 
     import spawn;
 }
 
-/// DRAFT. What the host plugin implements.
+/// DRAFT. An agent that may spawn sealed workers. It cannot spawn open agents
+/// or read a sealed agent's results.
+@since(version = 0.4.0-draft)
+world sealed-spawner {
+    include cosmonic:agent/agent@0.3.0;
+
+    import spawn-sealed;
+}
+
+/// DRAFT. An implementer of both spawn interfaces.
+@since(version = 0.4.0-draft)
 world spawn-provider {
+    export spawn;
+    export spawn-sealed;
+}
+
+/// DRAFT. A policy wrapper or test double that sits in front of another
+/// implementer of `spawn` and exposes the same shape.
+@since(version = 0.4.0-draft)
+world spawn-middleware {
+    import spawn;
     export spawn;
 }
