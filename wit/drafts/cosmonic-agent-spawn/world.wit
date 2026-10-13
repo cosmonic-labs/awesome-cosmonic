@@ -31,3 +31,12 @@ world spawn-middleware {
     import spawn;
     export spawn;
 }
+
+/// DRAFT. An agent a host can hand turns to in process: the world a spawned
+/// child targets.
+@since(version = 0.4.0-draft)
+world runnable-agent {
+    include cosmonic:agent/agent@0.3.0;
+
+    export turn;
+}
