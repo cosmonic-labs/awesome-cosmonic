@@ -10,6 +10,7 @@
 //! - `POST /register?name=N&once-after-ms=MS`       a `once-after` schedule
 //! - `POST /register?name=N&once-at=UNIX_SECONDS`   a `once-at` schedule
 //! - `POST /register?name=N&other=TEXT`             a schedule kind nobody provides
+//! - `POST /register-calendar?name=N[&minute-step=S]` a typed calendar schedule
 //! - `POST /unregister?name=N`
 //!
 //! Log each firing to stderr as `ticker: fired ...` for the end-to-end test;
@@ -28,7 +29,10 @@ mod bindings {
 }
 
 use bindings::cosmonic::cron::scheduler;
-use bindings::cosmonic::cron::types::{CronSchedule, Firing, Schedule, ScheduleError};
+use bindings::cosmonic::cron::types::{
+    CalendarPart, CalendarRange, CalendarSchedule, CronSchedule, Firing, Months,
+    Schedule, ScheduleError, Weekdays,
+};
 use bindings::exports::cosmonic::cron::handler::{Guest as HandlerGuest, HandlerError};
 use bindings::exports::wasi::http::handler::Guest as HttpGuest;
 use bindings::wasi::clocks::monotonic_clock;
@@ -76,6 +80,12 @@ impl HttpGuest for Ticker {
                     let kinds = "every-ms, cron, once-after-ms, once-at or other";
                     return Ok(respond(400, format!("give one of {kinds}\n")));
                 }
+            },
+            (Method::Post, "/register-calendar") => match calendar_from(query) {
+                Some(schedule) => scheduler::register_calendar(name(), schedule)
+                    .await
+                    .map(|()| "ok\n".into()),
+                None => return Ok(respond(400, "invalid calendar parameters\n".into())),
             },
             (Method::Post, "/unregister") => {
                 scheduler::unregister(name()).await.map(|()| "ok\n".into())
@@ -127,6 +137,40 @@ fn schedule_from(query: &str) -> Option<Schedule> {
         return Some(Schedule::Cron(CronSchedule { expression, timezone: param(query, "tz") }));
     }
     param(query, "other").map(Schedule::Other)
+}
+
+fn calendar_from(query: &str) -> Option<CalendarSchedule> {
+    let minutes = match param(query, "minute-step") {
+        Some(step) => vec![CalendarPart::Every(step.parse().ok()?)],
+        None => vec![CalendarPart::Any],
+    };
+    let hours = match param(query, "hour-start") {
+        Some(start) => vec![CalendarPart::Range(CalendarRange {
+            start: start.parse().ok()?,
+            end: param(query, "hour-end")?.parse().ok()?,
+        })],
+        None => vec![CalendarPart::Any],
+    };
+    let days_of_month = match param(query, "day") {
+        Some(day) => Some(vec![CalendarPart::At(day.parse().ok()?)]),
+        None => None,
+    };
+    let weekdays = match param(query, "weekdays") {
+        Some(bits) => Some(Weekdays::from_bits(bits.parse().ok()?)?),
+        None => None,
+    };
+    let months = match param(query, "months") {
+        Some(bits) => Some(Months::from_bits(bits.parse().ok()?)?),
+        None => None,
+    };
+    Some(CalendarSchedule {
+        minutes,
+        hours,
+        days_of_month,
+        weekdays,
+        months,
+        timezone: param(query, "tz"),
+    })
 }
 
 fn describe(err: &ScheduleError) -> String {

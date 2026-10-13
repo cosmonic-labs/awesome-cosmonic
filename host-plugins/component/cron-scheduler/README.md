@@ -58,6 +58,24 @@ for held in scheduler::list_registrations().await? {
 
 A registered schedule is a crontab (`Schedule::Cron`), an interval, or one of two that fire once: `OnceAfter` a delay on the monotonic clock, or `OnceAt` an instant on the system clock. Declared schedules are always repeating.
 
+**Register calendar schedules with typed fields.** `register-calendar` accepts selectors and named weekday and month flags:
+
+```rust
+scheduler::register_calendar("business-hours".into(), CalendarSchedule {
+    minutes: vec![CalendarPart::Every(15)],
+    hours: vec![CalendarPart::Range(CalendarRange { start: 9, end: 17 })],
+    days_of_month: None,
+    weekdays: Some(Weekdays::MONDAY | Weekdays::TUESDAY | Weekdays::WEDNESDAY
+        | Weekdays::THURSDAY | Weekdays::FRIDAY),
+    months: None,
+    timezone: Some("America/New_York".into()),
+}).await?;
+```
+
+Selectors accept a wildcard, one value, an inclusive range, a step from the field's minimum, or a stepped range; lists combine selections. Minutes are 0-59, hours 0-23, and days of month 1-31. Empty selectors or flags, reversed ranges, out-of-range values, and zero steps are rejected. Restricted day-of-month and weekday fields match with OR, as in POSIX cron.
+
+Both registration functions share names, permissions, limits, retries, and overlap protection. Listings return typed schedules as `Schedule::Cron` with a normalized expression; passing that expression back to `register` preserves the registration. Typed selections are normalized by value, so reordering or duplicating them changes nothing.
+
 The host matches a `hostInterfaces` entry against one component at a time, so the component that imports `scheduler` must be the one that exports `handler`.
 
 [`tests/fixtures/ticker`](tests/fixtures/ticker/) is a complete component that does both.
@@ -104,6 +122,12 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 - While a crontab schedule is pending the loop wakes at least every 30 seconds to re-read the system clock, so a firing can be up to 30 seconds late after the system clock is set forward.
 - **Clock steps follow Vixie cron's rule.** If the system clock moves back by three hours or less, crontab schedules wait for it to reach where it had been, so the repeated stretch is not run twice. A larger step back is taken as the clock being set, and they are scheduled again from the new time. After a step forward, or a long sleep, a schedule fires once for its most recent match, and `missed` stops counting at 100.
 - **The log is sanitized.** Names, schedule text and handler error details come from workloads, so control characters are replaced and lines are cut at 512 characters.
+
+## Other scheduler implementations
+
+`cosmonic:cron` can also be implemented over a cloud scheduler or another timer service. The implementer maps schedules to backend triggers and tracks registration identity, running handlers, retries, and limits before calling the workload's `handler`. Duplicate or stale backend events must not become extra firings, and replacing or removing a registration must invalidate its pending backend events.
+
+A backend can translate POSIX day matching into separate triggers and combine simultaneous occurrences into one firing. Provider time-zone rules may determine daylight saving behavior, which the interface leaves to the implementer. Subminute intervals need a finer timer when the provider only supports minute resolution. The current plugin is one implementation of the contract, with the limits listed above.
 
 ## Build
 
@@ -168,6 +192,7 @@ Not covered end to end: several workloads on one host (unit-tested in [`src/engi
 ## Layout
 
 - [`src/spec.rs`](src/spec.rs): parsing crontab expressions, periods, names and binding configuration.
+- [`src/calendar.rs`](src/calendar.rs): validating typed calendar fields and compiling them into cron schedules.
 - [`src/engine.rs`](src/engine.rs): which schedules each workload holds, when each is due, and what a finished delivery does.
 - [`src/plugin.rs`](src/plugin.rs): the WIT bindings, the `scheduler` export, the lifecycle hooks and the dispatch loop.
 - [`tests/e2e.rs`](tests/e2e.rs): the end-to-end test.
