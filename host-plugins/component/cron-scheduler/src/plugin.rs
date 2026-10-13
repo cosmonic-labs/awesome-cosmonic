@@ -28,7 +28,8 @@ use bindings::cosmonic::cron::handler::{self, HandlerError};
 use bindings::cosmonic::cron::types::Firing;
 use bindings::exports::cosmonic::cron::scheduler::Guest as SchedulerGuest;
 use bindings::exports::cosmonic::cron::types::{
-    CronSchedule, Instant as ServedInstant, Registration, Schedule, ScheduleError,
+    CalendarPart, CalendarSchedule, CronSchedule, Instant as ServedInstant, Months, Registration,
+    Schedule, ScheduleError, Weekdays,
 };
 use bindings::exports::wasi::cli::run::Guest as RunGuest;
 use bindings::exports::wasmcloud::host::workload_lifecycle::{
@@ -39,6 +40,7 @@ use bindings::wasi::clocks::{monotonic_clock, system_clock};
 use bindings::wasmcloud::host::identity;
 use bindings::wasmcloud::host::workload_call::{self, Target};
 
+use crate::calendar::{Calendar, Month, Part, Weekday};
 use crate::engine::{Completion, Dispatch, EndReason, Engine, Now, Outcome, RegisterError};
 use crate::spec::{Binding, CronSpec, Spec, SpecError, Wall, format_duration};
 
@@ -101,10 +103,9 @@ fn to_spec(schedule: Schedule) -> Result<Spec, SpecError> {
             CronSpec::parse(&cron.expression, cron.timezone.as_deref()).map(Spec::Cron)
         }
         Schedule::Interval(period) => Ok(Spec::Interval(period)),
-        Schedule::OnceAt(at) => Ok(Spec::OnceAt(Wall {
-            seconds: at.seconds,
-            nanoseconds: at.nanoseconds,
-        })),
+        Schedule::OnceAt(at) => {
+            Ok(Spec::OnceAt(Wall { seconds: at.seconds, nanoseconds: at.nanoseconds }))
+        }
         Schedule::OnceAfter(delay) => Ok(Spec::OnceAfter(delay)),
         Schedule::Other(text) => Err(SpecError::Unsupported(format!(
             "'{text}': this plugin provides cron, interval, once-at and once-after schedules"
@@ -119,12 +120,71 @@ fn from_spec(spec: Spec) -> Schedule {
             timezone: cron.timezone().map(str::to_string),
         }),
         Spec::Interval(period) => Schedule::Interval(period),
-        Spec::OnceAt(at) => Schedule::OnceAt(ServedInstant {
-            seconds: at.seconds,
-            nanoseconds: at.nanoseconds,
-        }),
+        Spec::OnceAt(at) => {
+            Schedule::OnceAt(ServedInstant { seconds: at.seconds, nanoseconds: at.nanoseconds })
+        }
         Spec::OnceAfter(delay) => Schedule::OnceAfter(delay),
     }
+}
+
+fn calendar_spec(schedule: CalendarSchedule) -> Result<Spec, SpecError> {
+    let parts = |parts: Vec<CalendarPart>| {
+        parts
+            .into_iter()
+            .map(|part| match part {
+                CalendarPart::Any => Part::Any,
+                CalendarPart::At(value) => Part::At(value),
+                CalendarPart::Range(range) => Part::Range { start: range.start, end: range.end },
+                CalendarPart::Every(step) => Part::Every(step),
+                CalendarPart::Stepped(range) => {
+                    Part::Stepped { start: range.start, end: range.end, step: range.step }
+                }
+            })
+            .collect()
+    };
+    let weekdays = schedule.weekdays.map(|selected| {
+        [
+            (Weekdays::SUNDAY, Weekday::Sunday),
+            (Weekdays::MONDAY, Weekday::Monday),
+            (Weekdays::TUESDAY, Weekday::Tuesday),
+            (Weekdays::WEDNESDAY, Weekday::Wednesday),
+            (Weekdays::THURSDAY, Weekday::Thursday),
+            (Weekdays::FRIDAY, Weekday::Friday),
+            (Weekdays::SATURDAY, Weekday::Saturday),
+        ]
+        .into_iter()
+        .filter_map(|(flag, day)| selected.contains(flag).then_some(day))
+        .collect()
+    });
+    let months = schedule.months.map(|selected| {
+        [
+            (Months::JANUARY, Month::January),
+            (Months::FEBRUARY, Month::February),
+            (Months::MARCH, Month::March),
+            (Months::APRIL, Month::April),
+            (Months::MAY, Month::May),
+            (Months::JUNE, Month::June),
+            (Months::JULY, Month::July),
+            (Months::AUGUST, Month::August),
+            (Months::SEPTEMBER, Month::September),
+            (Months::OCTOBER, Month::October),
+            (Months::NOVEMBER, Month::November),
+            (Months::DECEMBER, Month::December),
+        ]
+        .into_iter()
+        .filter_map(|(flag, month)| selected.contains(flag).then_some(month))
+        .collect()
+    });
+    Calendar {
+        minutes: parts(schedule.minutes),
+        hours: parts(schedule.hours),
+        days_of_month: schedule.days_of_month.map(parts),
+        weekdays,
+        months,
+        timezone: schedule.timezone,
+    }
+    .compile()
+    .map(Spec::Cron)
 }
 
 fn describe(spec: &Spec) -> String {
@@ -168,23 +228,30 @@ fn exports_handler(workload: &str) -> bool {
 
 struct Plugin;
 
+fn register_spec(name: &str, spec: Spec) -> Result<(), ScheduleError> {
+    let workload = identity::get_workload_id();
+    if !exports_handler(&workload) {
+        return Err(ScheduleError::NoHandler);
+    }
+    let described = describe(&spec);
+    // Unchanged registrations do not wake the loop or add log noise.
+    if ENGINE.with_borrow_mut(|engine| engine.register(&workload, name, spec, now()))? {
+        log(format!("workload {workload} registered '{name}': {described}"));
+        wake();
+    }
+    Ok(())
+}
+
 impl SchedulerGuest for Plugin {
     async fn register(name: String, schedule: Schedule) -> Result<(), ScheduleError> {
-        let workload = identity::get_workload_id();
-        let spec = to_spec(schedule)?;
-        if !exports_handler(&workload) {
-            return Err(ScheduleError::NoHandler);
-        }
-        let described = describe(&spec);
-        // A component is told to register every time it starts, so most calls
-        // change nothing. Those are neither logged nor a reason to wake the
-        // loop: a workload that could write a line per call could bury the
-        // lines that say why a schedule stopped.
-        if ENGINE.with_borrow_mut(|engine| engine.register(&workload, &name, spec, now()))? {
-            log(format!("workload {workload} registered '{name}': {described}"));
-            wake();
-        }
-        Ok(())
+        register_spec(&name, to_spec(schedule)?)
+    }
+
+    async fn register_calendar(
+        name: String,
+        schedule: CalendarSchedule,
+    ) -> Result<(), ScheduleError> {
+        register_spec(&name, calendar_spec(schedule)?)
     }
 
     async fn unregister(name: String) -> Result<(), ScheduleError> {
