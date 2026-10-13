@@ -4,11 +4,7 @@ build:
   # The target is spelled out because `.cargo/config.toml` sets none: a plain
   # `cargo test` has to stay a native build so the schedule logic can be
   # tested on the host.
-  #
-  # `wash wit fetch` first: wit/deps/ is generated and gitignored, so a fresh
-  # clone has only world.wit. Its stdout is discarded so that
-  # `wash build --output json` prints nothing but JSON.
-  command: wash wit fetch >/dev/null && cargo build --target wasm32-wasip2 --release
+  command: cargo build --target wasm32-wasip2 --release
   component_path: target/wasm32-wasip2/release/cron_scheduler.wasm
 
 # No `dev:` block. A host component plugin is not a workload: it is loaded by
