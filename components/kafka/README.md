@@ -167,7 +167,7 @@ smaller queue limits on high-density hosts.
 
 ## Toolchain
 
-The templates use `wit-bindgen 0.58` async (WASI P3) and compile with stock
+The templates use `wit-bindgen 0.62` async (WASI P3) and compile with stock
 `cargo build --target wasm32-wasip2`, which is also what each template's
 `.wash/config.yaml` runs under `wash build`.
 

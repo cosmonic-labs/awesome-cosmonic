@@ -107,7 +107,7 @@ impl wasip3::exports::http::handler::Guest for Component {
             .set_status_code(parts.status.as_u16())
             .map_err(|()| ErrorCode::InternalError(Some("invalid status code".into())))?;
 
-        wasip3::wit_bindgen::spawn(async move {
+        wasip3::wit_bindgen::spawn_local(async move {
             let _guard = guard;
             loop {
                 let frame = bridge::drive(tracing::Instrument::instrument(
@@ -204,7 +204,7 @@ fn payload_too_large(limit: usize) -> Result<Response, ErrorCode> {
     response
         .set_status_code(413)
         .map_err(|()| ErrorCode::InternalError(Some("invalid status code".into())))?;
-    wasip3::wit_bindgen::spawn(async move {
+    wasip3::wit_bindgen::spawn_local(async move {
         let message = format!("Payload Too Large: request body exceeds {limit} bytes");
         let frame = http_body::Frame::data(bytes::Bytes::from(message));
         let _ = writer.send_frame(frame).await;

@@ -396,7 +396,7 @@ fn respond(status: u16, content_type: &str, body: String) -> Result<Response, Er
         .set_status_code(status)
         .map_err(|()| ErrorCode::InternalError(Some("invalid status code".into())))?;
 
-    wasip3::wit_bindgen::spawn(async move {
+    wasip3::wit_bindgen::spawn_local(async move {
         let frame = http_body::Frame::data(bytes::Bytes::from(body));
         let _ = writer.send_frame(frame).await;
         drop(writer.stream_writer);
