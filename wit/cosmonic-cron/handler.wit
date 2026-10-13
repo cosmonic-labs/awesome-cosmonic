@@ -1,66 +1,53 @@
 package cosmonic:cron@0.1.0;
 
-/// Being called when a schedule comes due.
+/// Handle scheduled firings.
 ///
-/// This is the trigger. A workload exports it, and whatever implements
-/// `scheduler` calls it, so the workload holds no timer and does not have to
-/// exist between firings: an instance starts when a schedule is due and can
-/// retire when the call returns.
+/// The workload exports this interface for the scheduler to call when a schedule is
+/// due, so it needs no timer or instance between firings.
 ///
 /// ## Delivery semantics
 ///
-/// - **At most one firing of a schedule is handled at a time.** If a schedule
-///   comes due while its previous firing is still being handled, that firing
-///   is skipped and counted in the next delivered firing's `missed`. A
-///   schedule is its name: the rule holds across the name being registered
-///   again. Different schedules are independent and their firings may be
-///   handled concurrently.
-/// - **A firing is a signal, not a durable message.** One that cannot be
-///   delivered, because the workload is stopped or the implementer was not
-///   running, is skipped, not stored and replayed. Skipped firings are
-///   counted in `missed` where the implementer was there to count them.
-/// - **A firing may be delivered more than once**, when the handler asks for
-///   that with `retry`. `name` and `scheduled-at` together identify it, and
-///   `attempt` counts the deliveries.
+/// - **At most one firing per schedule is handled at a time**, including across
+///   registrations of the same name; different schedules may run concurrently.
+/// - Firings due while the previous handler runs are skipped and counted in the next
+///   delivery's `missed`.
+/// - Undeliverable firings are skipped without storage or replay; `missed` counts them
+///   only when the implementer can track them.
+/// - A handler may request redelivery with `retry`; `name` and `scheduled-at` identify
+///   the firing, and `attempt` counts its deliveries.
 @since(version = 0.1.0)
 interface handler {
     @since(version = 0.1.0)
     use types.{firing};
 
-    /// Why a firing was not handled.
-    ///
-    /// The cases are what the caller cannot work out for itself: whether
-    /// delivering the same firing again could help.
+    /// A handler failure indicating whether redelivery may succeed.
     @since(version = 0.1.0)
     variant handler-error {
-        /// Deliver this firing again. It may succeed later: a dependency was
-        /// unavailable, a lock was held, a quota was spent.
+        /// Request redelivery after a temporary failure, such as an unavailable
+        /// dependency, held lock, or exhausted quota.
         ///
-        /// The caller redelivers after a delay, a bounded number of times. For
-        /// a repeating schedule it also gives up once the next firing is due,
-        /// or came due while this one was being handled, so a retry never
-        /// overlaps or delays the schedule itself.
+        /// Retries use a delay and bounded attempt count; repeating schedules stop
+        /// retrying once the next firing is due, including if it came due during the
+        /// handler call.
         retry(option<string>),
-        /// Do not deliver this firing again. A repeating schedule carries on
-        /// and its next firing is delivered as usual.
+        /// Stop retrying this firing and deliver future firings of a repeating schedule
+        /// as usual.
         failed(option<string>),
-        /// A failure not captured above, treated as `failed`.
+        /// An unspecified failure, treated as `failed`.
         ///
-        /// This is also the case a caller sees when the call could not be
-        /// completed at all (the handler trapped, ran past a deadline, or its
-        /// workload stopped mid-call) and the runtime in between had to
-        /// produce the error on the handler's behalf.
+        /// The runtime also returns this when a call cannot complete because of a trap,
+        /// deadline, or workload stopping mid-call.
         other(option<string>),
     }
 
-    /// Handle one firing.
+    /// Handle one firing, returning `ok` on success.
     ///
-    /// Returning `ok` means the firing was handled. Returning an error never
-    /// cancels a repeating schedule; a handler that wants its schedule to stop
-    /// calls `scheduler.unregister`. A schedule that fires once is spent
-    /// whatever its handler returns, once any retries are over.
+    /// Errors do not cancel repeating schedules; use `scheduler.unregister` to stop
+    /// them.
+    /// A one-shot schedule ends after its firing and any retries, regardless of the
+    /// result.
     ///
-    /// The detail carried by an error is for a log, not for matching on.
+    /// Error details are diagnostic text and must not be matched.
     @since(version = 0.1.0)
     handle: async func(firing: firing) -> result<_, handler-error>;
 }

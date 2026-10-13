@@ -1,10 +1,9 @@
 package cosmonic:cron@0.1.0;
 
-/// Types shared by the `scheduler` and `handler` interfaces.
+/// Types shared by `scheduler` and `handler`.
 ///
-/// Time is spelled with `wasi:clocks@0.3.0` throughout rather than with types
-/// of this package's own: a period is a `wasi:clocks/types.duration`, and a
-/// point in time is a `wasi:clocks/system-clock.instant`.
+/// Times use `wasi:clocks@0.3.0`: periods use `types.duration` and instants use
+/// `system-clock.instant`.
 @since(version = 0.1.0)
 interface types {
     @since(version = 0.1.0)
@@ -12,17 +11,12 @@ interface types {
     @since(version = 0.1.0)
     use wasi:clocks/system-clock@0.3.0.{instant};
 
-    /// The name of one schedule, unique within the caller's workload.
-    ///
-    /// 1 to 64 characters from ASCII letters, digits, `-`, `_` and `.`. The
-    /// name is the only thing that ties a firing back to the schedule that
-    /// produced it, so a component that holds several schedules tells them
-    /// apart by name.
+    /// A workload-local schedule name of 1 to 64 ASCII letters, digits, `-`, `_`, or
+    /// `.`, used to identify its firings.
     @since(version = 0.1.0)
     type schedule-name = string;
 
-    /// A calendar schedule: a crontab expression, and the time zone its fields
-    /// are read in.
+    /// A crontab expression and its time zone.
     ///
     /// # References
     ///
@@ -30,166 +24,144 @@ interface types {
     /// - [IANA Time Zone Database](https://www.iana.org/time-zones)
     @since(version = 0.1.0)
     record cron-schedule {
-        /// Five space-separated fields: minute (0-59), hour (0-23), day of
-        /// month (1-31), month (1-12) and day of week (0-6, Sunday is 0).
+        /// Five space-separated fields: minute (0-59), hour (0-23), day of month
+        /// (1-31), month (1-12), and day of week (0-6, Sunday is 0).
         ///
-        /// Each field is `*`, a number, a range (`1-5`) or a comma-separated
-        /// list of those, as POSIX crontab specifies, plus the step suffix
-        /// (`*/15`, `0-30/10`) and the English three-letter month and weekday
-        /// names (`jan`, `mon`) that every common cron accepts. When both day
-        /// fields are restricted the schedule fires when either matches, which
-        /// is the POSIX rule.
+        /// Fields accept `*`, numbers, ranges (`1-5`), comma-separated lists, step
+        /// suffixes (`*/15`, `0-30/10`), and English three-letter month and weekday
+        /// names (`jan`, `mon`).
+        /// When both day fields are restricted, either may match, per POSIX crontab.
         ///
-        /// The finest schedule this spells is once a minute; use `interval`
-        /// for anything faster. An implementer may accept more than this
-        /// (`@hourly`, a seconds field), but an expression that stays inside
-        /// it is portable, and one outside what the implementer accepts is
-        /// refused with `invalid-schedule`.
+        /// Use `interval` for periods shorter than a minute.
+        /// Implementers may accept extensions such as `@hourly` or a seconds field;
+        /// expressions within the rules above are portable, and unsupported expressions
+        /// return `invalid-schedule`.
         expression: string,
-        /// The IANA time zone the fields are read in, such as
-        /// `America/New_York`. `none` reads them in UTC.
+        /// The IANA time zone, such as `America/New_York`, or `none` for UTC.
         ///
-        /// A zone with daylight saving has local times that never occur and
-        /// local times that occur twice. What a schedule naming one of those
-        /// does is up to the implementer; schedule in UTC where a skipped or
-        /// repeated firing would matter.
+        /// Handling of local times skipped or repeated by daylight saving is
+        /// implementation-defined; use UTC if skipped or repeated firings would matter.
         timezone: option<string>,
     }
 
-    /// When a schedule fires.
+    /// When a schedule fires: `cron` and `interval` repeat until removed, while
+    /// `once-at` and `once-after` fire once.
     ///
-    /// `cron` and `interval` repeat until they are removed. `once-at` and
-    /// `once-after` fire a single time and are then gone.
-    ///
-    /// A `variant` with a trailing `other` rather than a closed set, because
-    /// the kinds of schedule are the part of this package most likely to grow
-    /// (a recurrence rule, a calendar) and a WIT variant cannot gain a case
-    /// without breaking every component built against it.
+    /// The `other` case supports additional schedule kinds without breaking existing
+    /// components.
     @since(version = 0.1.0)
     variant schedule {
-        /// At the wall-clock times a crontab expression matches.
+        /// Fire at system-clock times matching a crontab expression.
         ///
-        /// Firing times are read from a system clock, so they follow that
-        /// clock when it is corrected. When it moves forward, the matches it
-        /// passed over are reported as `missed`. When it moves back, an
-        /// implementer either waits for the clock to reach where it had been,
-        /// so the repeated stretch is not run twice, or schedules again from
-        /// the new time; which one, and for how large a step, is its choice.
+        /// Forward clock corrections report skipped matches as `missed`.
+        /// For backward corrections, the implementer decides whether to wait for the
+        /// previous time or reschedule from the new time, and which step sizes trigger
+        /// each behavior.
         cron(cron-schedule),
-        /// Repeatedly, one period apart, measured on a monotonic clock: the
-        /// shape of a poll loop. The first firing is one period after the
-        /// schedule takes effect, not immediately.
+        /// Fire at a fixed rate on a monotonic clock, starting one period after
+        /// registration takes effect.
         ///
-        /// The period is a fixed rate rather than a delay between runs: a
-        /// handler that takes a third of the period still fires once per
-        /// period. An implementer has a shortest period it permits, and
-        /// refuses a shorter one with `invalid-schedule`.
+        /// Handler duration does not shift the rate, and periods below the
+        /// implementer's minimum return `invalid-schedule`.
         interval(duration),
-        /// Once, at this instant on the system clock.
+        /// Fire once at this system-clock instant.
         ///
-        /// The instant must be in the future when the schedule is registered;
-        /// one that has already passed is refused with `invalid-schedule`
-        /// instead of firing at once, so that registering the same schedule a
-        /// second time, after it has fired, cannot fire it again.
+        /// Instants at or before registration time return `invalid-schedule`,
+        /// preventing a completed schedule from firing again when registered with the
+        /// same instant.
         once-at(instant),
-        /// Once, after this much time has elapsed on a monotonic clock: "check
-        /// back in ten minutes". The caller needs no clock of its own to say
-        /// when.
+        /// Fire once after this monotonic delay from when registration takes effect.
         ///
-        /// The delay is counted from when the schedule takes effect. It is
-        /// subject to the same shortest duration as an `interval` period, so
-        /// a handler that registers a new one each time it runs cannot spin.
+        /// The same minimum duration as `interval` applies, preventing handlers from
+        /// repeatedly scheduling immediate calls.
         once-after(duration),
-        /// A kind of schedule this version does not name, spelled in the
-        /// implementer's own syntax.
+        /// An additional schedule kind in the implementer's syntax.
         ///
-        /// An implementer that does not recognize the text refuses it with
-        /// `unsupported`. An implementer also reports a schedule this way
-        /// when it holds one that the caller's version of this type cannot
-        /// express.
+        /// Unrecognized text returns `unsupported`; listings also use this case for
+        /// schedules the caller's version cannot express.
         other(string),
     }
 
-    /// One schedule the implementer is holding for the caller's workload.
+    /// A schedule held for the caller's workload.
     @since(version = 0.1.0)
     record registration {
         name: schedule-name,
         schedule: schedule,
-        /// Whether the schedule was declared for the workload rather than
-        /// registered by it: `true` for one that came with the workload's
-        /// grant, `false` for one a component created with
-        /// `scheduler.register`.
+        /// `true` for a schedule declared in the workload's grant; `false` for one
+        /// created with `scheduler.register`.
         ///
-        /// A declared schedule belongs to whoever deployed the workload. A
-        /// component can see it and is called by it, but cannot replace or
-        /// remove it.
+        /// Components can view and handle declared schedules but cannot replace or
+        /// remove them.
         declared: bool,
+        /// The next due time as forecast by the implementer at the time of the call, or
+        /// `none` if no firing remains.
+        ///
+        /// A one-shot already being handled has no next firing, nor does a registration
+        /// that will end before its next due time.
+        /// Use this forecast rather than computing one locally, since cron rules,
+        /// daylight saving behavior, and clock readings depend on the implementer.
+        ///
+        /// For `cron` and `once-at`, this is the next firing's `scheduled-at`.
+        /// For `interval` and `once-after`, it maps the monotonic deadline to the
+        /// current system clock and shifts with system-clock corrections.
+        ///
+        /// Occurrences skipped while the previous handler runs are excluded; a time at
+        /// or before now indicates a firing awaiting delivery.
+        /// Retries are redeliveries and are excluded from this forecast.
+        next: option<instant>,
     }
 
-    /// One occasion on which a schedule came due, as delivered to `handler`.
+    /// A scheduled firing delivered to `handler`.
     @since(version = 0.1.0)
     record firing {
         /// The schedule that came due.
         name: schedule-name,
-        /// When this firing was due, which is earlier than when the handler
-        /// runs. For a `cron` schedule this is the exact instant the
-        /// expression matched, so it is stable across redeliveries and usable
-        /// as an idempotency key together with `name`. For a `once-at`
-        /// schedule it is the instant the schedule named. For an `interval` or
-        /// `once-after` schedule it is the system-clock reading when the
-        /// period or delay elapsed.
+        /// The firing's due time, which may precede handler execution.
+        ///
+        /// For `cron`, this is the exact matching instant, stable across redeliveries
+        /// and usable with `name` as an idempotency key.
+        /// For `once-at`, it is the requested instant; for `interval` and `once-after`,
+        /// it is the system-clock reading when the period or delay elapsed.
         scheduled-at: instant,
-        /// How many firings of this schedule were skipped since the last one
-        /// delivered, and so are represented by this one.
+        /// Firings skipped since the previous delivery, always 0 for one-shot
+        /// schedules.
         ///
-        /// A firing is skipped rather than queued when the previous firing of
-        /// the same schedule is still being handled, when the workload could
-        /// not be called, or when the implementer fell behind. A handler that
-        /// only needs to run "about now" can ignore it. Always 0 for a
-        /// schedule that fires once.
+        /// Firings are skipped when a previous handler is still running, the workload
+        /// is unreachable, or the implementer falls behind.
+        /// Handlers that only need to run near the current time can ignore this count.
         ///
-        /// The count is a lower bound, not a ledger. After a long gap an
-        /// implementer may stop counting, and one that was not running at
-        /// all, and keeps no record across restarts, cannot count what came
-        /// due while it was down. A handler that must account for every
-        /// period works from `scheduled-at` and its own record of the last
-        /// one it handled. `scheduled-at` is exact regardless: it is the most
-        /// recent occurrence, the one this firing stands for.
+        /// The count is a lower bound: implementers may cap it after long gaps or lose
+        /// it across restarts.
+        /// To account for every period, compare the exact `scheduled-at` of this latest
+        /// occurrence with your own record of the previous one.
         missed: u32,
-        /// Which delivery of this firing this is: 1 the first time, and one
-        /// more each time the handler answers `retry` and it is redelivered.
+        /// The delivery attempt, starting at 1 and increasing with each redelivery
+        /// requested by `retry`.
         attempt: u32,
     }
 
     /// Why a schedule could not be registered, removed or listed.
     @since(version = 0.1.0)
     variant schedule-error {
-        /// The name is empty, too long, or uses a character outside the set
-        /// `schedule-name` permits, whether it is being registered or
-        /// removed. Carries detail for a log.
+        /// An empty, oversized, or invalid schedule name in a register or unregister
+        /// call, with diagnostic details.
         invalid-name(string),
-        /// The schedule cannot be read or can never fire: a malformed crontab
-        /// expression, an unknown time zone, a zero period, a period or delay
-        /// shorter than the implementer permits, an instant that is not in
-        /// the future, or a single firing that would fall after the
-        /// implementer has ended the registration. Carries detail for a log.
+        /// An invalid or impossible schedule, with diagnostic details.
+        ///
+        /// Causes include a malformed expression, unknown time zone, zero or undersized
+        /// duration, instant at or before registration time, or one-shot due after the
+        /// registration ends.
         invalid-schedule(string),
-        /// The implementer does not provide this kind of schedule. Carries
-        /// detail for a log.
+        /// An unsupported schedule kind, with diagnostic details.
         unsupported(string),
-        /// The caller may not change this schedule: it was declared for the
-        /// workload rather than registered by it, or the caller holds no
-        /// grant to schedule at all.
+        /// The caller lacks a scheduling grant or tried to change a declared schedule.
         access-denied,
-        /// The caller already holds as many registered schedules as the
-        /// implementer permits. Remove one before adding another.
+        /// The registration limit is reached; remove a schedule before adding another.
         limit-exceeded,
-        /// Nothing in the caller's workload exports `handler`, so a firing
-        /// would have nowhere to be delivered.
+        /// The caller's workload has no `handler` export to receive firings.
         no-handler,
-        /// A failure not captured above. Implementers use this to extend the
-        /// set without breaking existing callers; treat it as a generic
-        /// failure. The detail is diagnostic only and not stable.
+        /// An unspecified failure with optional, unstable diagnostic text, allowing
+        /// implementers to extend errors without breaking callers.
         other(option<string>),
     }
 }

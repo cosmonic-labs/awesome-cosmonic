@@ -1,16 +1,13 @@
-//! The component: WIT bindings around the [`Engine`].
+//! WIT bindings around the [`Engine`].
 //!
-//! Three things call into this instance, all on the one store the host keeps
-//! for the plugin:
+//! The host keeps one plugin store for:
 //!
-//! - a workload calling `scheduler`, which edits the engine's schedules;
-//! - the host calling the lifecycle hooks as workloads bind and unbind; and
-//! - the host driving `wasi:cli/run`, the loop that sleeps until something is
-//!   due and delivers it.
+//! - Workload calls to `scheduler`.
+//! - Lifecycle hooks for workload binding and cleanup.
+//! - The `wasi:cli/run` dispatch loop.
 //!
-//! Only the loop delivers. The other two change what the engine holds and
-//! then wake the loop, so every call into a workload is made from one task
-//! and nothing outlives the call that asked for it.
+//! Scheduler calls and lifecycle hooks update the engine and wake the loop, which makes
+//! all workload calls from one task and keeps them within the initiating call.
 
 mod bindings {
     #![allow(unsafe_code)]
@@ -45,25 +42,22 @@ use bindings::wasmcloud::host::workload_call::{self, Target};
 use crate::engine::{Completion, Dispatch, EndReason, Engine, Now, Outcome, RegisterError};
 use crate::spec::{Binding, CronSpec, Spec, SpecError, Wall, format_duration};
 
-/// The interface this plugin calls on a workload, spelled the way
-/// `workload-call` names it.
+/// The handler interface name used by `workload-call`.
 const HANDLER: &str = "cosmonic:cron/handler@0.1.0";
 
-/// The shortest the loop sleeps, in nanoseconds, so a schedule that is due
-/// "now" by a rounding error cannot spin it.
+/// Minimum loop sleep in nanoseconds, preventing rounding errors from causing a busy
+/// loop.
 const MIN_SLEEP: u64 = 1_000_000;
 
 thread_local! {
     static ENGINE: RefCell<Engine> = const { RefCell::new(Engine::new()) };
-    /// How `scheduler` calls and lifecycle hooks tell the loop the schedules
-    /// changed. The loop takes the receiving end when it starts.
+    /// Wake channel for scheduler calls and lifecycle hooks, with its receiver owned by
+    /// the loop.
     static WAKE: (UnboundedSender<()>, RefCell<Option<UnboundedReceiver<()>>>) = {
         let (tx, rx) = unbounded();
         (tx, RefCell::new(Some(rx)))
     };
-    /// Whether a wake is already queued that the loop has not acted on. One
-    /// pass of the loop sees every change made before it, so further wakes
-    /// until then would only make it run again for nothing.
+    /// Whether a wake is pending, coalescing changes until the loop handles them.
     static WAKE_QUEUED: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -75,8 +69,7 @@ fn now() -> Now {
     }
 }
 
-/// Have the loop look at the schedules again rather than sleep out a wait it
-/// computed before they changed.
+/// Wake the loop to recompute deadlines after schedules change.
 fn wake() {
     if WAKE_QUEUED.replace(true) {
         return;
@@ -90,12 +83,8 @@ fn wake() {
 /// The longest line the plugin writes to its log, in characters.
 const MAX_LOG_LINE: usize = 512;
 
-/// Write one line to the plugin's log.
-///
-/// Much of what is logged was chosen by a workload: a schedule's text, the
-/// detail of a handler's error. Control characters are replaced and the line
-/// is cut off, so a workload can neither forge a line of this log, which is
-/// the only record of why a schedule stopped, nor flood it.
+/// Write a log line with control characters replaced and length capped to prevent
+/// workload-supplied text from forging or flooding logs.
 fn log(message: impl AsRef<str>) {
     let line: String = message
         .as_ref()
@@ -170,8 +159,7 @@ impl From<RegisterError> for ScheduleError {
     }
 }
 
-/// Whether any component of `workload` exports `handler`, so a firing has
-/// somewhere to land.
+/// Whether any component in `workload` exports `handler`.
 fn exports_handler(workload: &str) -> bool {
     workload_call::callable()
         .into_iter()
@@ -210,22 +198,25 @@ impl SchedulerGuest for Plugin {
 
     async fn list_registrations() -> Result<Vec<Registration>, ScheduleError> {
         let workload = identity::get_workload_id();
-        let held = ENGINE.with_borrow_mut(|engine| engine.list(&workload))?;
+        let held = ENGINE.with_borrow_mut(|engine| engine.list(&workload, now()))?;
         Ok(held
             .into_iter()
             .map(|held| Registration {
                 name: held.name,
                 schedule: from_spec(held.spec),
                 declared: held.declared,
+                next: held.next.map(|at| ServedInstant {
+                    seconds: at.seconds,
+                    nanoseconds: at.nanoseconds,
+                }),
             })
             .collect())
     }
 }
 
 impl LifecycleGuest for Plugin {
-    /// Read the workload's declared schedules out of its binding. An error
-    /// here fails the deploy, which is the point: a schedule that cannot be
-    /// read is refused while someone is looking, not silently never fired.
+    /// Parse declared schedules from the binding, failing deployment on invalid
+    /// configuration.
     async fn on_workload_bind(workload: WorkloadInfo) -> Result<(), String> {
         let ours = || {
             workload
@@ -279,12 +270,10 @@ impl LifecycleGuest for Plugin {
     }
 }
 
-/// Deliver one firing and report how it went.
+/// Deliver one firing and report its result.
 ///
-/// The target handle is opened and the call started without an `await`
-/// between them. A handle scopes the calls of the task that holds it, and
-/// every delivery runs on the loop's task, so that is what keeps one
-/// delivery's call from being routed by another's handle.
+/// Opening the target and starting its call without an intervening `await` prevents
+/// another delivery's task-scoped handle from changing the route.
 async fn deliver(dispatch: Dispatch) -> (Dispatch, Outcome, Option<String>) {
     let Some(target) = Target::open(&dispatch.workload, HANDLER) else {
         // Bound but not running: still deploying, stopped, or redeployed.
@@ -310,8 +299,8 @@ async fn deliver(dispatch: Dispatch) -> (Dispatch, Outcome, Option<String>) {
     }
 }
 
-/// Log the schedules the engine removed on its own. Nothing tells the
-/// workload, so the log is the only record of why a schedule stopped.
+/// Log automatically removed schedules, providing the only removal record because
+/// workloads receive no notification.
 fn log_ended() {
     for ended in ENGINE.with_borrow_mut(Engine::take_ended) {
         let why = match ended.reason {

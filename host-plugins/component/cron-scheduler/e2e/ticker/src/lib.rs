@@ -1,10 +1,10 @@
 //! Test workload for the cron-scheduler plugin.
 //!
-//! It sits on both sides of `cosmonic:cron`: it exports `handler`, which the
-//! plugin calls when a schedule comes due, and imports `scheduler`, which it
-//! drives from HTTP so a test can register schedules with curl:
+//! Export `handler` for scheduled firings and expose `scheduler` over HTTP
+//! so tests can register schedules with curl:
 //!
-//! - `GET  /schedules`                              every schedule held, a line each
+//! - `GET  /schedules`                              every schedule held, a line each,
+//!   as `name<TAB>declared|registered<TAB>schedule<TAB>next=<seconds|none>`
 //! - `POST /register?name=N&every-ms=MS`            an `interval` schedule
 //! - `POST /register?name=N&cron=EXPR[&tz=ZONE]`    a `cron` schedule
 //! - `POST /register?name=N&once-after-ms=MS`       a `once-after` schedule
@@ -12,9 +12,8 @@
 //! - `POST /register?name=N&other=TEXT`             a schedule kind nobody provides
 //! - `POST /unregister?name=N`
 //!
-//! Every firing is written to stderr as one `ticker: fired ...` line, which is
-//! what the end-to-end test reads. The schedule's name picks how the handler
-//! answers, so each delivery rule can be exercised:
+//! Log each firing to stderr as `ticker: fired ...` for the end-to-end test;
+//! the schedule name selects handler behavior:
 //!
 //! - `retry-*` answers `retry` until the third attempt
 //! - `fail-*`  answers `failed`
@@ -108,7 +107,8 @@ async fn list() -> Result<String, ScheduleError> {
                 Schedule::OnceAfter(delay) => format!("once-after {}ms", delay / 1_000_000),
                 Schedule::Other(text) => format!("other {text}"),
             };
-            format!("{}\t{origin}\t{schedule}\n", held.name)
+            let next = held.next.map_or("none".to_string(), |at| at.seconds.to_string());
+            format!("{}\t{origin}\t{schedule}\tnext={next}\n", held.name)
         })
         .collect())
 }
