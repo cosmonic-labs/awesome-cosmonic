@@ -1,12 +1,13 @@
 [package]
 name = "passphrase"
 edition = "2021"
-version = "0.1.1"
-# p3 build floor: wasip3 0.7.x's component-type section needs wasm-component-ld
-# >= 0.5.20 (which ships bundled with Rust >= 1.94); older toolchains fail in the
-# wasm-component-ld link step with a component encode/decode error. rustc uses its
-# bundled linker, so a newer standalone one on PATH won't change this. Re-derive
-# if you bump wasip3/wit-bindgen. The Desktop doctor's pinned toolchain satisfies it.
+version = "0.1.2"
+# p3 build floor: wasip3's component-type section (derived on 0.7.x, kept for
+# 0.9.0) needs wasm-component-ld >= 0.5.20, which ships bundled with Rust >= 1.94;
+# older toolchains fail in the wasm-component-ld link step with a component
+# encode/decode error. rustc uses its bundled linker, so a newer standalone one on
+# PATH won't change this. Re-derive if you bump wasip3/wit-bindgen. The Desktop
+# doctor's pinned toolchain satisfies it.
 rust-version = "1.94"
 
 [workspace]
@@ -18,7 +19,7 @@ crate-type = ["cdylib"]
 # WASI 0.3 (p3) bindings: exports the wasi:http@0.3.0 service world and bridges
 # to hyperium `http` types via `http_compat`. This crate carries the WIT, so no
 # WIT files are vendored into the project.
-wasip3 = { version = "0.7.0", features = ["http-compat"] }
+wasip3 = { version = "0.9.0", features = ["http-compat"] }
 
 # The p3 async handler spawns a component-model task to write the response
 # body, so it needs `async-spawn`. `inter-task-wakeup` isn't strictly required
@@ -26,7 +27,7 @@ wasip3 = { version = "0.7.0", features = ["http-compat"] }
 # natively); it's kept only to match the rust-mcp template's feature set, which
 # does need it once a guest makes outbound calls under concurrency. Pinned to
 # wasip3's wit-bindgen so the generated async code lines up (see Cargo.lock).
-wit-bindgen = { version = "0.57.1", default-features = false, features = [
+wit-bindgen = { version = "0.62.0", default-features = false, features = [
     "async",
     "async-spawn",
     "inter-task-wakeup",
