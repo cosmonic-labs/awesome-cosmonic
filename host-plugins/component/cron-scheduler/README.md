@@ -60,7 +60,7 @@ A registered schedule is a crontab (`Schedule::Cron`), an interval, or one of tw
 
 The host matches a `hostInterfaces` entry against one component at a time, so the component that imports `scheduler` must be the one that exports `handler`.
 
-[`e2e/ticker`](e2e/ticker/) is a complete component that does both.
+[`tests/fixtures/ticker`](tests/fixtures/ticker/) is a complete component that does both.
 
 ### Binding configuration
 
@@ -155,11 +155,13 @@ The schedule logic has no dependency on a clock or on the WIT bindings, so its u
 cargo test
 ```
 
-The end-to-end test loads the plugin into `wash dev` beside the ticker workload and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, one-shot schedules, the `next` each listing gives, `max-lifetime` and `max-firings`, and a crontab firing. It takes between 40 seconds and a minute and a half, depending on how soon the next minute starts:
+The end-to-end test, [`tests/e2e.rs`](tests/e2e.rs), builds the plugin and the ticker workload, loads both into `wash dev`, and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, one-shot schedules, the `next` each listing gives, `max-lifetime` and `max-firings`, and a crontab firing. It is ignored by a plain `cargo test`, because it needs the `wash` described under [Run](#run) and takes between 40 seconds and a minute and a half, depending on how soon the next minute starts:
 
 ```sh
-WASH=/path/to/wash-with-plugins e2e/run.sh
+WASH=/path/to/wash-with-plugins cargo e2e
 ```
+
+`cargo e2e` is an alias, set in [`.cargo/config.toml`](.cargo/config.toml), for `cargo test --test e2e -- --ignored --nocapture`.
 
 Not covered end to end: several workloads on one host (unit-tested in [`src/engine.rs`](src/engine.rs)) and a plugin restart.
 
@@ -168,4 +170,5 @@ Not covered end to end: several workloads on one host (unit-tested in [`src/engi
 - [`src/spec.rs`](src/spec.rs): parsing crontab expressions, periods, names and binding configuration.
 - [`src/engine.rs`](src/engine.rs): which schedules each workload holds, when each is due, and what a finished delivery does.
 - [`src/plugin.rs`](src/plugin.rs): the WIT bindings, the `scheduler` export, the lifecycle hooks and the dispatch loop.
-- [`e2e/`](e2e/): the ticker workload and the end-to-end script.
+- [`tests/e2e.rs`](tests/e2e.rs): the end-to-end test.
+- [`tests/fixtures/ticker`](tests/fixtures/ticker/): the workload it deploys.

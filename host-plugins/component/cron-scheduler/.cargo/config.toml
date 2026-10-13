@@ -1,0 +1,9 @@
+# No `[build] target` here, on purpose: `cargo test` has to stay a native build
+# so the schedule logic is tested on the host. `wash build` names the wasm
+# target itself.
+
+[alias]
+# The end-to-end test, which needs a wash built with `host-component-plugins`:
+#
+#   WASH=/path/to/wash cargo e2e
+e2e = "test --test e2e -- --ignored --nocapture"
