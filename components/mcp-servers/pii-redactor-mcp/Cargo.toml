@@ -2,7 +2,7 @@
 name = "pii-redactor-mcp"
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.94"
 description = "PII redactor MCP server: strip emails, SSNs, phone numbers, Luhn-valid credit cards, IPv4 addresses, and AWS access key IDs from text; pure-compute, zero egress (WebAssembly component, wasi:http@0.3.0)"
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"

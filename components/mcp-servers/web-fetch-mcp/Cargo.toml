@@ -2,7 +2,7 @@
 name = "web-fetch-mcp"
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.94"
 description = "Web-fetch MCP server: retrieve a URL bounded by the workload's egress allowlist (WebAssembly component, wasi:http@0.3.0)"
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
