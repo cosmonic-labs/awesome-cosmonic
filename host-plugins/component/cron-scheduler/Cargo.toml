@@ -29,6 +29,13 @@ futures = { version = "0.3", default-features = false, features = ["std", "async
 # wit-component rejects.
 wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }
 
+# For tests/e2e.rs, which drives a real host: it calls the test workload over
+# HTTP and interrupts the host to stop it. Unix only, and never part of the
+# component.
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1", features = ["process"] }
+ureq = { version = "3", default-features = false }
+
 [profile.release]
 lto = true
 opt-level = "s"

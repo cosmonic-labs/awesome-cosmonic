@@ -1,7 +1,7 @@
 //! Test workload for the cron-scheduler plugin.
 //!
 //! Export `handler` for scheduled firings and expose `scheduler` over HTTP
-//! so tests can register schedules with curl:
+//! so tests can register schedules over HTTP:
 //!
 //! - `GET  /schedules`                              every schedule held, a line each,
 //!   as `name<TAB>declared|registered<TAB>schedule<TAB>next=<seconds|none>`

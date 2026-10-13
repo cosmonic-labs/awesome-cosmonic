@@ -6,11 +6,11 @@ build:
 
 dev:
   address: 127.0.0.1:8787
-  # Loads the plugin from where `wash build` leaves it, two directories up.
+  # Loads the plugin from where `wash build` leaves it, three directories up.
   # Needs a wash built with the `host-component-plugins` feature.
   plugins:
     - id: cron-scheduler
-      file: ../../target/wasm32-wasip2/release/cron_scheduler.wasm
+      file: ../../../target/wasm32-wasip2/release/cron_scheduler.wasm
   # The workload's grant. `handler` lets the plugin call this component;
   # `scheduler` lets the component register schedules of its own. `config`
   # declares two schedules and sets this workload's limits.
