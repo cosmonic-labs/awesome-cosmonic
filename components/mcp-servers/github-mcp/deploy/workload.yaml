@@ -15,7 +15,7 @@ metadata:
   namespace: default
   labels:
     app.kubernetes.io/name: "github-mcp"
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.1.1"
     "mcp.ai/auth-type": none
     mcp.ai/domain: "github"
     "mcp.ai/function-type": tools
@@ -37,7 +37,7 @@ spec:
       # Digest-pinned to the published 0.1.0 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
-      image: "ghcr.io/cosmonic-labs/components/github-mcp:0.1.0@sha256:f946945216746aea0a83595f6a77f3dd6852d62dc77dadb6070754476ffcbbee"
+      image: "ghcr.io/cosmonic-labs/components/github-mcp:0.1.1@sha256:ce79f96fff1deaa93c822624ee1722bf19023554da8ffcde9d673ee1ef4b4939"
       poolSize: 1
       maxInvocations: 0
       localResources:

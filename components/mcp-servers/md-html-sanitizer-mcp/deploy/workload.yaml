@@ -15,7 +15,7 @@ metadata:
   namespace: default
   labels:
     app.kubernetes.io/name: "md-html-sanitizer-mcp"
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.1.1"
     "mcp.ai/auth-type": none
     mcp.ai/domain: "sanitize"
     "mcp.ai/function-type": tools
@@ -37,7 +37,7 @@ spec:
       # Digest-pinned to the published 0.1.0 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
-      image: "ghcr.io/cosmonic-labs/components/md-html-sanitizer-mcp:0.1.0@sha256:388ba7a070301c677c5d793ad9d826a803745819ee17b2d82f88080a5532f29f"
+      image: "ghcr.io/cosmonic-labs/components/md-html-sanitizer-mcp:0.1.1@sha256:834a92c09b8417dd30cfdfd05af151b906652410b5157285b033d39ff6feecab"
       poolSize: 1
       maxInvocations: 0
       localResources:

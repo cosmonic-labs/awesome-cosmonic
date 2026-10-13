@@ -13,7 +13,7 @@ metadata:
   namespace: default
   labels:
     app.kubernetes.io/name: "threat-intel-mcp"
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.1.1"
     "mcp.ai/auth-type": none
     mcp.ai/domain: "threat-intel"
     "mcp.ai/function-type": tools
@@ -35,7 +35,7 @@ spec:
       # Digest-pinned to the published 0.1.0 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
-      image: "ghcr.io/cosmonic-labs/components/threat-intel-mcp:0.1.0@sha256:3fd0714f54f627b6cbacf3b0297bd528eaebab35df79ad9faa50200320019b7a"
+      image: "ghcr.io/cosmonic-labs/components/threat-intel-mcp:0.1.1@sha256:a4456cb2c33f85c587792c3a775a311c5c8ead933ec472c786940694fd526eed"
       poolSize: 1
       maxInvocations: 0
       localResources:

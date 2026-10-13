@@ -22,6 +22,6 @@ spec:
         host: passphrase.localhost
   components:
     - name: passphrase
-      image: ghcr.io/cosmonic-labs/components/passphrase:0.1.1@sha256:c5ebc40653d8acc6540c01a458176dde021a83f74abfe33d3e3959bbff34e9da
+      image: ghcr.io/cosmonic-labs/components/passphrase:0.1.2@sha256:3e7bdfb4f4209fad936d1829db99a8cd779114ad60595a1da3958fedd6ed5240
       poolSize: 1
       maxInvocations: 0

@@ -14,7 +14,7 @@ metadata:
   namespace: default
   labels:
     app.kubernetes.io/name: "pii-redactor-mcp"
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.1.1"
     "mcp.ai/auth-type": none
     mcp.ai/domain: "pii"
     "mcp.ai/function-type": tools
@@ -36,7 +36,7 @@ spec:
       # Digest-pinned to the published 0.1.0 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
-      image: "ghcr.io/cosmonic-labs/components/pii-redactor-mcp:0.1.0@sha256:146f5d12f6d5a978872c44ea822d2909157e172f65becd03fd3da738d09a8985"
+      image: "ghcr.io/cosmonic-labs/components/pii-redactor-mcp:0.1.1@sha256:9542ba52e1d745534b835df99c279f61b6a9e7b1349700d512792e55916c7c25"
       poolSize: 1
       maxInvocations: 0
       localResources:
