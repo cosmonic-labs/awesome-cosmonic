@@ -2,7 +2,7 @@
 name = "md-html-sanitizer-mcp"
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.94"
 description = "Markdown/HTML sanitizer MCP server: turn untrusted markdown or HTML into safe HTML (allowlist-based, strips scripts/handlers/dangerous URLs); pure-compute, zero egress (WebAssembly component, wasi:http@0.3.0)"
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"

@@ -2,7 +2,7 @@
 name = "threat-intel-mcp"
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.94"
 description = "Threat-intel MCP server: look up known vulnerabilities for open-source packages and CVE/GHSA IDs from the OSV database, bounded to api.osv.dev (WebAssembly component, wasi:http@0.3.0)"
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
