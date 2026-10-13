@@ -27,7 +27,7 @@ spec:
         host: "web-fetch-mcp.localhost.cosmonic.sh"
   components:
     - name: "web-fetch-mcp"
-      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # Digest-pinned to the published 0.1.1 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
       image: "ghcr.io/cosmonic-labs/components/web-fetch-mcp:0.1.1@sha256:e12f2fe185ce54f90f9666aeaa62190e4cb64066dd2c103fdd84e2f47d49dc47"

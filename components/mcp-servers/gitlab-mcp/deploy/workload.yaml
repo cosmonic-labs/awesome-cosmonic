@@ -34,7 +34,7 @@ spec:
         host: "gitlab-mcp.localhost.cosmonic.sh"
   components:
     - name: "gitlab-mcp"
-      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # Digest-pinned to the published 0.1.1 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
       image: "ghcr.io/cosmonic-labs/components/gitlab-mcp:0.1.1@sha256:9096e5430a0b00c5182767988b96066259736b2e23e9106b85e397ca45af65d2"
