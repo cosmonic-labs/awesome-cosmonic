@@ -49,6 +49,11 @@ scheduler::unregister("poll-orders".into()).await?;
 
 // Once, ten minutes from now. It is removed after it fires.
 scheduler::register("check-back".into(), Schedule::OnceAfter(600_000_000_000)).await?;
+
+// What is held for the workload, and when each will next fire.
+for held in scheduler::list_registrations().await? {
+    println!("{} is next due at {:?}", held.name, held.next);
+}
 ```
 
 A registered schedule is a crontab (`Schedule::Cron`), an interval, or one of two that fire once: `OnceAfter` a delay on the monotonic clock, or `OnceAt` an instant on the system clock. Declared schedules are always repeating.
@@ -84,6 +89,7 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 - A handler that answers `retry` gets the same firing again, with `attempt` one higher, until `retry.max-attempts`, or until the schedule's next firing is due or came due while the handler was running. A handler that answers `failed`, traps or times out is not called again for that firing.
 - An interval is a fixed rate on the monotonic clock. A late wake-up does not shift later firings.
 - A crontab firing's `scheduled-at` is the instant the expression matched, not the time the handler ran.
+- `list-registrations` gives each schedule's `next` firing as of the call, so a component need not parse a crontab to say when it runs. For a crontab or `once-at` schedule it is the `scheduled-at` that firing will carry. For an interval or `once-after` schedule it is the monotonic mark read off the system clock at that moment. It is `none` for a one-shot whose firing is already being handled, and for a registered schedule that `max-lifetime` or `max-firings` will end before it fires again. While a handler runs past its period, `next` is the occurrence after the ones being skipped.
 - A schedule that fires once is removed when its firing has been handled or given up on. It is retried like any other firing, with nothing to cut the retries short. An instant that has already passed is refused, as is one the workload's `max-lifetime` would end first. Its handler may register the same name again to be called once more.
 - If a bound workload is bound again, registered schedules the new binding does not permit are removed: all of them if `scheduler` is no longer granted, any interval below a raised `min-interval`, the newest beyond a lowered `max-registrations`, and any that have already fired a lowered `max-firings` times.
 - `missed` is a lower bound. It counts firings skipped behind a running handler or an unreachable workload. It does not count what came due while the plugin itself was down: schedules are rebuilt from the present after a restart.
@@ -92,7 +98,8 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 
 - **Registered schedules live in memory.** If the plugin restarts, the host replays each workload's bind, which rebuilds the declared schedules, but schedules made with `scheduler.register` are gone. Register again when the component starts; registering a schedule that is already held changes nothing.
 - **No coordination between hosts.** Each host's plugin schedules the workloads bound on that host. A workload running on three hosts is called three times per firing.
-- **Crontab parsing is [croner](https://docs.rs/croner) 4**, restricted to five fields. It also accepts `@hourly`-style nicknames and the `L`, `#` and `W` modifiers, which are outside what `cosmonic:cron` promises. In a zone with daylight saving, croner's rules apply to local times that are skipped or repeated.
+- **Crontab parsing is [croner](https://docs.rs/croner) 4**, restricted to five fields. Beyond what `cosmonic:cron` promises it also accepts `@hourly`-style nicknames, `?` in a day field, `7` for Sunday, and the `L`, `#` and `W` modifiers. An expression that uses any of them may be refused, or read differently, by another implementer.
+- **Daylight saving is croner's rule**, which `cosmonic:cron` leaves to the implementer. A schedule at a fixed time of day fires exactly once on every day, including the two on which the clocks change: a local time that is skipped fires at the first moment after the gap (`30 2 * * *` fires at 03:00), and one that occurs twice fires the first time only. A schedule that runs through the hour, such as `*/30 * * * *`, keeps its rate in elapsed time: nothing is added for the skipped hour, and the repeated hour is run through twice. Unit tests hold the parser to this.
 - **The time zone database is compiled in** (chrono-tz 0.10), so new zone rules need a rebuild.
 - While a crontab schedule is pending the loop wakes at least every 30 seconds to re-read the system clock, so a firing can be up to 30 seconds late after the system clock is set forward.
 - **Clock steps follow Vixie cron's rule.** If the system clock moves back by three hours or less, crontab schedules wait for it to reach where it had been, so the repeated stretch is not run twice. A larger step back is taken as the clock being set, and they are scheduled again from the new time. After a step forward, or a long sleep, a schedule fires once for its most recent match, and `missed` stops counting at 100.
@@ -148,7 +155,7 @@ The schedule logic has no dependency on a clock or on the WIT bindings, so its u
 cargo test
 ```
 
-The end-to-end test loads the plugin into `wash dev` beside the ticker workload and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, one-shot schedules, `max-lifetime` and `max-firings`, and a crontab firing. It takes between 40 seconds and a minute and a half, depending on how soon the next minute starts:
+The end-to-end test loads the plugin into `wash dev` beside the ticker workload and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, one-shot schedules, the `next` each listing gives, `max-lifetime` and `max-firings`, and a crontab firing. It takes between 40 seconds and a minute and a half, depending on how soon the next minute starts:
 
 ```sh
 WASH=/path/to/wash-with-plugins e2e/run.sh

@@ -1,8 +1,6 @@
-//! Reading schedules: crontab expressions, time zones, periods, names, and
-//! the binding configuration that declares them.
+//! Parse schedules, time zones, durations, names, and binding configuration.
 //!
-//! Nothing here touches a clock or a WIT binding, so all of it runs under
-//! `cargo test` on the host.
+//! Clock and WIT dependencies are excluded so parsing runs in host tests.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -18,8 +16,8 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 /// The longest name a schedule may have, in bytes.
 pub const MAX_NAME_LEN: usize = 64;
 
-/// The shortest period any binding may lower `min-interval` to. Below this the
-/// dispatch loop would spend its time rescheduling rather than waiting.
+/// Minimum allowed `min-interval`, keeping the dispatch loop from constantly
+/// rescheduling.
 pub const HARD_MIN_INTERVAL: u64 = 10 * NANOS_PER_MILLI;
 
 /// A point on the system clock: seconds and nanoseconds since the Unix epoch,
@@ -31,7 +29,18 @@ pub struct Wall {
 }
 
 impl Wall {
-    /// This instant moved back by `nanos`.
+    /// Return this instant plus `nanos` nanoseconds.
+    pub fn plus_nanos(self, nanos: u64) -> Self {
+        let total = i128::from(self.seconds) * i128::from(NANOS_PER_SEC)
+            + i128::from(self.nanoseconds)
+            + i128::from(nanos);
+        Self {
+            seconds: i64::try_from(total.div_euclid(i128::from(NANOS_PER_SEC))).unwrap_or(i64::MAX),
+            nanoseconds: total.rem_euclid(i128::from(NANOS_PER_SEC)) as u32,
+        }
+    }
+
+    /// Return this instant minus `nanos` nanoseconds.
     pub fn minus_nanos(self, nanos: u64) -> Self {
         let total = i128::from(self.seconds) * i128::from(NANOS_PER_SEC)
             + i128::from(self.nanoseconds)
@@ -42,7 +51,7 @@ impl Wall {
         }
     }
 
-    /// Nanoseconds from `self` until `later`, or zero if `later` is not later.
+    /// Nanoseconds until `later`, or zero if it is at or before `self`.
     pub fn nanos_until(self, later: Self) -> u64 {
         let from = i128::from(self.seconds) * i128::from(NANOS_PER_SEC) + i128::from(self.nanoseconds);
         let to = i128::from(later.seconds) * i128::from(NANOS_PER_SEC) + i128::from(later.nanoseconds);
@@ -50,8 +59,7 @@ impl Wall {
     }
 }
 
-/// Why a schedule was refused, mirroring the cases of `schedule-error` a
-/// schedule alone can produce.
+/// Schedule validation errors corresponding to `schedule-error` cases.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpecError {
     InvalidName(String),
@@ -69,25 +77,18 @@ impl fmt::Display for SpecError {
     }
 }
 
-/// Look an IANA time zone up by name.
+/// Look up an IANA time zone by name.
 fn parse_zone(name: &str) -> Result<Tz, SpecError> {
     name.parse()
         .map_err(|_| SpecError::InvalidSchedule(format!("unknown time zone '{name}'")))
 }
 
-/// The years searched to decide whether an expression matches any date: 28 of
-/// them, the period after which this century's calendar repeats. Every
-/// combination of month, day and weekday that occurs at all occurs in them,
-/// leap days included.
+/// A 28-year search window covering every month, day, and weekday combination in this
+/// century, including leap days.
 const PROBE_YEARS: (i32, i32) = (2000, 2027);
 
-/// Whether a crontab expression that parses matches any date at all.
-///
-/// Asking the parsed expression for its next match would answer this, but for
-/// an expression with none that search runs to the end of the calendar, and a
-/// component can ask as often as it likes on a loop every workload shares.
-/// The same expression confined to [`PROBE_YEARS`] has the same answer and a
-/// search that ends.
+/// Check whether a parsed expression ever matches, using [`PROBE_YEARS`] to bound the
+/// search on the shared dispatch loop.
 fn ever_matches(expression: &str) -> bool {
     // croner only takes a year field alongside a seconds field.
     let confined = format!("0 {expression} {}-{}", PROBE_YEARS.0, PROBE_YEARS.1);
@@ -106,8 +107,8 @@ fn ever_matches(expression: &str) -> bool {
         .is_some_and(|start| probe.find_next_occurrence(&start, true).is_ok())
 }
 
-/// A parsed crontab schedule. Keeps the text it was given, so a listing
-/// returns what the caller wrote rather than a normalized form.
+/// A parsed crontab schedule that preserves the original expression and time zone for
+/// listings.
 #[derive(Clone, Debug)]
 pub struct CronSpec {
     expression: String,
@@ -157,8 +158,7 @@ impl CronSpec {
         self.timezone.as_deref()
     }
 
-    /// The first instant strictly after `after` that the expression matches,
-    /// or `None` if it has no later match.
+    /// The first matching instant after `after`, or `None` if no later match exists.
     pub fn next_after(&self, after: Wall) -> Option<Wall> {
         let utc: DateTime<Utc> = Utc.timestamp_opt(after.seconds, after.nanoseconds).single()?;
         let local = utc.with_timezone(&self.tz);
@@ -169,8 +169,8 @@ impl CronSpec {
         })
     }
 
-    /// The latest instant the expression matches that is not after `at`, or
-    /// `None` if it has no earlier match.
+    /// The latest matching instant at or before `at`, or `None` if no earlier match
+    /// exists.
     pub fn last_at_or_before(&self, at: Wall) -> Option<Wall> {
         let utc: DateTime<Utc> = Utc.timestamp_opt(at.seconds, at.nanoseconds).single()?;
         let local = utc.with_timezone(&self.tz);
@@ -212,12 +212,12 @@ impl Spec {
     }
 }
 
-/// Check a schedule name against what `schedule-name` permits.
+/// Validate a name against `schedule-name`.
 ///
 /// # Errors
 ///
-/// `InvalidName` when it is empty, longer than [`MAX_NAME_LEN`], or holds a
-/// character other than an ASCII letter, a digit, `-`, `_` or `.`.
+/// `InvalidName` for empty names, names longer than [`MAX_NAME_LEN`], or characters
+/// other than ASCII letters, digits, `-`, `_`, and `.`.
 pub fn validate_name(name: &str) -> Result<(), SpecError> {
     if name.is_empty() {
         return Err(SpecError::InvalidName("a schedule name cannot be empty".to_string()));
@@ -239,12 +239,12 @@ pub fn validate_name(name: &str) -> Result<(), SpecError> {
     Ok(())
 }
 
-/// Read a period such as `500ms`, `30s` or `1h30m` into nanoseconds.
+/// Parse durations such as `500ms`, `30s`, or `1h30m` into nanoseconds.
 ///
 /// # Errors
 ///
-/// A message naming what could not be read: no number, no unit, an unknown
-/// unit, or a total past what a `duration` holds.
+/// A diagnostic message for a missing number, missing or unknown unit, or total
+/// exceeding `duration` capacity.
 pub fn parse_duration(text: &str) -> Result<u64, String> {
     let text = text.trim();
     if text.is_empty() {
@@ -280,23 +280,20 @@ pub fn parse_duration(text: &str) -> Result<u64, String> {
     Ok(total)
 }
 
-/// The ceilings and retry policy one workload's schedules run under.
+/// Schedule limits and retry policy for one workload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Limits {
-    /// How many schedules the workload's components may hold through
-    /// `scheduler.register` at once.
+    /// Maximum concurrent registrations through `scheduler.register`.
     pub max_registrations: usize,
-    /// The shortest `interval` period, in nanoseconds.
+    /// Minimum `interval` period and `once-after` delay in nanoseconds.
     pub min_interval: u64,
-    /// Deliveries of one firing, counting the first.
+    /// Maximum delivery attempts per firing, including the first.
     pub retry_max_attempts: u32,
-    /// Delay before the first redelivery, in nanoseconds. Doubles after.
+    /// Initial retry delay in nanoseconds, doubling with each redelivery.
     pub retry_backoff: u64,
-    /// How long a registered schedule is held, in nanoseconds. `None` holds
-    /// it until it is removed.
+    /// Maximum registration lifetime in nanoseconds, or `None` for no lifetime limit.
     pub max_lifetime: Option<u64>,
-    /// How many firings a registered schedule delivers before it is removed.
-    /// `None` puts no bound on them.
+    /// Maximum firings before registration removal, or `None` for no firing limit.
     pub max_firings: Option<u32>,
 }
 
@@ -334,7 +331,7 @@ impl Limits {
     }
 }
 
-/// Everything one workload's `cosmonic:cron` binding configuration says.
+/// Declared schedules and limits from a workload's `cosmonic:cron` binding.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Binding {
     /// The schedules it declares, by name.
@@ -343,29 +340,27 @@ pub struct Binding {
 }
 
 impl Binding {
-    /// Read one binding entry's `config` key/value pairs.
+    /// Parse one binding entry's `config` key/value pairs.
     ///
     /// # Errors
     ///
-    /// As [`Binding::parse_entries`].
+    /// See [`Binding::parse_entries`].
     pub fn parse<'a>(
         config: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Result<Self, String> {
         Self::parse_entries([config])
     }
 
-    /// Read every `cosmonic:cron` entry a workload was bound with.
+    /// Parse all `cosmonic:cron` binding entries for a workload.
     ///
-    /// The entries declare schedules separately and share one set of limits.
-    /// A `timezone` covers the `schedule.*` keys of its own entry only. A
-    /// limit belongs to the workload, so it may be set by any one entry, and
-    /// every entry's schedules are checked against it.
+    /// Entries declare schedules separately but share limits, each set by at most one
+    /// entry.
+    /// Each `timezone` applies only to its entry's `schedule.*` keys.
     ///
     /// # Errors
     ///
-    /// A message for the first key that is not recognized, value that cannot
-    /// be read, schedule name declared twice, or limit set by two entries. The
-    /// caller fails the bind with it.
+    /// A diagnostic message for the first unknown key, invalid value, duplicate
+    /// schedule name, or limit set by multiple entries, causing the bind to fail.
     pub fn parse_entries<'a, E>(entries: impl IntoIterator<Item = E>) -> Result<Self, String>
     where
         E: IntoIterator<Item = (&'a str, &'a str)>,
@@ -529,6 +524,76 @@ mod tests {
         assert_eq!(spec.next_after(at(MONDAY)), Some(at(MONDAY + 13 * 3600)));
         let utc = CronSpec::parse("0 9 * * *", None).unwrap();
         assert_eq!(utc.next_after(at(MONDAY)), Some(at(MONDAY + 9 * 3600)));
+    }
+
+    /// An instant in 2026, given in UTC.
+    fn utc(month: u32, day: u32, hour: u32, minute: u32) -> Wall {
+        at(Utc.with_ymd_and_hms(2026, month, day, hour, minute, 0).unwrap().timestamp())
+    }
+
+    /// The next `count` matches after `from`.
+    fn matches(spec: &CronSpec, from: Wall, count: usize) -> Vec<Wall> {
+        let mut found = Vec::new();
+        let mut after = from;
+        for _ in 0..count {
+            after = spec.next_after(after).unwrap();
+            found.push(after);
+        }
+        found
+    }
+
+    // The README states what follows as the plugin's behaviour. It is the
+    // parser's, not this crate's, so these are here to notice an upgrade
+    // changing it. In New York in 2026 the clocks go from 02:00 to 03:00 on
+    // 8 March, and from 02:00 back to 01:00 on 1 November.
+
+    #[test]
+    fn a_time_of_day_that_daylight_saving_skips_fires_once_that_day() {
+        let spec = CronSpec::parse("30 2 * * *", Some("America/New_York")).unwrap();
+        // 02:30 does not occur on the 8th. The firing is not dropped: it
+        // comes at 03:00, the first moment after the hour that was skipped.
+        assert_eq!(
+            matches(&spec, utc(3, 7, 12, 0), 2),
+            [utc(3, 8, 7, 0), utc(3, 9, 6, 30)]
+        );
+    }
+
+    #[test]
+    fn a_time_of_day_that_daylight_saving_repeats_fires_once_that_day() {
+        let spec = CronSpec::parse("30 1 * * *", Some("America/New_York")).unwrap();
+        // 01:30 occurs twice on the 1st, at 05:30 and 06:30 UTC. Only the
+        // first is a firing.
+        assert_eq!(
+            matches(&spec, utc(10, 31, 12, 0), 2),
+            [utc(11, 1, 5, 30), utc(11, 2, 6, 30)]
+        );
+    }
+
+    #[test]
+    fn a_schedule_through_the_hour_keeps_its_rate_across_daylight_saving() {
+        let spec = CronSpec::parse("*/30 * * * *", Some("America/New_York")).unwrap();
+        // Half an hour apart in elapsed time both ways: nothing is invented
+        // for the hour that is skipped, and the repeated hour is run through
+        // twice.
+        assert_eq!(
+            matches(&spec, utc(3, 8, 6, 0), 3),
+            [utc(3, 8, 6, 30), utc(3, 8, 7, 0), utc(3, 8, 7, 30)]
+        );
+        assert_eq!(
+            matches(&spec, utc(11, 1, 4, 30), 5),
+            [utc(11, 1, 5, 0), utc(11, 1, 5, 30), utc(11, 1, 6, 0), utc(11, 1, 6, 30), utc(11, 1, 7, 0)]
+        );
+    }
+
+    #[test]
+    fn cron_accepts_more_than_the_contract_promises() {
+        // Also stated in the README: `?` for a day field, 7 for Sunday, and
+        // the nicknames. 2026-10-18 is the Sunday after `MONDAY`.
+        let sunday = at(MONDAY + 6 * 86_400);
+        for expression in ["0 0 * * 7", "0 0 ? * 0", "0 0 ? * sun", "@weekly"] {
+            let spec = CronSpec::parse(expression, None).unwrap();
+            assert_eq!(spec.next_after(at(MONDAY)), Some(sunday), "{expression:?}");
+        }
     }
 
     #[test]
