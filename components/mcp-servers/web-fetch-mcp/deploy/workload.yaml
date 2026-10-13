@@ -8,7 +8,7 @@ metadata:
   namespace: default
   labels:
     app.kubernetes.io/name: "web-fetch-mcp"
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.1.1"
     "mcp.ai/auth-type": none
     mcp.ai/domain: "web-fetch"
     "mcp.ai/function-type": tools
@@ -30,7 +30,7 @@ spec:
       # Digest-pinned to the published 0.1.0 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
-      image: "ghcr.io/cosmonic-labs/components/web-fetch-mcp:0.1.0@sha256:55213ade3c48459264fb2f4c780e7d22b695b3d42c7b73b4c613794543cbcdd1"
+      image: "ghcr.io/cosmonic-labs/components/web-fetch-mcp:0.1.1@sha256:e12f2fe185ce54f90f9666aeaa62190e4cb64066dd2c103fdd84e2f47d49dc47"
       poolSize: 1
       maxInvocations: 0
       localResources:

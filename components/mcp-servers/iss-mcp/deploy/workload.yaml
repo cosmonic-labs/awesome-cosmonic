@@ -8,7 +8,7 @@ metadata:
   namespace: default
   labels:
     app.kubernetes.io/name: "iss-mcp"
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "0.1.1"
     "mcp.ai/auth-type": none
     mcp.ai/domain: "iss"
     "mcp.ai/function-type": tools
@@ -30,7 +30,7 @@ spec:
       # Digest-pinned to the published 0.1.0 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
-      image: "ghcr.io/cosmonic-labs/components/iss-mcp:0.1.0@sha256:5b8310a2d0f0a16d4ed0cb7212e3751ce96f6c5bf44ba8271d91274f30199af5"
+      image: "ghcr.io/cosmonic-labs/components/iss-mcp:0.1.1@sha256:04161eb05b0a9a1f0392cd1b608a5922b47a5735cde29e439d61fd4baadee3ba"
       poolSize: 1
       maxInvocations: 0
       localResources:
