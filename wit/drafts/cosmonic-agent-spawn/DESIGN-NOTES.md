@@ -12,53 +12,6 @@ WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
   node .github/scripts/wit/build.mjs wit/drafts/cosmonic-agent-spawn agent
 ```
 
-## What this replaces, and why agent-scoped
-
-We had planned a general `wasmcloud:host` scheduling interface that lets a
-workload define and start other workloads. `spawn` is the narrower replacement:
-a caller describes an agent, its tools and their grants, and gets back a handle
-it owns. Victor's point is the reason. A guest that can start any workload can
-ask for anything a workload can do, so the blast radius (everything a mistake or
-an attack can reach) is the whole workload API. A guest that can only spawn an
-agent with a declared tool list can only ask for that, and the request is
-semantic enough to write policy against. Session durability is separate work.
-
-## Decisions
-
-- **Native plugin.** Settled: the spawn plugin is native on Desktop and
-  Control. It needs the host's workload API and the caller's identity anyway.
-  The WIT is still written so another component can implement it (see the
-  conformance section).
-- **The handle is `resource agent`** (decided). Bailey's rule: a resource
-  defines a lifetime and a proper noun; if she sees a resource she tries to
-  remove it; it must be cohesive across the other APIs.
-  - *Why not one session resource across APIs.* WIT cannot scope methods by
-    capability, so the parent's view and the child's own journal would share
-    one method set. `session@0.3.0` deliberately has no handle, and a session
-    resource would collide with the durability work.
-  - *Why `agent` survives removal.* It carries ownership and lifetime across
-    turns: dropping it ends the child. Nothing else expresses that.
-  - *Why `sealed-agent` did not.* A sealed agent's caller cannot see results,
-    so a second turn is blind steering. `spawn-sealed` now takes one task and
-    returns progress plus an outcome future; dropping the stream ends the child.
-- **One method, `send`, shaped like `chat.reply`.** It returns a contentless
-  `stream<progress>` and a `future` of the outcome. Dropping the stream (or the
-  agent) cancels the turn. One turn at a time (`busy`). The outcome holds final
-  reply parts only (text, attachment, other), optional `structured` JSON
-  checked against the request's schema, counts, and why it finished. Removed
-  earlier by the removal test: `id`, `status`, `cancel`, `follow`, the initial
-  `task`, and prompt-as-component.
-- **No child-authored text anywhere the parent sees it** except the final
-  reply. Progress, errors and reasons are implementer-authored.
-- **Observation is host-side.** A host HTTP API: `/v1/agents` (lineage, request
-  digest, approval, effective grants, state) and `/v1/agents/{id}/journal` (a
-  server-sent event follow). Authorized for the person and the auditor, never
-  the parent guest. The auditor workload may later get a privileged `observe`
-  interface, never in `spawner`.
-- **Digest-pinned components, per-component grants, names not secrets.** Empty
-  grants nothing. `model` is a binding name as `models.open` takes it. `labels`
-  are for logs and display, never policy input.
-
 ## Information-flow rules at spawn
 
 The implementer enforces these; the native plugin sees the caller's workload
@@ -100,8 +53,7 @@ can still signal each other. The host may implement sealed later and return
 
 ## Usage sketch
 
-Victor's `a = new agent(); a.addTool(...); a.prompt(...); a.spawn()` becomes an
-SDK builder over one declarative record. Pseudo-Rust:
+Pseudo-Rust:
 
 ```rust
 #[derive(Deserialize, JsonSchema)]
@@ -121,53 +73,9 @@ let review: Review = a.run(user("Start with the auth changes.")).await?.structur
 drop(a);                        // ends the child
 ```
 
-## Conformance with the WIT design skill
+## Open questions
 
-Checked against Bailey's `wit-interface-design` skill (cosmonic-labs/skills
-PR #12). What changed and why:
-
-- **One power per interface.** Open and sealed spawning are independently
-  grantable, so they are now two interfaces, `spawn` and `spawn-sealed`, with
-  shared types in `spawn-types`. A world that imports only `spawn-sealed`
-  cannot read results, and the import list says so. New world `sealed-spawner`.
-- **Virtualizable, documented by implementer and caller.** Docs say "the
-  implementer" and "implementer-authored", not "the host". New world
-  `spawn-middleware` (`import spawn; export spawn`) shows a policy wrapper or
-  test double in front of the native plugin.
-- **Reuse WASI types.** `limits.deadline-ms: u64` is now
-  `deadline: option<duration>` from `wasi:clocks/types@0.3.0`, which the hosts
-  pin. `wkg.lock` gained `wasi:clocks`.
-- **No polling.** "Resend once approved" needed an out-of-band wait.
-  `approval.decision` is now a `future<decision>`.
-- **Typed errors, split by phase.** `send` returns `send-error` (`busy`,
-  `exhausted`, `unavailable`) and the outcome future returns `turn-error`,
-  mirroring chat's `request-error` and `generation-error`. `denied` is
-  `access-denied` (the grant is partial). `over-limit.what: string` is a typed
-  `limit-scope` the caller can act on. The sealed success type no longer holds
-  failure codes (`sealed-finish` became `sealed-outcome` plus `turn-error`).
-- **Catch-alls.** Diagnostic catch-alls are `other(option<string>)`, last.
-  `sink.other(string)` stays a string because it names a destination.
-- **Remove a resource if you can.** `sealed-agent` is gone (see Decisions).
-- **Async and cancellation by drop.** Every function was already async. Docs
-  now state the stream-then-future order, that a closed stream is not success,
-  that the outcome can be awaited without draining, and what dropping the
-  stream, the outcome, the agent, or the approval future does.
-- **Versioning and docs.** `@since(version = 0.4.0-draft)` on every interface
-  and world (wit-parser refuses `@since(version = 0.4.0)` in a `-draft`
-  package); flip to `0.4.0` on release. Every type, case, field and function
-  has a `///` comment, with OCI and JSON Schema references.
-
-Already compliant: kebab-case and verb-first names, singular resource nouns,
-`variant` plus `other` for every open set (no `enum`), all functions async,
-symmetric provider and consumer shapes, the observe/control split (the parent
-has no journal), and a new interface rather than widening an old one.
-
-## Open questions for the jam
-
-**(a) One workload for agent and tools, or one per tool?** Bailey's diagram and
-today's Desktop session use one workload; on 10/10 we chose one per tool. A
-separate investigation of the wash-runtime `active_ctx` race is underway, and
-we will not decide on the basis of that bug. The WIT is agnostic.
+**(a) One workload for agent and tools, or one per tool?** 
 
 **(b) Sink semantics.** What do `person` and `approval-queue` deliver to on
 Desktop versus Control? Is `volume` enough for machine consumers?
@@ -188,14 +96,11 @@ becomes a method on the handle, through approval.
 **(g) Taint propagation, long term.** Narrowing egress as a child reads would
 beat a fixed ceiling. It needs runtime revocation of `allowedHosts`.
 
-Where the skill and our decisions pull apart:
-
 **(h) Virtualization versus a native plugin.** The skill says an interface must
 not rely on ambient host identity. The ceiling is defined against "the
 caller", which only the host knows; passing identity as a parameter would be
 forgeable. We kept the native plugin and defined the caller as the component
-the import is bound to. Is that acceptable, or does Bailey want identity in the
-contract?
+the import is bound to. 
 
 **(i) Sealed as one run.** The removal test took out `sealed-agent`. Revert if
 we want multi-turn sealed workers.
@@ -218,9 +123,3 @@ checked before instantiation with no `needs-approval` at runtime. Keep dynamic
 **(m) Does dropping `approval.decision` withdraw the request?** The draft says
 yes (cancellation by drop). That loses an approval a person gives after the
 parent's request has ended.
-
-## Naming
-
-Bailey's rule: "broker" and "gateway" mean host-wide (a credential broker is
-one). Workload-tenanted things are not brokers. So: the spawn plugin, the caller
-(spawner), the child agent, and the auditor.
