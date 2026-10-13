@@ -45,6 +45,12 @@ expect() {
   fi
 }
 
+# The `next` the listing in $2 gives for the schedule named $1: seconds on the
+# system clock, or `none`.
+next_of() { awk -F '\t' -v name="$1" '$1 == name { sub(/^next=/, "", $4); print $4 }' <<<"$2"; }
+# Whether $1 is a whole number from $2 to $3.
+between() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge "$2" ] && [ "$1" -le "$3" ]; }
+
 # Lines the ticker logged for one schedule.
 fired() { grep -c "ticker: fired name=$1 " "$LOG" || true; }
 # Wait until the log holds a line matching a pattern, or give up.
@@ -74,10 +80,20 @@ fi
 echo "declared schedules"
 check "the plugin's dispatch loop started" grep -q 'cron-scheduler: dispatch loop started' "$LOG"
 LISTED=$(curl -s "$BASE/schedules")
+NOW=$(date +%s)
 check "the binding's interval is listed as declared" \
-  grep -q $'^heartbeat\tdeclared\tinterval 5000ms$' <<<"$LISTED"
+  grep -q $'^heartbeat\tdeclared\tinterval 5000ms\tnext=[0-9]*$' <<<"$LISTED"
 check "the binding's crontab is listed as declared" \
-  grep -q $'^minutely\tdeclared\tcron \* \* \* \* \*$' <<<"$LISTED"
+  grep -q $'^minutely\tdeclared\tcron \* \* \* \* \*\tnext=[0-9]*$' <<<"$LISTED"
+NEXT_BEAT=$(next_of heartbeat "$LISTED")
+NEXT_MINUTE=$(next_of minutely "$LISTED")
+check "an interval's next firing is within its period ($NEXT_BEAT)" \
+  between "$NEXT_BEAT" $((NOW - 1)) $((NOW + 5))
+if between "$NEXT_MINUTE" $((NOW - 1)) $((NOW + 60)) && [ $((NEXT_MINUTE % 60)) = 0 ]; then
+  pass "a crontab's next firing is the coming minute boundary ($NEXT_MINUTE)"
+else
+  fail "a crontab's next firing is the coming minute boundary" "listed next=$NEXT_MINUTE at $NOW"
+fi
 check "a declared interval fires without the workload registering anything" \
   wait_for 'ticker: fired name=heartbeat ' 8
 
@@ -96,7 +112,7 @@ expect "registering the same schedule again is accepted" '/register?name=poll&ev
 check "and is not logged a second time, having changed nothing" \
   test "$(grep -c "registered 'poll'" "$LOG")" = 1
 check "a registered schedule is listed as registered" \
-  grep -q $'^poll\tregistered\tinterval 500ms$' <<<"$(curl -s "$BASE/schedules")"
+  grep -q $'^poll\tregistered\tinterval 500ms\tnext=[0-9]*$' <<<"$(curl -s "$BASE/schedules")"
 
 echo "refusals"
 expect "a name with a space" '/register?name=bad%20name&every-ms=1000' 400 invalid-name
@@ -124,8 +140,10 @@ fi
 echo "limits"
 expect "a slow interval" '/register?name=second&every-ms=60000' 200 ok
 expect "a crontab in a named zone" '/register?name=ny&cron=0+9+*+*+mon-fri&tz=America/New_York' 200 ok
-check "the zone is kept in the listing" \
-  grep -q $'^ny\tregistered\tcron 0 9 \* \* mon-fri in America/New_York$' <<<"$(curl -s "$BASE/schedules")"
+# The binding's max-lifetime is 12s and 09:00 is further off than that, so the
+# listing says outright that this one will be removed before it ever fires.
+check "the zone is kept in the listing, and it has no next firing under max-lifetime" \
+  grep -q $'^ny\tregistered\tcron 0 9 \* \* mon-fri in America/New_York\tnext=none$' <<<"$(curl -s "$BASE/schedules")"
 expect "a third registration" '/register?name=third&every-ms=60000' 200 ok
 expect "a fourth, past max-registrations" '/register?name=fourth&every-ms=60000' 429 limit-exceeded
 expect "unregister" '/unregister?name=third' 200 ok
@@ -134,6 +152,8 @@ expect "unregister the crontab" '/unregister?name=ny' 200 ok
 expect "unregister the slow interval" '/unregister?name=second' 200 ok
 # Registered and then left alone, for the max-lifetime check further down.
 expect "register a schedule and forget it" '/register?name=linger&every-ms=60000' 200 ok
+check "it has no next firing, max-lifetime being shorter than its period" \
+  grep -q $'^linger\tregistered\tinterval 60000ms\tnext=none$' <<<"$(curl -s "$BASE/schedules")"
 
 echo "retry"
 expect "register a handler that asks for a retry" '/register?name=retry-job&every-ms=4000' 200 ok
@@ -178,7 +198,7 @@ echo "one-shot schedules"
 held() { curl -s "$BASE/schedules" | grep -c "^$1"$'\t' || true; }
 expect "register a delay" '/register?name=once-job&once-after-ms=1000' 200 ok
 check "a pending one-shot is listed" \
-  grep -q $'^once-job\tregistered\tonce-after 1000ms$' <<<"$(curl -s "$BASE/schedules")"
+  grep -q $'^once-job\tregistered\tonce-after 1000ms\tnext=[0-9]*$' <<<"$(curl -s "$BASE/schedules")"
 expect "registering it again is accepted" '/register?name=once-job&once-after-ms=1000' 200 ok
 check "it fires" wait_for 'ticker: fired name=once-job ' 4
 sleep 2.2
@@ -186,6 +206,8 @@ check "it fires exactly once" test "$(fired once-job)" = 1
 check "it is removed once it has fired" test "$(held once-job)" = 0
 AT=$(($(date +%s) + 3))
 expect "register an instant" "/register?name=at-job&once-at=$AT" 200 ok
+check "it is listed with that instant as its next firing" \
+  grep -q "^at-job"$'\t'"registered"$'\t'"once-at $AT"$'\t'"next=$AT\$" <<<"$(curl -s "$BASE/schedules")"
 check "it fires with that instant as scheduled-at" wait_for "ticker: fired name=at-job scheduled-at=$AT " 6
 expect "an instant in the past" "/register?name=late&once-at=$((AT - 3600))" 400 invalid-schedule
 expect "a delay under min-interval" '/register?name=soon&once-after-ms=100' 400 invalid-schedule
@@ -224,6 +246,8 @@ if wait_for 'ticker: fired name=minutely ' 65; then
   AT=$(grep 'ticker: fired name=minutely ' "$LOG" | head -1 | sed 's/.*scheduled-at=\([0-9]*\).*/\1/')
   check "a declared crontab fires" true
   check "scheduled-at is the minute boundary ($AT)" test $((AT % 60)) = 0
+  check "the firing the listing forecast arrived, with that scheduled-at ($NEXT_MINUTE)" \
+    wait_for "ticker: fired name=minutely scheduled-at=$NEXT_MINUTE " 62
 else
   fail "a declared crontab fires" "no firing within 65s"
 fi
