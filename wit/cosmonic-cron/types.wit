@@ -149,9 +149,8 @@ interface types {
         interval(duration),
         /// Fire once at this system-clock instant.
         ///
-        /// Instants at or before registration time return `invalid-schedule`,
-        /// preventing a completed schedule from firing again when registered with the
-        /// same instant.
+        /// New registrations require a future instant; past instants return
+        /// `invalid-schedule` and cannot restart completed schedules.
         once-at(instant),
         /// Fire once after this monotonic delay from when registration takes effect.
         ///
