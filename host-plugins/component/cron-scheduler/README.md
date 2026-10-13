@@ -173,6 +173,8 @@ The plugin logs to stderr with the prefix `cron-scheduler:` when a workload bind
 
 ## Test
 
+CI runs native tests and Clippy, builds the plugin and test workload, and validates their required exports. The host integration test runs locally with a wash built with `host-component-plugins`.
+
 The schedule logic has no dependency on a clock or on the WIT bindings, so its unit tests run on the host:
 
 ```sh
