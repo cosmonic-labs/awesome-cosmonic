@@ -32,7 +32,7 @@ spec:
         host: "threat-intel-mcp.localhost.cosmonic.sh"
   components:
     - name: "threat-intel-mcp"
-      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # Digest-pinned to the published 0.1.1 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
       image: "ghcr.io/cosmonic-labs/components/threat-intel-mcp:0.1.1@sha256:a4456cb2c33f85c587792c3a775a311c5c8ead933ec472c786940694fd526eed"

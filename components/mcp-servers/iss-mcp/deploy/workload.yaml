@@ -27,7 +27,7 @@ spec:
         host: "iss-mcp.localhost.cosmonic.sh"
   components:
     - name: "iss-mcp"
-      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # Digest-pinned to the published 0.1.1 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
       image: "ghcr.io/cosmonic-labs/components/iss-mcp:0.1.1@sha256:04161eb05b0a9a1f0392cd1b608a5922b47a5735cde29e439d61fd4baadee3ba"

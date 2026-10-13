@@ -34,7 +34,7 @@ spec:
         host: "md-html-sanitizer-mcp.localhost.cosmonic.sh"
   components:
     - name: "md-html-sanitizer-mcp"
-      # Digest-pinned to the published 0.1.0 image. To deploy a locally
+      # Digest-pinned to the published 0.1.1 image. To deploy a locally
       # promoted build instead, use the digest-pinned
       # oci-registry.localhost:8200 reference that promote returns.
       image: "ghcr.io/cosmonic-labs/components/md-html-sanitizer-mcp:0.1.1@sha256:834a92c09b8417dd30cfdfd05af151b906652410b5157285b033d39ff6feecab"
