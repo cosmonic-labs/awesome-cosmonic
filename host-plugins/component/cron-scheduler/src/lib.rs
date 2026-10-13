@@ -5,6 +5,7 @@
 //! The wasm-only `plugin` module provides WIT bindings, reads `wasi:clocks`, and
 //! dispatches due firings.
 
+pub mod calendar;
 pub mod engine;
 pub mod spec;
 

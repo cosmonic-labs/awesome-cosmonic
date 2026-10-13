@@ -26,7 +26,7 @@ package cosmonic:cron@0.1.0;
 @since(version = 0.1.0)
 interface scheduler {
     @since(version = 0.1.0)
-    use types.{schedule-name, schedule, registration, schedule-error};
+    use types.{schedule-name, schedule, calendar-schedule, registration, schedule-error};
 
     /// Register `schedule` under `name` for the caller's workload.
     ///
@@ -42,6 +42,14 @@ interface scheduler {
     /// The implementer validates the schedule before returning `ok`.
     @since(version = 0.1.0)
     register: async func(name: schedule-name, schedule: schedule)
+        -> result<_, schedule-error>;
+
+    /// Register a typed calendar schedule with the same rules and limits as `register`.
+    ///
+    /// Both functions share names; listings return typed schedules as `schedule.cron`
+    /// with a normalized expression, which can be passed to `register` unchanged.
+    @since(version = 0.1.0)
+    register-calendar: async func(name: schedule-name, schedule: calendar-schedule)
         -> result<_, schedule-error>;
 
     /// Remove the caller's registration for `name`, succeeding if it is already absent.

@@ -409,6 +409,93 @@ fn schedules_fire_the_way_the_contract_says() {
         format!("{} more arrived", after - before)
     });
 
+    run.section("typed calendar schedules");
+    let calendar_path = "/register-calendar?name=calendar&minute-step=15&hour-start=9&hour-end=17&day=13&weekdays=62&months=2049&tz=America/New_York";
+    run.expect("register typed calendar fields", calendar_path, 200, "ok");
+    run.check(
+        "named flags and selectors are listed as a normalized cron schedule",
+        run.ticker.held("calendar").is_some_and(|held| {
+            held.is(
+                "registered",
+                "cron 0,15,30,45 9,10,11,12,13,14,15,16,17 13 1,12 1,2,3,4,5 in America/New_York",
+            )
+        }),
+    );
+    run.expect("repeat typed registration", calendar_path, 200, "ok");
+    run.check(
+        "an unchanged typed registration is not logged again",
+        run.host.lines(&["registered 'calendar'"]).len() == 1,
+    );
+    run.expect(
+        "replace it through the text API",
+        "/register?name=calendar&cron=*+*+*+*+*",
+        200,
+        "ok",
+    );
+    run.expect(
+        "register the same schedule through the typed API",
+        "/register-calendar?name=calendar",
+        200,
+        "ok",
+    );
+    run.check(
+        "text and typed registrations share the same name and identity",
+        run.host.lines(&["registered 'calendar'"]).len() == 2,
+    );
+    let typed = run.ticker.held("calendar");
+    run.check(
+        "default typed fields preserve the text schedule in listings",
+        typed.as_ref().is_some_and(|held| held.is("registered", "cron * * * * *")),
+    );
+    run.expect(
+        "typed registration cannot replace a declared schedule",
+        "/register-calendar?name=minutely",
+        403,
+        "access-denied",
+    );
+    run.expect(
+        "a typed zero step",
+        "/register-calendar?name=invalid&minute-step=0",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "a typed hour outside its range",
+        "/register-calendar?name=invalid&hour-start=24&hour-end=25",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "a typed day outside its range",
+        "/register-calendar?name=invalid&day=0",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "empty weekday flags",
+        "/register-calendar?name=invalid&weekdays=0",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "empty month flags",
+        "/register-calendar?name=invalid&months=0",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "a typed unknown time zone",
+        "/register-calendar?name=invalid&tz=Mars/Phobos",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "remove the typed registration through the shared API",
+        "/unregister?name=calendar",
+        200,
+        "ok",
+    );
+
     run.section("limits");
     run.expect("a slow interval", "/register?name=second&every-ms=60000", 200, "ok");
     run.expect(
@@ -427,6 +514,7 @@ fn schedules_fire_the_way_the_contract_says() {
     );
     run.expect("a third registration", "/register?name=third&every-ms=60000", 200, "ok");
     run.expect("a fourth, past max-registrations", "/register?name=fourth&every-ms=60000", 429, "limit-exceeded");
+    run.expect("typed registration shares max-registrations", "/register-calendar?name=fourth", 429, "limit-exceeded");
     run.expect("unregister", "/unregister?name=third", 200, "ok");
     run.expect("unregister again", "/unregister?name=third", 200, "ok");
     run.expect("unregister the crontab", "/unregister?name=ny", 200, "ok");

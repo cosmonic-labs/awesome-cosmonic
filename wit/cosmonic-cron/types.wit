@@ -16,6 +16,89 @@ interface types {
     @since(version = 0.1.0)
     type schedule-name = string;
 
+    /// An inclusive range with `start <= end`.
+    @since(version = 0.1.0)
+    record calendar-range {
+        start: u8,
+        end: u8,
+    }
+
+    /// An inclusive range with `start <= end` and a positive step.
+    @since(version = 0.1.0)
+    record calendar-stepped {
+        start: u8,
+        end: u8,
+        step: u8,
+    }
+
+    /// A calendar field selection, with values bounded by the field's range.
+    @since(version = 0.1.0)
+    variant calendar-part {
+        /// Every value, equivalent to `*`.
+        any,
+        /// One value.
+        at(u8),
+        /// Every value in an inclusive range.
+        range(calendar-range),
+        /// Every nth value from the field's minimum, with a positive step.
+        every(u8),
+        /// Every nth value in an inclusive range.
+        stepped(calendar-stepped),
+    }
+
+    /// A nonempty union of selections; order and duplicates do not matter.
+    @since(version = 0.1.0)
+    type calendar-selector = list<calendar-part>;
+
+    /// Named weekdays independent of backend numbering.
+    @since(version = 0.1.0)
+    flags weekdays {
+        sunday,
+        monday,
+        tuesday,
+        wednesday,
+        thursday,
+        friday,
+        saturday,
+    }
+
+    /// Named months independent of backend numbering.
+    @since(version = 0.1.0)
+    flags months {
+        january,
+        february,
+        march,
+        april,
+        may,
+        june,
+        july,
+        august,
+        september,
+        october,
+        november,
+        december,
+    }
+
+    /// A typed alternative to a five-field crontab expression.
+    ///
+    /// Restricted day-of-month and weekday fields match with OR, as in POSIX cron.
+    /// Clock and daylight saving behavior follow `schedule.cron`.
+    @since(version = 0.1.0)
+    record calendar-schedule {
+        /// Minute selections in 0-59.
+        minutes: calendar-selector,
+        /// Hour selections in 0-23.
+        hours: calendar-selector,
+        /// Day selections in 1-31, or `none` for every day of the month.
+        days-of-month: option<calendar-selector>,
+        /// Selected weekdays, nonempty when set, or `none` for every weekday.
+        weekdays: option<weekdays>,
+        /// Selected months, nonempty when set, or `none` for every month.
+        months: option<months>,
+        /// An IANA time zone, or `none` for UTC.
+        timezone: option<string>,
+    }
+
     /// A crontab expression and its time zone.
     ///
     /// # References
