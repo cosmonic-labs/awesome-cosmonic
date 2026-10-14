@@ -1,22 +1,13 @@
-/// Sub-agents, confined workers, and host-mediated tools for sandboxed
-/// agents. Not published; for discussion. See README.md.
+/// Sub-agents and host-mediated tools for sandboxed agents. Not published;
+/// for discussion. See README.md.
 package cosmonic:agent@0.5.0;
 
-/// An agent that may spawn open sub-agents and read their final replies.
+/// An agent that may spawn sub-agents and read their final replies.
 @since(version = 0.5.0)
 world spawner {
     include cosmonic:agent/agent@0.3.0;
 
     import spawn;
-}
-
-/// An agent that may spawn confined workers. It cannot spawn open agents or
-/// read a confined agent's results.
-@since(version = 0.5.0)
-world confined-spawner {
-    include cosmonic:agent/agent@0.3.0;
-
-    import spawn-confined;
 }
 
 /// An agent that may ask which tools are available to it.
@@ -40,7 +31,6 @@ world tool-loader {
 @since(version = 0.5.0)
 world harness {
     include spawner;
-    include confined-spawner;
     include tool-loader;
 }
 
@@ -59,12 +49,10 @@ world tool-provider {
     export tool-workload;
 }
 
-/// An implementer of both spawn interfaces, such as a host plugin or a test
-/// double.
+/// An implementer of `spawn`, such as a host plugin or a test double.
 @since(version = 0.5.0)
 world spawn-provider {
     export spawn;
-    export spawn-confined;
 }
 
 /// An implementer of tool discovery and loading: the host side of tool discovery and loading.

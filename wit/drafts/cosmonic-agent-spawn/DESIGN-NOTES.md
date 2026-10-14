@@ -15,24 +15,19 @@ WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
 ```
 
 A native wash-runtime plugin implements the interfaces in a local spike
-(`~/cosmonic/probes/spawn-spike`, not published): `spawn`, `spawn-confined` and
-`tool-discovery.list` work end to end in 17 scenarios; `tool-loading.load` is
+(`~/cosmonic/probes/spawn-spike`, not published): `spawn` and
+`tool-discovery.list` work end to end in 16 scenarios; `tool-loading.load` is
 specified and answers `unavailable`.
 
 ## What changed in this revision
 
-1. **"Sealed" is now "confined"** everywhere: `spawn-confined`,
-   `confined-spawner`, `confined-outcome`, `confined-run`, and the spike's code
-   and tests. Lampson's confinement problem (1973) is the exact property we
-   want: a program that cannot pass what it learned to anyone but the
-   recipients its owner chose. "Sealed" already means something else in
-   object-capability systems: in the E language a sealer/unsealer pair wraps a
-   value in a box only the matching unsealer opens. That is closer to an opaque
-   reference than to a confined worker, and the two ideas meet in this design
-   (see "The reverse case"), so the collision would mislead.
+1. **Confined spawn is dropped.** The `spawn-confined` interface, the
+   `confined-spawner` world, and its sink, outcome and run types are gone from
+   the WIT, the worlds and the spike. Why, and when to reopen it, is in
+   "Considered and dropped: confined spawn".
 2. **No "draft" in any identifier; the interfaces are `cosmonic:agent@0.5.0`.**
    Eric asked for them in `cosmonic:agent` itself (`cosmonic:agent/spawn`,
-   `cosmonic:agent/spawn-confined`, `cosmonic:agent/tool-discovery` and so on)
+   `cosmonic:agent/tool-discovery`, `cosmonic:agent/tool-loading` and so on)
    at the next unpublished version after #71 takes the package to 0.4.0. The
    shared types interface is `spawn-types`, not a bare `types`, so it reads
    clearly beside `inference-types`. The files stay in
@@ -51,7 +46,7 @@ specified and answers `unavailable`.
    two `cosmonic:agent` versions until the interfaces join the real package,
    when the self-dependency disappears.
 3. **Worlds organize the package.** One file per interface, and worlds per role
-   composed with `include`: `spawner`, `confined-spawner`, `tool-discoverer`,
+   composed with `include`: `spawner`, `tool-discoverer`,
    `tool-loader`, `harness` (all of them), `runnable-agent`, `tool-provider`,
    and the implementer worlds `spawn-provider` and `tool-provider-host`
    (renamed from `tool-broker`, since "broker" is reserved for host-wide
@@ -66,15 +61,9 @@ specified and answers `unavailable`.
    is `start-error`. The survey is below.
 6. **The reverse case and research grounding** are new sections. The interface
    did not change for them.
-7. **A confined outcome is a finish code and nothing else**, in the WIT, these
-   notes and the spike. The spike used to return step and tool-call counts
-   coarsened to powers of two and send `steps` progress frames during confined
-   runs; it now returns `finish` only and sends only `working` and `blocked`.
-   Finish only, because a confined child's every count is a channel it can
-   steer to its caller, and nothing in the implementation needed the counts.
 
-Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`,
-`spawn-confined` and `tool-loading.load`; `limit-scope` gained `loaded-tools`;
+Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`
+and `tool-loading.load`; `limit-scope` gained `loaded-tools`;
 the spike now detaches instead of withdrawing when the caller drops an
 approval's `decision`, as the WIT already said; `tool-discovery.list` takes an
 optional query. The former open questions are now stated defaults (see
@@ -87,16 +76,14 @@ optional query. The former open questions are now stated defaults (see
   situation arises: cancellation is cooperative and is a request, not a
   guarantee; an outcome already recorded wins the race against a cancel;
   cancellation does not roll back effects; `admission-error` and `start-error`
-  both mean "nothing ran", the same promise as #71's `not-dispatched`; and a
-  cancelled confined run may already have delivered part of its results to the
-  sink, which is #71's "outcome unknown". `tool-workload` takes `call-error`
+  both mean "nothing ran", the same promise as #71's `not-dispatched`.
+  `tool-workload` takes `call-error`
   from whatever `cosmonic:agent` version it depends on, so moving the
   dependency to 0.4.0 picks up `not-dispatched` and `outcome-unknown` without
   a separate change.
 - **#70** (notifications 0.3.0): Victor asked for worlds and example scenarios
   in package READMEs. README.md follows that, with WIT excerpts beside each
-  scenario. The `person` sink is expected to deliver through notifications on
-  Desktop (question (b)).
+  scenario.
 - **cosmonic-labs/sandboxed-agents#24** (merged): each tool exports a
   per-tool interface shaped like the planned `tool-workload`, ships as its own
   image with its own grants, and the `toolbox` guest router is kept only for
@@ -122,8 +109,8 @@ definition. The WIT states them on `types`.
 - **Beyond the ceiling: `needs-approval`.** Approval is explicit
   declassification (deciding that data may cross a boundary it otherwise could
   not). The digest covers the caller's identity and the whole request,
-  including `output { schema, max-bytes }`, `limits` and, for a confined spawn,
-  the `sink`; for a load, the `tool-request`. The `approval` carries a
+  including `output { schema, max-bytes }` and `limits`; for a load, the
+  `tool-request`. The `approval` carries a
   `decision` future: await it, then resend the identical request. Dropping it
   only stops waiting; the approval stays pending until it is decided or
   expires, and a grant admits one identical request from the same caller.
@@ -136,31 +123,13 @@ definition. The WIT states them on `types`.
   paraphrases. The final reply is a declassification channel by nature.
 - **Steerable channels.** Counts, the finish code, the error kind, an
   `output-rejected` over `max-bytes`, and timing are all chosen by the child.
-  Minor for an open agent; for a confined agent they are the whole channel, so
-  a confined outcome carries only `finish` and its progress carries no counts.
+  Each is a narrow channel, minor next to the reply itself.
 - **Caller identity** is the stable workload identity (namespace, name,
   component name), never instance ids. Policy wrappers are host-installed.
 
-## Open vs confined
-
-| | `spawn` returns `agent` (open) | `spawn-confined` (one run, no resource) |
-| --- | --- | --- |
-| Use when | the caller needs the result: research, review, a subtask | the child needs grants whose results the caller must never see: a privileged worker that writes to prod, files a ticket, or reads data the caller cannot |
-| Granted by | `import spawn` (world `spawner`) | `import spawn-confined` (world `confined-spawner`) |
-| Back to the caller | final reply parts, optional `structured`, counts | `working` and `blocked` progress, and a `confined-outcome` (finish) only |
-| Results go to | the caller, within `output` | an implementer-named `sink`: `person`, `approval-queue`, or a named `volume` |
-| Guarantee | the child's reach fits inside the caller's, unless approved as declassification | no content channel to the caller; the sink is not caller-readable; the child's writable reach does not overlap the caller's readable reach; distinct credentials and egress identities |
-
-Both need approval for grants beyond the caller's ceiling. Confinement is not
-airtight. A child and caller that share an external service, or watch timing,
-can still signal each other. "Distinct credentials and egress identities" has
-no enforcement in wash-runtime today: two workloads that reach the same host
-look the same to it. The host may implement `spawn-confined` later and return
-`unavailable` until then.
-
 ## Runs: the `runnable-agent` world
 
-`agent.run` and `spawn-confined` need a way to hand the child work. The 0.3.0
+`agent.run` needs a way to hand the child work. The 0.3.0
 `agent` world only imports, so without an export an implementer has to speak
 each agent's own HTTP protocol through the host ingress. The spike does exactly
 that with minimal-agent, and the bridge drops the instructions, attachments and
@@ -270,9 +239,8 @@ plugin, and serving it needs the runtime work listed at the end.
 
 ## The reverse case: quarantining untrusted content
 
-Most of the agent-security literature addresses the opposite direction from
-`spawn-confined`: a privileged agent delegates the handling of untrusted
-content to a quarantined child with no grants, and accepts only constrained
+Most of the agent-security literature addresses this case: a privileged agent
+delegates the handling of untrusted content to a quarantined child with no grants, and accepts only constrained
 output. Willison's Dual LLM pattern, CaMeL, FIDES and the design-patterns paper
 all build on it (see "Research grounding").
 
@@ -282,9 +250,7 @@ cannot act, and the host checks its answer against `output.schema` and
 `max-bytes`. With a schema of enums, numbers and booleans, and harness code
 that reads only `structured`, what returns to the privileged side is a few bits
 of typed data, which is the low-capacity output FIDES and the map-reduce
-pattern recommend. Where the privileged side must pass the content on without
-reading it, `spawn-confined` with `sink: person` delivers it to a person, not
-to the caller.
+pattern recommend.
 
 **What we do not support.**
 - *Free text still flows.* A string field in the schema, or the `reply` parts
@@ -293,9 +259,9 @@ to the caller.
   the harness code keeps them out of the privileged model's context.
 - *No opaque references.* CaMeL and FIDES let the privileged side hold a
   variable it can pass to a tool but never read, and track where each value
-  came from. Nothing here does that: a parent either reads an outcome
-  (`spawn`) or never gets it (`spawn-confined`). There is no value it can hand
-  to a second child without reading it.
+  came from. Nothing here does that: a parent reads every outcome it
+  receives, and there is no value it can hand to a second child without
+  reading it.
 - *No data-flow tracking.* CaMeL's guarantee comes from extracting control flow
   from the trusted query and tagging every value with its sources. This
   package checks reach at spawn time; it does not follow data through a run.
@@ -319,6 +285,41 @@ child can still be manipulated into a wrong answer within its schema; the
 design limits what a manipulated child can do and say, not whether it is
 manipulated. Side channels are not solved.
 
+## Considered and dropped: confined spawn
+
+**What it was.** `spawn-confined` started a one-run child whose results never
+reached its caller and went to a sink instead (a person, an approval queue, or a
+volume the caller could not read). That is Lampson's confinement property, with
+the roles turned around: the caller is the party kept out.
+
+**Why it was dropped.** The proposed use cases did not hold up.
+
+- *The deploy worker and the ticket filer* wanted privilege separation, not
+  confinement. Open `spawn` already gives that: the child's grants are checked
+  against the ceiling, anything beyond it needs an approval bound to a digest,
+  and secrets are named, never handed over. Those callers also want the result
+  back.
+- *The worker that handles a secret* is better served by keeping the secret
+  away from every model and every component. In order of preference:
+  1. Host-brokered credentials: the component names a credential binding and
+     the host attaches the credential to outbound requests, the way model keys
+     already work.
+  2. A deterministic tool component with its own grants and a narrow WIT
+     return type that carries no secret material, writing generated material
+     straight into the secret store. The component model's typed interface is
+     the confinement.
+  3. Only when a model must read secret data: open `spawn` with
+     structured-only, reply-withheld output and a closed schema (question (n)).
+     This narrows the channel; it does not close it.
+- *An auditor reviewing an agent* is started by host-side policy, not by the
+  agent under review, so it needs no agent-facing spawn power.
+- What confined would still add on top of open spawn (sink routing, checks that
+  a child's writes never overlap its caller's reads, a guarantee that nothing
+  ever comes back) does not justify its own interface, world and
+  implementation.
+
+**Reopen it** if a concrete use case appears that none of the above covers.
+
 ## Research grounding
 
 ### Classic
@@ -332,12 +333,11 @@ manipulated. Side channels are not solved.
   such as a service "varying its ratio of computing to input/output or its
   paging rate". His rules include transitivity (an untrusted program a confined
   one calls must be confined too) and masking (the caller must be able to
-  determine the inputs to every channel). `spawn-confined` reverses the roles
-  (the caller is the party kept out) but the property is his: the
-  `confined-outcome` is the legitimate channel, kept to a finish code, and the
-  shared services and timing we name as residual risk are his covert channels.
-  The transitivity rule is why a confined child may import `spawn-confined`
-  but never `spawn` (default 2).
+  determine the inputs to every channel). A quarantined child (the reverse
+  case) is his confined service: its output schema is the legitimate channel,
+  and its finish code, error kind and timing are his covert channels. The
+  confined spawn this package once proposed reversed his roles and was
+  dropped (see "Considered and dropped: confined spawn").
 - **Information-flow control and declassification.** Myers and Liskov,
   "Protecting Privacy using the Decentralized Label Model", ACM TOSEM 9(4),
   2000 ([PDF](https://cs.brown.edu/courses/csci2390/2023/readings/jif.pdf)),
@@ -430,20 +430,16 @@ manipulated. Side channels are not solved.
 - **Open spawn:** a reviewer with read-only access to the repo returns a
   structured verdict; a researcher with one allowed host returns a summary; a
   test runner with the workspace volume returns pass or fail and a log excerpt.
-- **Confined spawn:** a deploy worker holding production credentials applies a
-  change and reports to the approval queue; a ticket filer posts to an issue
-  tracker the caller cannot reach; an auditor reads a vault the caller cannot
-  and writes findings to a volume only a person reads.
 - **Quarantine (reverse):** triage an inbound email into a category and an
   urgency flag; extract a number from a scraped page; classify an
   attachment as safe or not before the privileged agent decides what to do.
 
 ### What these notes do not claim
 
-Confinement is partial: covert and timing channels, and services both sides can
-reach, stay open, as Lampson, EROS, CaMeL and FIDES each say of their own
-systems. "Distinct credentials and egress identities" for confined children is
-not enforced by wash-runtime today. Nothing here blocks prompt injection.
+Nothing here confines a child: its reply returns to its parent by design.
+Covert and timing channels, and services a parent and child can both reach,
+stay open, as Lampson, EROS, CaMeL and FIDES each say of their own systems.
+Nothing here blocks prompt injection.
 
 ## Defaults, open to review
 
@@ -460,24 +456,16 @@ already shows the fallible shape works, and its toolbox adapter has to trap
 when a child's discovery fails because 0.3.0's `list` cannot report it. Until
 then `tool-request` accepts either export.
 
-**2. Confinement is transitive, and spawn depth is capped.** *Default, open to
-review.* A confined child may import `spawn-confined` and never `spawn`.
-Lampson's transitivity rule requires that anything a confined program calls is
-confined too. Open `spawn` checks a grandchild only against its immediate
-caller's ceiling, and a grantor approving it sees the confined child as the
-caller; nothing re-checks the confinement rules against the original caller,
-so an approved grandchild could gain reach the original caller shares.
-`spawn-confined` applies those rules at every level, and its results go to a
-sink rather than back up the chain. The host refuses a
-confined child whose component imports `spawn` (it does not start), declares
-only `spawn-confined` for confined children and both for open ones, and
-refuses `spawn` from a confined caller at call time as a second check. Depth is
-capped by the host (the spike's default is 1: children of a workload the person
-started may not spawn at all) and returns `over-limit(depth)` with the cap.
-*Enforced in* the spike's bind hook and `spawn`; *tested by*
-`confinement_is_transitive_and_depth_is_capped` (an open child refused at depth
-1; at depth 2 a child spawns a grandchild and the grandchild is refused; a
-confined child importing `spawn` does not start and nothing reaches the sink).
+**2. Spawn depth is capped.** *Default, open to review.* A child may spawn
+children of its own only within a depth the host sets; past it, `spawn`
+returns `over-limit(depth)` with the cap. Each level of nesting is another
+agent whose reach is checked only against its immediate parent, another set of
+workloads, and another place a person has to look, so the cap is small (the
+spike's default is 1: children of a workload the person started may not spawn
+at all). A child calls at its own depth and delegates only its own model
+binding. *Enforced in* the spike's admission; *tested by*
+`spawn_depth_is_capped` (a child refused at depth 1; at depth 2 a child spawns
+a grandchild and the grandchild is refused).
 
 **3. Discovery shows what could be granted, marks it, and filters.** *Default,
 open to review.* `tool-discovery.list` returns offers that fit the caller's
@@ -508,15 +496,6 @@ withdraw. *Enforced in* the spike's admission; *tested by*
 `ceiling_needs_approval_then_identical_resend` and
 `dropping_the_decision_keeps_the_approval_pending`.
 
-**6. Confined children may not reach hosts the caller can reach.** *Default,
-open to review.* "The child's writable reach does not overlap the caller's
-readable reach", read strictly, refuses any allowed host the caller can also
-reach, because a shared host is a channel both can read and write. Distinct
-egress identities would let a host tell the two apart, but wash-runtime does
-not enforce them today, so the conservative reading stands until it does.
-Stated in `spawn-confined`; *enforced in* the spike's confinement rules;
-*tested by* `confined_run_to_sink`.
-
 ### Still open
 
 **(a) One workload for agent and tools, or one per tool?** Both run. Labels fix
@@ -524,10 +503,6 @@ the tool set when the agent is built and suit presets; one workload per tool,
 with the host routing `tools`, takes a tool set chosen at spawn time and is
 what `tool-loading` needs. Proposal: one workload per tool for `spawn` and
 `load`, labeled single-workload placement for presets.
-
-**(b) Sink semantics.** `person` likely delivers through Desktop's
-notifications (`cosmonic:notifications`, #70) and `approval-queue` through its
-approvals view. `volume` is enough once volumes are host-level objects.
 
 **(c) Lifetime versus store.** A resource dies with its store, so a parent that
 lives for one request kills its children (and its loaded tools) when the
@@ -548,13 +523,24 @@ the real package.
 **(l) Labeled imports for preset agents.** A zero-key `spawn` under a labeled
 import, checked before instantiation. Worth adding?
 
-**(n) Reverse case in the interface?** A closed-schema output mode with `reply`
-withheld, or opaque handles a parent can pass on but not read. Not added; see
-"The reverse case".
+**(n) Structured-only output for `spawn`?** An output mode that withholds
+`reply` and requires a closed schema (enums, numbers, booleans), so the host
+rather than harness code enforces the quarantine pattern and an approval can
+state how few bits come back; and opaque handles a parent can pass on but not
+read. Neither is added; see "The reverse case". It is also the third option in
+"Considered and dropped" for a model that must read secret data.
 
 Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
-the caller as its stable workload identity, (i) confined as one run, (k) the
+the caller as its stable workload identity, (k) the
 two-version binding names, (m) detach on drop.
+
+## Follow-ups
+
+- **Per-tool secret bindings for tool components.** A tool's grants name
+  secrets, but Desktop's custom-agent tool form has no secret field today.
+- **Host-brokered credentials for tool egress.** Named credential bindings,
+  with the host attaching the credential to outbound requests so the component
+  never holds the value, extending the named model-binding approach to tools.
 
 ## What implementing it needs from the runtime
 
@@ -581,6 +567,3 @@ From building it as a native plugin on wash-runtime:
   routes `tools` only for children it started. Loading into an arbitrary caller
   needs the host to serve that caller's `tools` import and add or remove
   dispatch targets while it runs.
-- **Egress identity** (for confinement). A way to give a child's outbound
-  requests an identity distinct from its caller's, so "distinct egress
-  identities" can mean something.

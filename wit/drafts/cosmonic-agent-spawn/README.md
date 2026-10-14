@@ -7,14 +7,12 @@ cannot collide with the real `cosmonic:agent` package. No identifier carries
 "draft"; generated Rust modules are `agent0_5_0` beside `agent0_3_0`. Rationale,
 research and the stated defaults are in [DESIGN-NOTES.md](DESIGN-NOTES.md).
 
-An agent running in a sandbox often needs help: a reviewer for one file, a worker
-that files a ticket with credentials the agent must never hold, or a tool it did
-not start with. This package gives a sandboxed agent four separate powers, each
-its own import, so a workload is granted exactly the ones its world names:
+An agent running in a sandbox often needs help: a reviewer for one file, a
+reader for content it should not trust, or a tool it did not start with. This
+package gives a sandboxed agent three separate powers, each its own import, so a
+workload is granted exactly the ones its world names:
 
 - **spawn**: start a sub-agent and read its final replies;
-- **spawn-confined**: start a one-run worker whose results go to a person, an
-  approval queue or a volume, never back to the caller;
 - **tool-discovery**: ask which tools are available to it;
 - **tool-loading**: load a tool into itself while it runs.
 
@@ -38,7 +36,6 @@ when the interfaces join the real package the dependency disappears.
 | step | One model call inside a run, as in Assistants run steps and Vercel AI SDK steps. `limits.max-steps` bounds them; the OpenAI Agents SDK, Claude Agent SDK and Goose call that bound `max_turns`. |
 | reach | What a request's grants can read (read reach) and send data to (egress reach). |
 | ceiling | By default a child's or a loaded tool's reach must fit inside the caller's own. |
-| confined | A child that cannot pass what it learned back to its caller, after Lampson's confinement problem (1973). Partial: timing and shared services remain. |
 | caller | The component the import is bound to, identified by workload namespace, workload name and component name. |
 
 ## Worlds
@@ -46,13 +43,12 @@ when the interfaces join the real package the dependency disappears.
 | World | Imports | Exports | Who targets it |
 | --- | --- | --- | --- |
 | `spawner` | `cosmonic:agent/agent@0.3.0`, `spawn` | none | An agent that delegates and reads the results |
-| `confined-spawner` | `cosmonic:agent/agent@0.3.0`, `spawn-confined` | none | An agent that hands privileged work off and never sees it |
 | `tool-discoverer` | `cosmonic:agent/agent@0.3.0`, `tool-discovery` | none | An agent that may see the catalog |
 | `tool-loader` | `tool-discoverer`, `tool-loading` | none | An agent that may change its own tool set |
-| `harness` | `spawner`, `confined-spawner`, `tool-loader` | none | A top-level harness with every power |
+| `harness` | `spawner`, `tool-loader` | none | A top-level harness with every power |
 | `runnable-agent` | `cosmonic:agent/agent@0.3.0` | `runnable` | Any agent a host can spawn |
 | `tool-provider` | none | `tool-workload` | One tool component |
-| `spawn-provider` | none | `spawn`, `spawn-confined` | The host plugin, or a test double |
+| `spawn-provider` | none | `spawn` | The host plugin, or a test double |
 | `tool-provider-host` | none | `tool-discovery`, `tool-loading` | The host side of discovery and loading |
 
 Worlds compose with `include`. A coding agent that delegates and can itself be
@@ -67,9 +63,9 @@ world coder {
 }
 ```
 
-A reviewer that should never spawn anything targets only `runnable-agent`. A
-deploy agent that must not read what its worker does imports `confined-spawner`
-and not `spawner`, so it has no way to spawn an open agent at all.
+A reviewer that should never spawn anything targets only `runnable-agent`. An
+agent that should use only the tools it started with imports neither
+`tool-discoverer` nor `tool-loader`.
 
 There is no guest-side policy world. A component placed between a caller and the
 implementer would become the caller, and its own grants would become the
@@ -126,36 +122,7 @@ then the final reply and the structured verdict. It never sees the reviewer's
 tool calls, tool output, or journal. Those stay on the host's observation path
 for the person who owns the workload.
 
-## Scenario 2: hand off a privileged write the caller must never see
-
-An on-call agent decides a production config needs a change. A worker with the
-deploy credentials makes it and reports to the approval queue. The on-call
-agent learns only whether the run finished.
-
-```wit
-interface spawn-confined {
-    variant sink { person, approval-queue, volume(string), other(string) }
-    record confined-outcome { finish: finish }
-    type confined-run = tuple<stream<progress>, future<result<confined-outcome, run-error>>>;
-    spawn-confined: async func(request: spawn-request, sink: sink, task: user-message)
-        -> result<confined-run, admission-error>;
-}
-```
-
-The worker's grants (the deploy secret name, the production API host) are
-beyond the on-call agent's ceiling, so `spawn-confined` returns
-`needs-approval`. The approval's `detail` says the results go to the approval
-queue, not to the caller, and its digest covers the request and the sink. Once
-a person grants it, the identical request is admitted. The confined run's
-progress carries only `working` and `blocked`, and its outcome is a finish code:
-no reply, no counts, because every count is something the worker could steer to
-signal its caller. The host also refuses a sink the caller can read, a worker
-that could write anywhere the caller reads, and (until child and caller have
-distinct egress identities) a worker that could reach any host the caller can.
-The worker itself may hand work on only through `spawn-confined`: a confined
-child that imports `spawn` does not start.
-
-## Scenario 3: read untrusted content in quarantine
+## Scenario 2: read untrusted content in quarantine
 
 The agent-security literature mostly addresses the reverse case: a privileged
 agent hands untrusted content (an inbound email, a scraped page) to a child
@@ -181,11 +148,11 @@ let triage: Triage = reader.run(user(&untrusted_email)).await?.structured()?;
 ```
 
 The host enforces the empty reach and the schema; it does not enforce that the
-schema has no free strings, and it always returns `reply`. Where the privileged
-side must act on the content without reading it, use `spawn-confined` with
-`sink: person`. DESIGN-NOTES.md says what this does and does not defend against.
+schema has no free strings, and it always returns `reply`; a structured-only
+output mode that withholds `reply` is an open question in DESIGN-NOTES.md, which
+also says what this does and does not defend against.
 
-## Scenario 4: find a tool, then use it
+## Scenario 3: find a tool, then use it
 
 A harness asks what it can use before deciding what to give a child.
 
@@ -212,7 +179,7 @@ harness passes it to `spawn` unchanged and the approval digest matches what the
 host showed. Tool names and descriptions are written by the tool's author:
 treat them as untrusted text when they reach a model.
 
-## Scenario 5: load a tool into a running agent
+## Scenario 4: load a tool into a running agent
 
 Spawning is declarative: a child's tools are fixed when it starts. Changing a
 running agent's own tool set is a separate power in a separate world.
@@ -250,7 +217,6 @@ component exporting `cosmonic:agent/tools@0.3.0`, for compatibility.
 | --- | --- |
 | [`spawn-types.wit`](spawn-types.wit) | `spawn-types`: the contract (caller, reach, ceiling, attenuation, authorship) and every shared record |
 | [`spawn.wit`](spawn.wit) | `spawn` and the `agent` resource |
-| [`spawn-confined.wit`](spawn-confined.wit) | `spawn-confined`, sinks, the confined outcome |
 | [`runnable.wit`](runnable.wit) | `runnable`, the export a spawned child provides |
 | [`tool-workload.wit`](tool-workload.wit) | `tool-workload`, one tool's surface |
 | [`tool-discovery.wit`](tool-discovery.wit) | `tool-discovery` |

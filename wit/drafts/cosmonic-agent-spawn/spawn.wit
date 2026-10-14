@@ -1,6 +1,6 @@
 package cosmonic:agent@0.5.0;
 
-/// The caller may spawn an open sub-agent and read its final replies, within
+/// The caller may spawn a sub-agent and read its final replies, within
 /// the ceiling stated on `spawn-types`. Not published; for discussion.
 @since(version = 0.5.0)
 interface spawn {

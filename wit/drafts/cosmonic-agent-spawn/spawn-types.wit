@@ -6,8 +6,8 @@ package cosmonic:agent@0.5.0;
 /// file depends on the published 0.3.0 for messages and usage.
 ///
 /// Importing this interface grants nothing. The powers live in `spawn`,
-/// `spawn-confined`, `tool-discovery` and `tool-loading`, each a separate
-/// import so a world grants exactly the ones it names.
+/// `tool-discovery` and `tool-loading`, each a separate import so a world
+/// grants exactly the ones it names.
 ///
 /// The contract below binds the implementer of those interfaces, whatever it
 /// is: a native host plugin, a host-installed policy layer in front of it, or
@@ -43,7 +43,7 @@ package cosmonic:agent@0.5.0;
 /// beyond the ceiling says so too.
 ///
 /// Authorship. A model can paraphrase anything it read, so redaction is not
-/// a security boundary and an open agent's final reply is a declassification
+/// a security boundary and a child's final reply is a declassification
 /// channel by nature. Nothing else the caller sees carries child-authored
 /// text: progress, errors, and reasons are implementer-authored, and every
 /// detail string is diagnostic only, not stable, and not for branching on.
@@ -52,10 +52,8 @@ package cosmonic:agent@0.5.0;
 /// Steerable channels. The child cannot author text the caller sees outside
 /// its reply, but it does choose its counts, its finish code, which error
 /// kind a run ends in, whether an outcome exceeds `output.max-bytes`, and
-/// its timing. Each of these is a narrow channel to the caller. That is
-/// minor next to an open agent's reply; for a confined agent it is the
-/// whole channel, so `spawn-confined` returns as little of it as it can.
-/// No interface here closes covert or timing channels.
+/// its timing. Each of these is a narrow channel to the caller, minor next
+/// to the reply itself. No interface here closes covert or timing channels.
 ///
 /// Credentials never pass through these interfaces. Models and secrets are
 /// named; the implementer resolves them and keeps values out of every
@@ -130,7 +128,7 @@ interface spawn-types {
         grants: grants,
     }
 
-    /// What may come back to the caller, or reach a confined agent's sink.
+    /// What may come back to the caller.
     /// Covered by the approval digest.
     record output-spec {
         /// JSON Schema that `structured` must satisfy. None means reply
@@ -144,7 +142,7 @@ interface spawn-types {
     /// takes the implementer's default, which policy may cap.
     record limits {
         /// Runs the child may take: the number of `agent.run` calls
-        /// accepted. A confined spawn takes exactly one.
+        /// accepted.
         max-runs: option<u32>,
         /// Model calls the child may make in one run. This is the bound
         /// that stops a runaway run. The OpenAI Agents SDK, the Claude Agent
@@ -160,8 +158,8 @@ interface spawn-types {
     }
 
     /// Everything needed to start a sub-agent. Declarative: the tool set is
-    /// fixed for the agent's lifetime. Construction is lenient; `spawn` and
-    /// `spawn-confined` validate and return `invalid-request`.
+    /// fixed for the agent's lifetime. Construction is lenient; `spawn`
+    /// validates and returns `invalid-request`.
     record spawn-request {
         /// A component targeting the `runnable-agent` world, so the
         /// implementer can hand it runs in process.
@@ -209,9 +207,8 @@ interface spawn-types {
         /// Implementer-issued id, to correlate with the approval UI and audit log.
         id: string,
         /// `sha256:<hex>` over the caller's identity and the whole request:
-        /// for a spawn, the `spawn-request` including `output` and `limits`
-        /// (and `sink`, for a confined spawn); for a load, the
-        /// `tool-request`. A changed request has a different digest and is a
+        /// for a spawn, the `spawn-request` including `output` and `limits`;
+        /// for a load, the `tool-request`. A changed request has a different digest and is a
         /// new request.
         request-digest: string,
         /// Implementer-authored. States what is declassified, for example
@@ -334,8 +331,7 @@ interface spawn-types {
         working,
         /// The run is paused.
         blocked(blocked-reason),
-        /// Cumulative counters for this run so far. Never sent for a
-        /// confined run.
+        /// Cumulative counters for this run so far.
         steps(step-counts),
         /// A frame not captured above. Safe to ignore.
         other(option<string>),
