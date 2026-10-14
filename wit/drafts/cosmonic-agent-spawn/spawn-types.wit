@@ -19,13 +19,13 @@ package cosmonic:agent@0.5.0;
 /// become the caller, and its own grants would become the ceiling.
 ///
 /// Reach. A request's read reach is the union, over the agent and every
-/// tool, of its read grants: volumes, secrets, interfaces the implementer
-/// classifies as reading, and the model binding. Its egress reach is the
+/// toolset, of its read grants: volumes, secrets, interfaces the implementer
+/// classifies as reading, and the model alias. Its egress reach is the
 /// union of allowed hosts and interfaces the implementer classifies as
 /// writing. A read-write volume counts both ways.
 ///
 /// Ceiling. By default a child's read reach and egress reach, or a loaded
-/// tool's, must each fit inside the caller's. Within that ceiling, results
+/// toolset's, must each fit inside the caller's. Within that ceiling, results
 /// flowing up are not a leak: the caller could have read the same data
 /// itself. Containment is decided on what a grant reaches, not on its name:
 /// a volume fits only if it is backed by the same storage as one of the
@@ -115,16 +115,18 @@ interface spawn-types {
         secrets: list<string>,
     }
 
-    /// A tool: one component with its own grants. Used by `spawn` for a
-    /// child's tools and by `tool-loading` for a tool the caller loads.
-    record tool-request {
-        /// Unique among the tools of one agent. Used for naming, display,
+    /// A toolset: one component, with its own grants, that offers one or more
+    /// tool definitions. Used by `spawn` for a child's toolsets and by
+    /// `tool-loading` for a toolset the caller loads. "Tool" means a single
+    /// definition or call, as in `cosmonic:agent/tools`.
+    record toolset-spec {
+        /// Unique among the toolsets of one agent. Used for naming, display,
         /// and audit.
         name: string,
         /// A component exporting `tool-workload` or, for compatibility,
         /// `cosmonic:agent/tools@0.3.0`.
         component: component-ref,
-        /// What this tool component may touch.
+        /// What this toolset component may touch.
         grants: grants,
     }
 
@@ -157,24 +159,24 @@ interface spawn-types {
         deadline: option<duration>,
     }
 
-    /// Everything needed to start a sub-agent. Declarative: the tool set is
+    /// Everything needed to start a sub-agent. Declarative: its toolsets are
     /// fixed for the agent's lifetime. Construction is lenient; `spawn`
     /// validates and returns `invalid-request`.
     record spawn-request {
         /// A component targeting the `runnable-agent` world, so the
         /// implementer can hand it runs in process.
         agent: component-ref,
-        /// An inference binding name, as `models.open` takes it. Resolved
-        /// against the bindings the caller's spawn grant delegates, since a
-        /// caller that never chats has no model scope of its own. Counts
-        /// toward read reach like any other grant.
-        model: string,
+        /// A model alias, as `models.open` takes it. Resolved against the
+        /// aliases the caller's spawn grant delegates, since a caller that
+        /// never chats has no aliases of its own. Counts toward read reach
+        /// like any other grant.
+        model-alias: string,
         /// The child's instructions.
         instructions: string,
-        /// Hosts the agent component itself may reach. Tools carry their own.
+        /// Hosts the agent component itself may reach. Toolsets carry their own.
         allowed-hosts: list<string>,
-        /// The child's tools. Names must be unique.
-        tools: list<tool-request>,
+        /// The child's toolsets. Names must be unique.
+        toolsets: list<toolset-spec>,
         /// What may come back, and how much.
         output: output-spec,
         /// Bounds on the child's lifetime work.
@@ -208,12 +210,14 @@ interface spawn-types {
         id: string,
         /// `sha256:<hex>` over the caller's identity and the whole request:
         /// for a spawn, the `spawn-request` including `output` and `limits`;
-        /// for a load, the `tool-request`. A changed request has a different digest and is a
-        /// new request.
+        /// for a load, the `toolset-spec`. A changed request has a different
+        /// digest and is a new request.
         request-digest: string,
-        /// Implementer-authored. States what is declassified, for example
-        /// "results of this agent (schema S, at most N bytes) return to <caller>".
-        detail: string,
+        /// Implementer-authored text for the person who decides, like
+        /// `toolset-offer.summary`, and unlike diagnostic detail strings.
+        /// States what is declassified, for example "results of this agent
+        /// (schema S, at most N bytes) return to <caller>".
+        summary: string,
         /// Resolves when the grantor decides. Dropping it stops waiting; it
         /// does not withdraw the request, so a person who decides after the
         /// caller's own request has ended is not too late.
@@ -229,8 +233,9 @@ interface spawn-types {
         depth,
         /// Memory the implementer reserves for the child.
         memory,
-        /// Tools loaded into one agent at once. May clear when one is dropped.
-        loaded-tools,
+        /// Toolsets loaded into one agent at once. May clear when one is
+        /// dropped.
+        loaded-toolsets,
         /// A scope not captured above.
         other(option<string>),
     }
@@ -243,8 +248,8 @@ interface spawn-types {
         limit: option<u64>,
     }
 
-    /// Why a spawn did not start an agent, or a load did not load a tool.
-    /// Either way nothing ran: no child started and no tool was attached.
+    /// Why a spawn did not start an agent, or a load did not load a toolset.
+    /// Either way nothing ran: no child started and no toolset was attached.
     /// Detail strings are implementer-authored and diagnostic only.
     variant admission-error {
         /// A policy or a person refused. The capability is partially granted:
@@ -255,8 +260,8 @@ interface spawn-types {
         needs-approval(approval),
         /// An implementer limit would be exceeded.
         over-limit(over-limit),
-        /// Malformed: a malformed digest, a duplicate tool name, an unknown
-        /// binding, a component that does not target the right world.
+        /// Malformed: a malformed digest, a duplicate toolset name, an unknown
+        /// model alias, a component that does not target the right world.
         invalid-request(string),
         /// The implementer could not serve the call. Retry may succeed.
         unavailable(string),
@@ -278,8 +283,6 @@ interface spawn-types {
     variant finish {
         /// The agent ended its reply.
         done,
-        /// `limits.max-runs` was reached.
-        max-runs,
         /// `limits.max-steps` was reached in this run.
         max-steps,
         /// `limits.max-tokens` was reached.
@@ -341,13 +344,12 @@ interface spawn-types {
     /// implementer-authored, never the child's, and diagnostic only.
     variant run-error {
         /// The caller dropped the progress stream or the agent. Cancellation
-        /// is cooperative: effects the child or its tools caused before they
+        /// is cooperative: effects the child or its toolsets caused before they
         /// stopped are not rolled back.
         cancelled,
         /// The outcome failed `output.schema` or exceeded `output.max-bytes`.
         output-rejected(string),
-        /// A person or the auditor declined to release the outcome. Open
-        /// agents only.
+        /// A person or the auditor declined to release the outcome.
         withheld,
         /// The child failed. Details are on the observation path, not here.
         failed(string),

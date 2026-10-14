@@ -46,28 +46,62 @@ specified and answers `unavailable`.
    two `cosmonic:agent` versions until the interfaces join the real package,
    when the self-dependency disappears.
 3. **Worlds organize the package.** One file per interface, and worlds per role
-   composed with `include`: `spawner`, `tool-discoverer`,
-   `tool-loader`, `harness` (all of them), `runnable-agent`, `tool-provider`,
-   and the implementer worlds `spawn-provider` and `tool-provider-host`
-   (renamed from `tool-broker`, since "broker" is reserved for host-wide
-   services). The old
-   `spawn-middleware` world is gone: a guest component in front of the
+   composed with `include`. The capability worlds `spawner`,
+   `tool-discoverer` and `tool-loader` each hold only their own import and
+   include neither `cosmonic:agent/agent` nor each other, so each is exactly
+   one grant; an agent writes `include agent; include spawner;`. `harness`
+   includes the agent world and all three. `runnable-agent` is the world a
+   spawned child targets, and `tool-provider` is one toolset component. The
+   implementer worlds are `spawn-provider`, `tool-discovery-provider` and
+   `tool-loading-provider`; the last also exports `cosmonic:agent/tools`,
+   because loading only works when the same implementer serves the caller's
+   `tools` import. (They replace `tool-provider-host`, formerly
+   `tool-broker`: world names carry neither "host" nor "broker", which is
+   reserved for host-wide services.) The import-side suffix (for example
+   `-client`) is still being chosen. The old `spawn-middleware` world is gone: a guest component in front of the
    implementer would become the caller, and its own grants the ceiling, which
    contradicts "policy wrappers are host-installed".
 4. **Tool discovery and loading**, each its own interface and world (below).
 5. **"Turn" is now "run"**: `agent.run`, `started-run`, `run-outcome`,
-   `run-error`, `run-options`, `limits.max-runs`, `finish.max-runs`, and the
-   child's export `runnable` (was `turn`). `send` is `agent.run`, `send-error`
-   is `start-error`. The survey is below.
+   `run-error`, `run-options`, `limits.max-runs`, and the child's export
+   `runnable` (was `turn`). `send` is `agent.run`, `send-error` is
+   `start-error`. The survey is below.
 6. **The reverse case and research grounding** are new sections. The interface
    did not change for them.
 
 Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`
-and `tool-loading.load`; `limit-scope` gained `loaded-tools`;
+and `tool-loading.load`; `limit-scope` gained `loaded-toolsets`;
 the spike now detaches instead of withdrawing when the caller drops an
 approval's `decision`, as the WIT already said; `tool-discovery.list` takes an
 optional query. The former open questions are now stated defaults (see
 "Defaults, open to review").
+
+### Design-skill review fixes
+
+From a review against the WIT interface design skill:
+
+- **One word for a component that offers tools: toolset.** `tool-request` is
+  `toolset-spec`, `loaded-tool` is `loaded-toolset`, `tool-offer` is
+  `toolset-offer`, and `spawn-request.tools` is `toolsets`. "Tool" stays for a
+  single definition or call, as in 0.3.0 (`tool-def`, `tool-call`).
+- **Accessors use `get-`.** `loaded-toolset.names` is `get-names`.
+- **Aliases, not bindings, for models.** `spawn-request.model` is
+  `model-alias`, matching 0.3.0's `models.open(alias)` and `unknown-alias`.
+  "Binding" is kept only for credential bindings, a different idea (see
+  "Follow-ups").
+- **No unreachable finish code.** `finish.max-runs` is gone: an agent out of
+  runs is refused on its next `agent.run`, never mid-run.
+- **A dedicated exhaustion type.** `start-error.exhausted` carries `budget`
+  (`runs`, `tokens`, `duration`, `other`), only what can leave an agent unable
+  to take another run, instead of the whole `finish`.
+- **A permanent failure case.** `start-error.failed(string)`: the child has
+  ended for good and will never accept another run. The spike returns it for
+  every run after a child fails to start.
+- **`approval.summary`**, not `detail`: it is shown to a person, like
+  `toolset-offer.summary`, unlike diagnostic detail strings.
+- **Worlds**: capability worlds hold only their own import, `tool-loader` no
+  longer includes discovery, and `tool-provider-host` is split in two (item 3
+  above).
 
 ### Alignment with open PRs
 
@@ -93,14 +127,14 @@ optional query. The former open questions are now stated defaults (see
 ## Information-flow rules
 
 The implementer enforces these; the native plugin sees the caller's workload
-definition. The WIT states them on `types`.
+definition. The WIT states them on `spawn-types`.
 
-- **Reach.** Read reach is the union, over the agent and all its tools, of read
-  grants: volumes, secrets, interfaces classified as reading, and the model
-  binding. Egress reach is the union of allowed hosts and writing interfaces. A
+- **Reach.** Read reach is the union, over the agent and all its toolsets, of
+  read grants: volumes, secrets, interfaces classified as reading, and the
+  model alias. Egress reach is the union of allowed hosts and writing interfaces. A
   read-write volume counts both ways.
 - **Default ceiling.** The child's read reach and egress reach (or a loaded
-  tool's) must each fit inside the caller's. Within the ceiling, results flowing
+  toolset's) must each fit inside the caller's. Within the ceiling, results flowing
   up are not a leak. Containment compares what a grant reaches, not its name:
   two workloads can call different storage `workspace`, so a volume fits only
   if the same storage backs one of the caller's mounts. A grant the implementer
@@ -110,7 +144,7 @@ definition. The WIT states them on `types`.
   declassification (deciding that data may cross a boundary it otherwise could
   not). The digest covers the caller's identity and the whole request,
   including `output { schema, max-bytes }` and `limits`; for a load, the
-  `tool-request`. The `approval` carries a
+  `toolset-spec`. The `approval` carries a
   `decision` future: await it, then resend the identical request. Dropping it
   only stops waiting; the approval stays pending until it is decided or
   expires, and a grant admits one identical request from the same caller.
@@ -200,36 +234,39 @@ approval-gated. Eric does not want a guest-side router. Spawning starts
 declarative. The package keeps all three.
 
 - **`tool-discovery.list`** returns the offers this caller may use or hand
-  down. The host keeps the catalog (tools a person installed or policy allows,
-  each a pinned component with the grants the host would give it). Each offer
-  carries a ready-made `tool-request`, an implementer-authored summary, the
-  tool's own definitions as catalogued, and its `fit` against the caller's
-  ceiling (`within-ceiling` or `needs-approval`). Offers policy would never
-  grant are absent. An optional `query` keeps the answer small: it matches
-  offer names, summaries, and tool names and descriptions, ignoring case.
-  Asking starts nothing. Discovery is its own import because
-  knowing what exists is information.
-- **Tool descriptions are untrusted text.** A tool's author writes its names,
-  descriptions and schemas, and a model reads them. Discovery puts more of
-  that text in front of models, so the host should show provenance (the pinned
-  digest) and may curate what it catalogues.
-- **`tool-loading.load`** loads a tool into the caller while it runs. It is a
-  separate interface and world (`tool-loader`) so no world gets it by
-  accident, and it is not a method on the spawn `agent` handle: a parent that
-  wants a child with more tools spawns a new child. Admission matches `spawn`
-  (ceiling, approval digest over the caller and the `tool-request`), and policy
-  may ask for approval even within the ceiling, since new code is new risk even
-  when its reach is not. The host starts the tool as its own component and
-  offers its functions through the caller's existing `cosmonic:agent/tools`
-  import. That needs the caller's `tools` import to be host-routed, not linked
-  to a sibling component. Dropping the `loaded-tool` handle unloads it.
-- **No guest router.** The host lists and dispatches across tool workloads, as
-  the spike's router already does for spawned children. Every tool is a
-  component with its own grants.
+  down. The implementer keeps the catalog (toolsets a person installed or
+  policy allows, each a pinned component with the grants it would be given).
+  Each `toolset-offer` carries a ready-made `toolset-spec`, an
+  implementer-authored summary, the toolset's own tool definitions as
+  catalogued, and its `fit` against the caller's ceiling (`within-ceiling` or
+  `needs-approval`). Offers policy would never grant are absent. An optional
+  `query` keeps the answer small: it matches offer names, summaries, and tool
+  names and descriptions, ignoring case. Asking starts nothing. Discovery is
+  its own import because knowing what exists is information.
+- **Tool descriptions are untrusted text.** A toolset's author writes its tool
+  names, descriptions and schemas, and a model reads them. Discovery puts more
+  of that text in front of models, so the implementer should show provenance
+  (the pinned digest) and may curate what it catalogues.
+- **`tool-loading.load`** loads a toolset into the caller while it runs. It is
+  a separate interface and world (`tool-loader`) so no world gets it by
+  accident, and `tool-loader` does not include discovery: a caller may be
+  allowed to load toolsets it is given without browsing the catalog. It is not
+  a method on the spawn `agent` handle: a parent that wants a child with more
+  toolsets spawns a new child. Admission matches `spawn` (ceiling, approval
+  digest over the caller and the `toolset-spec`), and policy may ask for
+  approval even within the ceiling, since new code is new risk even when its
+  reach is not. The implementer starts the toolset as its own component and
+  offers its tools through the caller's existing `cosmonic:agent/tools`
+  import, so it must serve that import too; `tool-loading-provider` exports
+  both. `loaded-toolset.get-names` returns the tool names it chose. Dropping
+  the handle unloads the toolset.
+- **No guest router.** The implementer lists and dispatches across toolset
+  workloads, as the spike's router already does for spawned children. Every
+  toolset is a component with its own grants.
 
 Spike coverage: `discovery_lists_against_the_callers_ceiling` registers five
 catalog entries and checks fits for a caller that reads `workspace` and reaches
-`allowed.test` (a reader and a network tool inside, a writer and an unknown
+`allowed.test` (a reader and a network toolset inside, a writer and an unknown
 host beyond, a never-grant entry absent), checks that a caller with no reach
 sees every offer as beyond, filters by query (a match never reveals a
 never-grant entry), spawns an offer unchanged without approval, and checks
@@ -244,7 +281,7 @@ delegates the handling of untrusted content to a quarantined child with no grant
 output. Willison's Dual LLM pattern, CaMeL, FIDES and the design-patterns paper
 all build on it (see "Research grounding").
 
-**What we support.** An open `spawn` with no tools and no `allowed-hosts` is a
+**What we support.** A `spawn` with no toolsets and no `allowed-hosts` is a
 quarantined LLM in Willison's sense: it reaches nothing but its model, it
 cannot act, and the host checks its answer against `output.schema` and
 `max-bytes`. With a schema of enums, numbers and booleans, and harness code
@@ -278,7 +315,7 @@ Neither clearly strengthens the model enough today. The first only helps when
 the harness code is not trusted, and then the harness's own grants are the
 larger problem; the second needs host-side value storage and provenance that
 nothing else here has yet. Both stay open as question (n). The pattern is
-supported by convention, and Scenario 3 in README.md shows how.
+supported by convention, and Scenario 2 in README.md shows how.
 
 **What we never claim.** This does not block prompt injection. A quarantined
 child can still be manipulated into a wrong answer within its schema; the
@@ -451,10 +488,10 @@ until someone argues it down.
 `cosmonic:agent` version changes `tools.list` to return
 `result<list<tool-def>, call-error>` and retires the separate `tool-workload`
 name. Two interfaces that differ only in whether discovery can fail would
-split every tool and every host in two for no lasting reason; sandboxed-agents#24
-already shows the fallible shape works, and its toolbox adapter has to trap
-when a child's discovery fails because 0.3.0's `list` cannot report it. Until
-then `tool-request` accepts either export.
+split every toolset and every implementer in two for no lasting reason;
+sandboxed-agents#24 already shows the fallible shape works, and its toolbox
+adapter has to trap when a child's discovery fails because 0.3.0's `list`
+cannot report it. Until then `toolset-spec` accepts either export.
 
 **2. Spawn depth is capped.** *Default, open to review.* A child may spawn
 children of its own only within a depth the host sets; past it, `spawn`
@@ -463,7 +500,7 @@ agent whose reach is checked only against its immediate parent, another set of
 workloads, and another place a person has to look, so the cap is small (the
 spike's default is 1: children of a workload the person started may not spawn
 at all). A child calls at its own depth and delegates only its own model
-binding. *Enforced in* the spike's admission; *tested by*
+alias. *Enforced in* the spike's admission; *tested by*
 `spawn_depth_is_capped` (a child refused at depth 1; at depth 2 a child spawns
 a grandchild and the grandchild is refused).
 
@@ -498,10 +535,10 @@ withdraw. *Enforced in* the spike's admission; *tested by*
 
 ### Still open
 
-**(a) One workload for agent and tools, or one per tool?** Both run. Labels fix
-the tool set when the agent is built and suit presets; one workload per tool,
-with the host routing `tools`, takes a tool set chosen at spawn time and is
-what `tool-loading` needs. Proposal: one workload per tool for `spawn` and
+**(a) One workload for agent and toolsets, or one per toolset?** Both run. Labels fix
+the toolsets when the agent is built and suit presets; one workload per toolset,
+with the host routing `tools`, takes toolsets chosen at spawn time and is
+what `tool-loading` needs. Proposal: one workload per toolset for `spawn` and
 `load`, labeled single-workload placement for presets.
 
 **(c) Lifetime versus store.** A resource dies with its store, so a parent that
@@ -532,15 +569,15 @@ read. Neither is added; see "The reverse case". It is also the third option in
 
 Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
 the caller as its stable workload identity, (k) the
-two-version binding names, (m) detach on drop.
+two-version generated module names, (m) detach on drop.
 
 ## Follow-ups
 
-- **Per-tool secret bindings for tool components.** A tool's grants name
-  secrets, but Desktop's custom-agent tool form has no secret field today.
+- **Per-toolset secret bindings for toolset components.** A toolset's grants
+  name secrets, but Desktop's custom-agent tool form has no secret field today.
 - **Host-brokered credentials for tool egress.** Named credential bindings,
   with the host attaching the credential to outbound requests so the component
-  never holds the value, extending the named model-binding approach to tools.
+  never holds the value, extending the named model-alias approach to toolsets.
 
 ## What implementing it needs from the runtime
 

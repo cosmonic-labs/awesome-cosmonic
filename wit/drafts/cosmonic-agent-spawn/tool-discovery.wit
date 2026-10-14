@@ -1,22 +1,22 @@
 package cosmonic:agent@0.5.0;
 
-/// The caller may ask which tools are available to it. Not published; for
+/// The caller may ask which toolsets are available to it. Not published; for
 /// discussion.
 ///
-/// The host keeps the catalog: tools a person installed or policy allows,
-/// each a pinned component with the grants the host would give it. `list`
+/// The implementer keeps the catalog: toolsets a person installed or policy
+/// allows, each a pinned component with the grants it would be given. `list`
 /// answers for this caller only. It shows each offer's fit against the
 /// caller's ceiling (inside it, or beyond it but approvable) and leaves out
-/// offers policy would never grant. Asking
-/// starts nothing and loads nothing; to use an offer, pass its `request` to
-/// `spawn` as a child's tool or to `tool-loading.load`.
+/// offers policy would never grant. Asking starts nothing and loads nothing;
+/// to use an offer, pass its `spec` to `spawn` as one of a child's toolsets or
+/// to `tool-loading.load`.
 ///
 /// Knowing what exists is itself information, so discovery is a separate
 /// import from both spawning and loading.
 @since(version = 0.5.0)
 interface tool-discovery {
     use cosmonic:agent/tools@0.3.0.{tool-def};
-    use spawn-types.{tool-request};
+    use spawn-types.{toolset-spec};
 
     /// How an offer relates to the caller's ceiling.
     variant fit {
@@ -29,18 +29,20 @@ interface tool-discovery {
         other(option<string>),
     }
 
-    /// One tool the caller may use or hand down.
-    record tool-offer {
-        /// A ready-made request: the pinned component and the grants the host
-        /// would give it. Pass it on unchanged so its approval digest matches.
-        request: tool-request,
-        /// Implementer-authored summary from the catalog entry, for display.
+    /// One toolset the caller may use or hand down.
+    record toolset-offer {
+        /// A ready-made spec: the pinned component and the grants it would be
+        /// given. Pass it on unchanged so its approval digest matches.
+        spec: toolset-spec,
+        /// Implementer-authored text for a person, from the catalog entry,
+        /// like `approval.summary`.
         summary: string,
-        /// The tool's own definitions, as its `list` returned them when the
-        /// host catalogued the pinned digest. Written by the tool's author:
-        /// treat names, descriptions and schemas as untrusted input to a model.
+        /// The toolset's own tool definitions, as its `list` returned them
+        /// when the implementer catalogued the pinned digest. Written by the
+        /// toolset's author: treat names, descriptions and schemas as
+        /// untrusted input to a model.
         tools: list<tool-def>,
-        /// Fit against this caller's ceiling, decided by the host.
+        /// Fit against this caller's ceiling, decided by the implementer.
         fit: fit,
     }
 
@@ -54,9 +56,9 @@ interface tool-discovery {
         other(option<string>),
     }
 
-    /// The tools this caller may use or hand down, within policy. `query`
+    /// The toolsets this caller may use or hand down, within policy. `query`
     /// keeps the answer small: when present, only offers whose name, summary
     /// or tool names and descriptions contain it, ignoring case, are
     /// returned. The implementer may also cap how many offers it returns.
-    %list: async func(query: option<string>) -> result<list<tool-offer>, discovery-error>;
+    %list: async func(query: option<string>) -> result<list<toolset-offer>, discovery-error>;
 }

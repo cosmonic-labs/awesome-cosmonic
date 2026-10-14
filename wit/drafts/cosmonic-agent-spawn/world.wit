@@ -1,40 +1,38 @@
-/// Sub-agents and host-mediated tools for sandboxed agents. Not published;
-/// for discussion. See README.md.
+/// Sub-agents and toolsets for sandboxed agents. Not published; for
+/// discussion. See README.md.
 package cosmonic:agent@0.5.0;
 
-/// An agent that may spawn sub-agents and read their final replies.
+/// The power to spawn sub-agents and read their final replies. Holds only
+/// this import: an agent component adds `include cosmonic:agent/agent`.
 @since(version = 0.5.0)
 world spawner {
-    include cosmonic:agent/agent@0.3.0;
-
     import spawn;
 }
 
-/// An agent that may ask which tools are available to it.
+/// The power to ask which toolsets are available. Holds only this import.
 @since(version = 0.5.0)
 world tool-discoverer {
-    include cosmonic:agent/agent@0.3.0;
-
     import tool-discovery;
 }
 
-/// An agent that may load tools into itself while it runs. Loading is a
-/// separate power from spawning and is never implied by it.
+/// The power to load toolsets into oneself while running. Holds only this
+/// import: loading implies neither discovery nor spawning, each its own
+/// grant.
 @since(version = 0.5.0)
 world tool-loader {
-    include tool-discoverer;
-
     import tool-loading;
 }
 
-/// A top-level harness: every power in this package.
+/// A top-level harness: an agent with every power in this package.
 @since(version = 0.5.0)
 world harness {
+    include cosmonic:agent/agent@0.3.0;
     include spawner;
+    include tool-discoverer;
     include tool-loader;
 }
 
-/// An agent a host can hand runs to in process: the world a spawned child
+/// An agent that can be handed runs in process: the world a spawned child
 /// targets.
 @since(version = 0.5.0)
 world runnable-agent {
@@ -43,21 +41,29 @@ world runnable-agent {
     export runnable;
 }
 
-/// One tool component with its own grants.
+/// One toolset component with its own grants.
 @since(version = 0.5.0)
 world tool-provider {
     export tool-workload;
 }
 
-/// An implementer of `spawn`, such as a host plugin or a test double.
+/// An implementer of `spawn`, such as a native plugin or a test double.
 @since(version = 0.5.0)
 world spawn-provider {
     export spawn;
 }
 
-/// An implementer of tool discovery and loading: the host side of tool discovery and loading.
+/// An implementer of tool discovery.
 @since(version = 0.5.0)
-world tool-provider-host {
+world tool-discovery-provider {
     export tool-discovery;
+}
+
+/// An implementer of tool loading. It also serves the caller's `tools`
+/// import, since a loaded toolset's tools are offered there; one world makes
+/// that pairing explicit and lets a test double be built from it.
+@since(version = 0.5.0)
+world tool-loading-provider {
     export tool-loading;
+    export cosmonic:agent/tools@0.3.0;
 }

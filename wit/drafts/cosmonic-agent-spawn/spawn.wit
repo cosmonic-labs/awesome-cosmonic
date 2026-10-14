@@ -5,15 +5,31 @@ package cosmonic:agent@0.5.0;
 @since(version = 0.5.0)
 interface spawn {
     use cosmonic:agent/inference-types@0.3.0.{user-message};
-    use spawn-types.{spawn-request, admission-error, finish, started-run};
+    use spawn-types.{spawn-request, admission-error, started-run};
+
+    /// A lifetime budget that can leave an agent unable to take another run.
+    /// Per-run bounds such as `max-steps` end a run instead; see `finish`.
+    variant budget {
+        /// `limits.max-runs` runs were accepted.
+        runs,
+        /// `limits.max-tokens` were spent across all runs.
+        tokens,
+        /// `limits.deadline` passed.
+        duration,
+        /// A budget not captured above.
+        other(option<string>),
+    }
 
     /// Why `run` did not start a run. In every case nothing reached the child.
     variant start-error {
         /// A run is already in progress. One run at a time.
         busy,
-        /// The agent's limits are spent; it takes no more runs. Carries the
-        /// limit that was reached.
-        exhausted(finish),
+        /// A lifetime budget is spent; the agent takes no more runs.
+        exhausted(budget),
+        /// The child has ended for good (it failed to start, or stopped and
+        /// cannot be restarted) and will never accept another run. Details
+        /// are on the observation path, not here.
+        failed(string),
         /// The implementer could not accept the run. Retry may succeed.
         unavailable(string),
         /// A failure not captured above. Treat as permanent.

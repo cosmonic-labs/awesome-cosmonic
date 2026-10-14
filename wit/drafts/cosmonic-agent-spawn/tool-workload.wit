@@ -1,7 +1,7 @@
 package cosmonic:agent@0.5.0;
 
-/// The surface of one tool component: `cosmonic:agent/tools@0.3.0` exactly,
-/// except that discovery can fail. Not published; for discussion.
+/// The surface of one toolset component: `cosmonic:agent/tools@0.3.0`
+/// exactly, except that discovery can fail. Not published; for discussion.
 ///
 /// This is the shape the tools in cosmonic-labs/sandboxed-agents#24 export
 /// today under per-tool names (`cosmonic:iss-position/tool@0.3.0` and its
@@ -10,17 +10,17 @@ package cosmonic:agent@0.5.0;
 /// `tools` itself, with `list` returning a `result`, and retires the
 /// separate name.
 ///
-/// One component is one tool with its own grants. `list` returns that
-/// tool's definitions; `call` rejects a name it does not own with
-/// `unknown-tool` before doing any work. Nothing here routes between tools:
-/// the host lists and dispatches across tool workloads, so an agent never
-/// carries a router of its own.
+/// One component is one toolset with its own grants: it offers one or more
+/// tool definitions. `list` returns them; `call` rejects a tool name it does
+/// not own with `unknown-tool` before doing any work. Nothing here routes
+/// between toolsets: the implementer lists and dispatches across toolset
+/// workloads, so an agent never carries a router of its own.
 @since(version = 0.5.0)
 interface tool-workload {
     use cosmonic:agent/tools@0.3.0.{tool-def, tool-call, tool-response, call-error};
 
-    /// This tool's definitions. Fails instead of hiding a tool that could
-    /// not describe itself.
+    /// This toolset's tool definitions. Fails instead of hiding a toolset
+    /// that could not describe itself.
     %list: async func() -> result<list<tool-def>, call-error>;
 
     /// Run a tool call. Same contract as `cosmonic:agent/tools.call`.

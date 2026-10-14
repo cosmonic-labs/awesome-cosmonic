@@ -1,40 +1,43 @@
 package cosmonic:agent@0.5.0;
 
-/// The caller may load a tool into itself while it runs. Not published; for
-/// discussion.
+/// The caller may load a toolset into itself while it runs. Not published;
+/// for discussion.
 ///
-/// Spawning is declarative: a child's tools are fixed when it starts. This
+/// Spawning is declarative: a child's toolsets are fixed when it starts. This
 /// interface is the separate, explicit power to change a running agent's own
-/// tool set. A world that does not import it cannot load anything, and a
+/// toolsets. A world that does not import it cannot load anything, and a
 /// spawned child never receives it in this version. A parent cannot load a
-/// tool into a child it spawned; it spawns a new child with a different
-/// tool set instead.
+/// toolset into a child it spawned; it spawns a new child with different
+/// toolsets instead.
 ///
-/// A loaded tool is a component with its own grants, started by the host.
-/// The host offers its functions through the caller's own
-/// `cosmonic:agent/tools` import and dispatches calls to it, so the caller
-/// carries no router; that import must be served by the host for loading to
-/// work. Admission follows `spawn`: the tool's reach must fit inside the
+/// A loaded toolset is a component with its own grants, started by the
+/// implementer. The implementer offers its tool definitions through the
+/// caller's own `cosmonic:agent/tools` import and dispatches calls to it, so
+/// the caller carries no router; the same implementer must serve that import
+/// for loading to work, which is why `tool-loading-provider` exports both.
+/// Admission follows `spawn`: the toolset's reach must fit inside the
 /// caller's ceiling, and anything beyond it goes to a grantor and returns
 /// `needs-approval` with a digest over the caller's identity and the
-/// `tool-request`. Policy may ask for approval even within the ceiling,
+/// `toolset-spec`. Policy may ask for approval even within the ceiling,
 /// since new code is new risk even when its reach is not.
 @since(version = 0.5.0)
 interface tool-loading {
-    use spawn-types.{tool-request, admission-error};
+    use spawn-types.{toolset-spec, admission-error};
 
-    /// A tool loaded into the caller. Dropping it unloads the tool: the host
-    /// stops offering its functions and stops its component. A call in
-    /// progress is cancelled cooperatively; its effects are not rolled back.
-    /// The host also unloads every tool when the caller's store ends.
-    resource loaded-tool {
-        /// The names under which the caller's `tools` import offers this
-        /// tool's functions. Chosen by the host, which keeps them unique.
-        names: async func() -> list<string>;
+    /// A toolset loaded into the caller. Dropping it unloads the toolset: the
+    /// implementer stops offering its tools and stops its component. A call
+    /// in progress is cancelled cooperatively; its effects are not rolled
+    /// back. The implementer also unloads every toolset when the caller's
+    /// store ends.
+    resource loaded-toolset {
+        /// The tool names under which the caller's `tools` import offers this
+        /// toolset's definitions. Chosen by the implementer, which keeps them
+        /// unique.
+        get-names: async func() -> list<string>;
     }
 
-    /// Check the request against the ceiling and policy, start the tool, and
-    /// offer it through the caller's `tools` import. Resolves once the tool
-    /// is offered.
-    load: async func(request: tool-request) -> result<loaded-tool, admission-error>;
+    /// Check the spec against the ceiling and policy, start the toolset, and
+    /// offer its tools through the caller's `tools` import. Resolves once
+    /// they are offered.
+    load: async func(spec: toolset-spec) -> result<loaded-toolset, admission-error>;
 }
