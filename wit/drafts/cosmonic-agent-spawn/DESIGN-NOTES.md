@@ -722,6 +722,37 @@ withdraw. *Enforced in* the spike's admission; *tested by*
 `ceiling_needs_approval_then_identical_resend` and
 `dropping_the_decision_keeps_the_approval_pending`.
 
+**6. Providers are enabled per host by the operator; dispatch on, discovery,
+loading and spawn off by default.** *Default, open to review.* One
+implementer can provide all four (the host-side tool dispatcher behind
+`cosmonic:agent/tools`, `tool-discovery`, `tool-loading` and `spawn`), and the
+operator turns each of the last three on separately. The dispatcher is on
+whenever a workload declares toolsets, because the operator who wrote that
+declaration already granted it. A provider that is off is still linked: its
+calls answer `access-denied` with a reason ("spawn is not enabled on this
+host"), are audited, start nothing and reveal nothing (discovery answers an
+error, not an empty catalog). The workload is not refused at start, so a
+component built against the `harness` world runs with whichever powers the
+operator allows and can tell a disabled power from an empty result.
+
+Why: safe by default and controllable. Each of the three hands the agent a
+new power (knowing what exists, changing its own tools, starting other
+agents), so none should arrive just because a component imports it. The
+realistic configurations are subsets, not all or nothing: dispatch only
+(declared toolsets, the common case); dispatch and discovery (an agent that
+can see what it could be given, and ask); spawn with declared toolsets
+(children fixed at spawn time, no browsing); dispatch and loading without
+spawn (an agent that grows its own tools but starts no agents); and loading
+without discovery (an agent that loads the toolsets it is handed but cannot
+browse the catalog). The alternative, refusing the workload's start when it
+imports a power that is off, is stricter but turns one disabled power into a
+component that cannot run at all.
+
+*Enforced in* the spike's plugin (`SpikeConfig::spawn`, `discovery` and
+`loading`, all `false` by default, beside the operator limits `max_depth`,
+`max_agents` and `max_concurrent`); *tested by*
+`providers_are_off_by_default_and_enabled_one_by_one`.
+
 ### Still open
 
 **(a) One workload for agent and toolsets, or one per toolset?** Both run. Labels fix
