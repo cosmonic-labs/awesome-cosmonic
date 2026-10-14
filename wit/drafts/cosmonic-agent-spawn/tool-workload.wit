@@ -21,6 +21,16 @@ package cosmonic:agent@0.5.0;
 /// name), and passes the tool's own name to `call`. So a tool's description
 /// should not name sibling tools: the model may know them by other names.
 /// `title` is for people; pass one when the name alone does not read well.
+///
+/// The implementer may bound what a call returns before the agent sees it,
+/// since one oversized result would otherwise be resent on every later model
+/// call. Text beyond its cap is cut at a UTF-8 boundary and followed by a
+/// text part of the form `[output truncated: showing N of M bytes; narrow the
+/// request]`. A structured result beyond the cap cannot be cut into valid
+/// JSON, so the whole response becomes `is-error` with a text part saying it
+/// was too large. An inline attachment beyond its own cap is replaced by a
+/// text note. A toolset that can return a lot should take arguments that
+/// narrow it.
 @unstable(feature = agent-spawn)
 interface tool-workload {
     @unstable(feature = agent-spawn)

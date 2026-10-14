@@ -420,6 +420,34 @@ Spike coverage: `bare_first_aliases_and_routing_by_identity`,
 `plugin/tests/toolsets.rs`, against the published minimal-agent 0.2.0 and the
 unchanged sandboxed-agents#24 tools.
 
+## Bounding tool results
+
+A tool result goes into the agent's context and stays there: the agent sends
+the whole conversation on every later model call. One grep call returning
+361 KB in demo preparation was resent on each step after it and took a
+session past a million tokens. The host sees every call, so the implementer
+bounds results there, whatever the toolset does.
+
+- **Text** parts share one cap per result (the spike's default is 32 KiB, set
+  by the operator, with an optional per-toolset override in the operator's
+  declaration; a caller does not set it). The part that crosses the cap is cut
+  at a UTF-8 boundary, later text parts are dropped, and a final text part
+  tells the model what happened: `[output truncated: showing N of M bytes;
+  narrow the request]`.
+- **Structured** output over the cap cannot be cut into valid JSON. The
+  response becomes `is-error` with a text part saying the result was too large,
+  rather than handing the model broken JSON.
+- **Inline attachments** have their own byte cap; one over it is replaced by a
+  text note naming its media type and size.
+- **Audit** records each cut by identity: the toolset workload, the tool's own
+  name, and the original and delivered sizes.
+
+`tool-workload` says the implementer may do this and how truncation is
+signalled, so toolset authors know to offer arguments that narrow a result.
+
+Spike coverage: `tool_results_are_bounded` and
+`bounding_never_splits_a_character`.
+
 ## The reverse case: quarantining untrusted content
 
 Most of the agent-security literature addresses this case: a privileged agent
