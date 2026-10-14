@@ -22,7 +22,7 @@ specified and answers `unavailable`.
 ## What changed in this revision
 
 1. **Confined spawn is dropped.** The `spawn-confined` interface, the
-   `confined-spawner` world, and its sink, outcome and run types are gone from
+   `confined-spawn-client` world, and its sink, outcome and run types are gone from
    the WIT, the worlds and the spike. Why, and when to reopen it, is in
    "Considered and dropped: confined spawn".
 2. **No "draft" in any identifier; the interfaces are `cosmonic:agent@0.5.0`.**
@@ -46,10 +46,10 @@ specified and answers `unavailable`.
    two `cosmonic:agent` versions until the interfaces join the real package,
    when the self-dependency disappears.
 3. **Worlds organize the package.** One file per interface, and worlds per role
-   composed with `include`. The capability worlds `spawner`,
-   `tool-discoverer` and `tool-loader` each hold only their own import and
-   include neither `cosmonic:agent/agent` nor each other, so each is exactly
-   one grant; an agent writes `include agent; include spawner;`. `harness`
+   composed with `include`. The capability worlds `spawn-client`,
+   `tool-discovery-client` and `tool-loading-client` each hold only their own
+   import and include neither `cosmonic:agent/agent` nor each other, so each
+   is exactly one grant; an agent writes `include agent; include spawn-client;`. `harness`
    includes the agent world and all three. `runnable-agent` is the world a
    spawned child targets, and `tool-provider` is one toolset component. The
    implementer worlds are `spawn-provider`, `tool-discovery-provider` and
@@ -57,8 +57,11 @@ specified and answers `unavailable`.
    because loading only works when the same implementer serves the caller's
    `tools` import. (They replace `tool-provider-host`, formerly
    `tool-broker`: world names carry neither "host" nor "broker", which is
-   reserved for host-wide services.) The import-side suffix (for example
-   `-client`) is still being chosen. The old `spawn-middleware` world is gone: a guest component in front of the
+   reserved for host-wide services.) Import-side worlds end in `-client`
+   because it pairs with `-provider` and matches the published
+   `inference-client`. `tool-provider` keeps its name: it is the published
+   0.3.0 world, and the per-tool components of sandboxed-agents#24 target it.
+   The old `spawn-middleware` world is gone: a guest component in front of the
    implementer would become the caller, and its own grants the ceiling, which
    contradicts "policy wrappers are host-installed".
 4. **Tool discovery and loading**, each its own interface and world (below).
@@ -99,7 +102,7 @@ From a review against the WIT interface design skill:
   every run after a child fails to start.
 - **`approval.summary`**, not `detail`: it is shown to a person, like
   `toolset-offer.summary`, unlike diagnostic detail strings.
-- **Worlds**: capability worlds hold only their own import, `tool-loader` no
+- **Worlds**: capability worlds hold only their own import, `tool-loading-client` no
   longer includes discovery, and `tool-provider-host` is split in two (item 3
   above).
 
@@ -248,8 +251,8 @@ declarative. The package keeps all three.
   of that text in front of models, so the implementer should show provenance
   (the pinned digest) and may curate what it catalogues.
 - **`tool-loading.load`** loads a toolset into the caller while it runs. It is
-  a separate interface and world (`tool-loader`) so no world gets it by
-  accident, and `tool-loader` does not include discovery: a caller may be
+  a separate interface and world (`tool-loading-client`) so no world gets it by
+  accident, and `tool-loading-client` does not include discovery: a caller may be
   allowed to load toolsets it is given without browsing the catalog. It is not
   a method on the spawn `agent` handle: a parent that wants a child with more
   toolsets spawns a new child. Admission matches `spawn` (ceiling, approval
@@ -277,9 +280,10 @@ plugin, and serving it needs the runtime work listed at the end.
 ## The reverse case: quarantining untrusted content
 
 Most of the agent-security literature addresses this case: a privileged agent
-delegates the handling of untrusted content to a quarantined child with no grants, and accepts only constrained
-output. Willison's Dual LLM pattern, CaMeL, FIDES and the design-patterns paper
-all build on it (see "Research grounding").
+delegates the handling of untrusted content to a quarantined child with no
+grants, and accepts only constrained output. Willison's Dual LLM pattern,
+CaMeL, FIDES and the design-patterns paper all build on it (see "Research
+grounding").
 
 **What we support.** A `spawn` with no toolsets and no `allowed-hosts` is a
 quarantined LLM in Willison's sense: it reaches nothing but its model, it
@@ -598,7 +602,7 @@ From building it as a native plugin on wash-runtime:
   with their owner.
 - **Metering.** A per-workload hook on model calls, for live counts and for
   enforcing `max-tokens` mid-run.
-- **Types-only imports.** A spawner imports `inference-types` only for types;
+- **Types-only imports.** A spawn-client imports `inference-types` only for types;
   two plugins that both link it into one component collide.
 - **Host-routed `tools` for any workload** (for `tool-loading`). Today the spike
   routes `tools` only for children it started. Loading into an arbitrary caller

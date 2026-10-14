@@ -5,13 +5,13 @@ package cosmonic:agent@0.5.0;
 /// The power to spawn sub-agents and read their final replies. Holds only
 /// this import: an agent component adds `include cosmonic:agent/agent`.
 @since(version = 0.5.0)
-world spawner {
+world spawn-client {
     import spawn;
 }
 
 /// The power to ask which toolsets are available. Holds only this import.
 @since(version = 0.5.0)
-world tool-discoverer {
+world tool-discovery-client {
     import tool-discovery;
 }
 
@@ -19,7 +19,7 @@ world tool-discoverer {
 /// import: loading implies neither discovery nor spawning, each its own
 /// grant.
 @since(version = 0.5.0)
-world tool-loader {
+world tool-loading-client {
     import tool-loading;
 }
 
@@ -27,9 +27,9 @@ world tool-loader {
 @since(version = 0.5.0)
 world harness {
     include cosmonic:agent/agent@0.3.0;
-    include spawner;
-    include tool-discoverer;
-    include tool-loader;
+    include spawn-client;
+    include tool-discovery-client;
+    include tool-loading-client;
 }
 
 /// An agent that can be handed runs in process: the world a spawned child

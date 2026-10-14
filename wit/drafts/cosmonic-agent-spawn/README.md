@@ -44,17 +44,17 @@ when the interfaces join the real package the dependency disappears.
 
 | World | Imports | Exports | Who targets it |
 | --- | --- | --- | --- |
-| `spawner` | `spawn` | none | The power to delegate and read the results |
-| `tool-discoverer` | `tool-discovery` | none | The power to see the catalog |
-| `tool-loader` | `tool-loading` | none | The power to change one's own toolsets |
-| `harness` | `cosmonic:agent/agent@0.3.0`, `spawner`, `tool-discoverer`, `tool-loader` | none | A top-level harness agent with every power |
+| `spawn-client` | `spawn` | none | The power to delegate and read the results |
+| `tool-discovery-client` | `tool-discovery` | none | The power to see the catalog |
+| `tool-loading-client` | `tool-loading` | none | The power to change one's own toolsets |
+| `harness` | `cosmonic:agent/agent@0.3.0`, `spawn-client`, `tool-discovery-client`, `tool-loading-client` | none | A top-level harness agent with every power |
 | `runnable-agent` | `cosmonic:agent/agent@0.3.0` | `runnable` | Any agent a host can spawn |
 | `tool-provider` | none | `tool-workload` | One toolset component |
 | `spawn-provider` | none | `spawn` | The host plugin, or a test double |
 | `tool-discovery-provider` | none | `tool-discovery` | An implementer of discovery |
 | `tool-loading-provider` | none | `tool-loading`, `cosmonic:agent/tools@0.3.0` | An implementer of loading, which must also serve the caller's `tools` import |
 
-The three capability worlds (`spawner`, `tool-discoverer`, `tool-loader`) hold
+The three capability worlds (`spawn-client`, `tool-discovery-client`, `tool-loading-client`) hold
 only their own import; none includes the agent world or another capability. An
 agent composes them with `include`. A coding agent that delegates and can
 itself be spawned:
@@ -64,15 +64,15 @@ package acme:coder@1.0.0;
 
 world coder {
     include cosmonic:agent/runnable-agent@0.5.0;   // includes cosmonic:agent/agent
-    include cosmonic:agent/spawner@0.5.0;
+    include cosmonic:agent/spawn-client@0.5.0;
 }
 ```
 
 An agent that is not itself spawnable writes `include cosmonic:agent/agent@0.3.0;
-include cosmonic:agent/spawner@0.5.0;`. A reviewer that should never spawn
+include cosmonic:agent/spawn-client@0.5.0;`. A reviewer that should never spawn
 anything targets only `runnable-agent`. An agent that may load toolsets it
-already knows about, without browsing the catalog, includes `tool-loader` and
-not `tool-discoverer`.
+already knows about, without browsing the catalog, includes `tool-loading-client` and
+not `tool-discovery-client`.
 
 There is no guest-side policy world. A component placed between a caller and the
 implementer would become the caller, and its own grants would become the
