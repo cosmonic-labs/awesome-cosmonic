@@ -24,8 +24,9 @@ WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
 
 A native wash-runtime plugin implements the interfaces in a local spike
 (`~/cosmonic/probes/spawn-spike`, not published): `spawn` and
-`tool-discovery.list` work end to end in 16 scenarios; `tool-loading.load` is
-specified and answers `unavailable`.
+`tool-discovery.list` work end to end, a host-side dispatcher serves agents'
+`tools` imports from toolsets that each run as their own workload, and
+`tool-loading.load` is specified and answers `unavailable`.
 
 ## What changed in this revision
 
@@ -79,6 +80,13 @@ specified and answers `unavailable`.
    `start-error`. The survey is below.
 6. **The reverse case and research grounding** are new sections. The interface
    did not change for them.
+7. **Tool naming is three layers: identity, alias, display.** Calls are routed
+   and authorized by the toolset's workload identity; the model sees an
+   alias that carries no authority, its own name first, namespaced only on a
+   later collision, and never renamed; people see display metadata.
+   `toolset-spec` gains `expose-as`, the operator's override, and `name` is a
+   DNS label of at most 32 characters. See "Tool naming: identity, alias,
+   display".
 
 Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`
 and `tool-loading.load`; `limit-scope` gained `loaded-toolsets`;
@@ -320,11 +328,13 @@ declarative. The package keeps all three.
   reach is not. The implementer starts the toolset as its own component and
   offers its tools through the caller's existing `cosmonic:agent/tools`
   import, so it must serve that import too; `tool-loading-provider` exports
-  both. `loaded-toolset.get-names` returns the tool names it chose. Dropping
-  the handle unloads the toolset.
+  both. `loaded-toolset.get-names` returns the aliases it assigned (see
+  "Tool naming: identity, alias, display"); they are stable for the toolset's
+  lifetime in the session. Dropping the handle unloads the toolset.
 - **No guest router.** The implementer lists and dispatches across toolset
-  workloads, as the spike's router already does for spawned children. Every
-  toolset is a component with its own grants.
+  workloads, as the spike's dispatcher does: each toolset runs as its own
+  workload with its own grants, and the agent's `tools` import is served by
+  the host.
 
 Spike coverage: `discovery_lists_against_the_callers_ceiling` registers five
 catalog entries and checks fits for a caller that reads `workspace` and reaches
@@ -335,6 +345,80 @@ never-grant entry), spawns an offer unchanged without approval, and checks
 that `load` answers `unavailable`. Loading is not implemented: the
 parent is not a spawned child, so its `tools` import is not routed by the
 plugin, and serving it needs the runtime work listed at the end.
+
+## Tool naming: identity, alias, display
+
+An agent with several toolsets sees one flat list of tools, and two toolsets
+can define the same tool name. Naming has to settle three questions that look
+like one: which component a call reaches and with what authority, what string
+the model selects a tool by, and what a person is shown. They are kept apart.
+
+**Identity carries authority, and only the host sees it.** Each toolset runs
+as its own workload, and that workload is the toolset's service principal:
+its workload identity, as the implementer started it, with its deployment
+incarnation and pinned digest. Every tool call is routed, authorized,
+attributed and audited by that identity. The implementer's routing table maps
+each alias to a toolset workload and the tool's own name, and a call is
+checked against that table and nothing else. Audit records name the toolset
+workload, the tool's own name, and the calling agent's workload and session.
+Because each toolset is its own workload, each can also present its own egress
+identity: workload identity built on mTLS (wasmCloud/wasmCloud#5653) and client
+identity for outbound HTTPS, per host or per workload (wasmCloud/wasmCloud#5588),
+apply to a toolset workload as to any other.
+
+**Aliases are the model's selection key and carry no authority.** A guest
+sees only authorized opaque aliases: strings in its own `tools` list that the
+implementer resolves through the routing table. Neither an alias nor a
+toolset's declared name ever feeds a routing or grant decision. Deriving
+authority from a name would turn a naming bug into a security bug: a toolset
+that managed to claim another's name, or a rename that reused one, would
+inherit calls and grants meant for something else. The rules:
+
+- A tool is offered under its own name if no alias in the agent's session has
+  it yet.
+- Only a later toolset whose tool collides is namespaced, as
+  `<toolset>__<tool>`, and only that tool.
+- An alias, once assigned, is fixed for the session. Adding a toolset never
+  changes it, and an alias stays reserved for its tool even after its toolset
+  is gone, so the conversation never sees one alias mean two tools. The table
+  is persisted with the session state, so a restart or restore gives the same
+  aliases.
+- Toolsets declared up front are assigned in declaration order, which is
+  deterministic and visible in configuration.
+- An alias must be a valid model tool name: only `[A-Za-z0-9_-]`, at most 64
+  characters. A tool with no valid free alias refuses the spawn or load.
+- `toolset-spec.expose-as` is the operator's override: a prefix placed before
+  every tool's own name, where the empty string means the own names. It wins
+  over bare first. An alias it asks for that is already taken refuses the
+  spawn or load with `invalid-request`; the implementer never renames it.
+
+A prefix was chosen over a per-tool alias map because it is one string, it
+needs no knowledge of a toolset's tool names before the toolset lists them,
+and it covers the cases that matter: keep the own names (`""`), or claim a
+namespace (`"gh__"`). Renaming single tools would also leave descriptions that
+mention the old names.
+
+**Display is metadata for people.** `tool-def.title` passes through
+unchanged; a toolset that gives none gets the tool's own name as its title. A
+human surface (the agent UI, an approval prompt, a log meant for people)
+looks the alias up in the host and renders "title · toolset", never the wire
+alias. Display names are metadata, never used for authorization: two tools may
+share a title and still reach different workloads. Descriptions stay the
+toolset author's words; the implementer does not prefix them.
+
+**Trade-off.** Which toolset keeps a bare name depends on attach order: the
+first one to claim it. That is deterministic and visible, but it is a choice
+the order makes for the operator. `expose-as` lets the operator make it
+explicitly. Tool descriptions should not name sibling tools, because the
+model may know a sibling by an alias that is not its own name (the
+`distance_km` tool in sandboxed-agents#24 tells the model to call
+`iss_position` first).
+
+Spike coverage: `bare_first_aliases_and_routing_by_identity`,
+`a_later_attach_never_renames`, `aliases_survive_an_agent_restart`,
+`expose_as_overrides_and_refuses_conflicts` and `alias_rules` in
+`plugin/tests/toolsets.rs`, against the published minimal-agent 0.2.0 and the
+unchanged sandboxed-agents#24 tools.
 
 ## The reverse case: quarantining untrusted content
 
@@ -695,9 +779,17 @@ two-version generated module names, (m) detach on drop.
 
 - **Per-toolset secret bindings for toolset components.** A toolset's grants
   name secrets, but Desktop's custom-agent tool form has no secret field today.
-- **Host-brokered credentials for tool egress.** Named credential bindings,
-  with the host attaching the credential to outbound requests so the component
-  never holds the value, extending the named model-alias approach to toolsets.
+- **Host-brokered credentials for tool egress.** A toolset component holds a
+  credential reference: a stable logical name, not secret data. The operator
+  creates a credential binding that maps the reference to a credential, scoped
+  to one workload deployment. At call time the host resolves the reference for
+  the calling workload and applies the credential to the outbound request,
+  as an injected Authorization header, an mTLS client identity, or a signed
+  request. The guest never sees the value. The host owns the authentication
+  headers, so a value the guest supplies for one of them is rejected. This
+  extends the named model-alias approach to toolsets, and it rests on each
+  toolset being its own workload with its own identity (wasmCloud/wasmCloud#5653,
+  wasmCloud/wasmCloud#5588).
 
 ## What implementing it needs from the runtime
 

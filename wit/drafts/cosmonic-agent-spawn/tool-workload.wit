@@ -15,6 +15,12 @@ package cosmonic:agent@0.5.0;
 /// not own with `unknown-tool` before doing any work. Nothing here routes
 /// between toolsets: the implementer lists and dispatches across toolset
 /// workloads, so an agent never carries a router of its own.
+///
+/// The implementer may offer a tool to the agent under an alias that is not
+/// its name here (`<toolset>__<tool>` when another toolset already has the
+/// name), and passes the tool's own name to `call`. So a tool's description
+/// should not name sibling tools: the model may know them by other names.
+/// `title` is for people; pass one when the name alone does not read well.
 @unstable(feature = agent-spawn)
 interface tool-workload {
     @unstable(feature = agent-spawn)

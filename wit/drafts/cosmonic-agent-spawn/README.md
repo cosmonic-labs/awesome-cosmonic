@@ -212,7 +212,10 @@ once, beyond it goes to a grantor, and policy may ask for approval anyway. The
 implementer starts the toolset as its own component and offers its tools
 through the caller's existing `cosmonic:agent/tools` import, so the agent never
 carries a router; that is why `tool-loading-provider` exports both
-`tool-loading` and `tools`. `get-names` returns the tool names it chose.
+`tool-loading` and `tools`. `get-names` returns the aliases its tools are
+offered under: their own names unless another toolset in the session already
+has one, and stable for the toolset's lifetime in the session (DESIGN-NOTES.md,
+"Tool naming: identity, alias, display").
 Dropping the handle unloads the toolset. A spawned child never receives
 `tool-loading` in this version, and a parent cannot load a toolset into a child
 it spawned; it spawns a new child with different toolsets instead.
@@ -229,6 +232,12 @@ the agents and plugins that import it; whether a later `cosmonic:agent` version
 folds it into `tools` is an open question for Bailey (DESIGN-NOTES.md).
 `toolset-spec.component` also accepts a component exporting
 `cosmonic:agent/tools@0.3.0`, for compatibility.
+
+Calls reach a toolset by its workload identity, never by a name. The agent
+sees aliases: a tool's own name first, `<toolset>__<tool>` only for a later
+colliding tool, never renamed. `toolset-spec.expose-as` lets the operator set
+a prefix instead (the empty string means the own names). People see the
+tool's `title` and the toolset's name.
 
 ## Files
 
