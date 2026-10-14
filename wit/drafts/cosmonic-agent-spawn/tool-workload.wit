@@ -1,0 +1,27 @@
+package cosmonic:agent-spawn@0.1.0;
+
+/// The surface of one tool component: `cosmonic:agent/tools@0.3.0` exactly,
+/// except that discovery can fail. Not published; for discussion.
+///
+/// This is the shape the tools in cosmonic-labs/sandboxed-agents#24 export
+/// today under per-tool names (`cosmonic:iss-position/tool@0.3.0` and its
+/// siblings), ready for a shared `tool-workload` interface. It is defined
+/// here so this package builds and its worlds can name it; its intended home
+/// is `cosmonic:agent`, beside `tools`.
+///
+/// One component is one tool with its own grants. `list` returns that
+/// tool's definitions; `call` rejects a name it does not own with
+/// `unknown-tool` before doing any work. Nothing here routes between tools:
+/// the host lists and dispatches across tool workloads, so an agent never
+/// carries a router of its own.
+@since(version = 0.1.0)
+interface tool-workload {
+    use cosmonic:agent/tools@0.3.0.{tool-def, tool-call, tool-response, call-error};
+
+    /// This tool's definitions. Fails instead of hiding a tool that could
+    /// not describe itself.
+    %list: async func() -> result<list<tool-def>, call-error>;
+
+    /// Run a tool call. Same contract as `cosmonic:agent/tools.call`.
+    call: async func(request: tool-call) -> result<tool-response, call-error>;
+}

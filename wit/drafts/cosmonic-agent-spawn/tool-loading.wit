@@ -1,0 +1,38 @@
+package cosmonic:agent-spawn@0.1.0;
+
+/// The caller may load a tool into itself while it runs. Not published; for
+/// discussion.
+///
+/// Spawning is declarative: a child's tools are fixed when it starts. This
+/// interface is the separate, explicit power to change a running agent's own
+/// tool set. A world that does not import it cannot load anything, and a
+/// spawned child never receives it in this version.
+///
+/// A loaded tool is a component with its own grants, started by the host.
+/// The host offers its functions through the caller's own
+/// `cosmonic:agent/tools` import and dispatches calls to it, so the caller
+/// carries no router; that import must be served by the host for loading to
+/// work. Admission follows `spawn`: the tool's reach must fit inside the
+/// caller's ceiling, and anything beyond it goes to a grantor and returns
+/// `needs-approval` with a digest over the caller's identity and the
+/// `tool-request`. Policy may ask for approval even within the ceiling,
+/// since new code is new risk even when its reach is not.
+@since(version = 0.1.0)
+interface tool-loading {
+    use types.{tool-request, admission-error};
+
+    /// A tool loaded into the caller. Dropping it unloads the tool: the host
+    /// stops offering its functions and stops its component. A call in
+    /// progress is cancelled cooperatively; its effects are not rolled back.
+    /// The host also unloads every tool when the caller's store ends.
+    resource loaded-tool {
+        /// The names under which the caller's `tools` import offers this
+        /// tool's functions. Chosen by the host, which keeps them unique.
+        names: async func() -> list<string>;
+    }
+
+    /// Check the request against the ceiling and policy, start the tool, and
+    /// offer it through the caller's `tools` import. Resolves once the tool
+    /// is offered.
+    load: async func(request: tool-request) -> result<loaded-tool, admission-error>;
+}

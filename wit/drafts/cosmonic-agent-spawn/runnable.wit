@@ -1,0 +1,36 @@
+package cosmonic:agent-spawn@0.1.0;
+
+/// Exported by an agent so a host can hand it a run in process, without a
+/// protocol of the agent's own over HTTP. Not published; for discussion.
+///
+/// A run is one unit of work: a message in, the agent's loop of model calls
+/// (steps) and tool calls, and a final reply out. The implementer of `spawn`
+/// calls this on the child. Everything the request carries for the run
+/// reaches the agent: the instructions, the whole message with its
+/// attachments, the output schema, and the step bound. The agent needs no
+/// ingress, so nothing outside the host can reach it.
+@since(version = 0.1.0)
+interface runnable {
+    use cosmonic:agent/inference-types@0.3.0.{json, user-message};
+    use types.{started-run};
+
+    /// How to do one run.
+    record run-options {
+        /// Instructions for the agent, ahead of its own. Sent on every run so
+        /// the agent holds no state the host did not give it.
+        instructions: option<string>,
+        /// JSON Schema the agent asks its model to answer in. The host still
+        /// checks the outcome against it.
+        schema: option<json>,
+        /// Model calls the agent may make in this run. The agent stops and
+        /// finishes with `max-steps` when it is reached.
+        max-steps: option<u32>,
+    }
+
+    /// Do one run. The agent reports counts as it makes model calls.
+    /// Dropping the progress stream requests cancellation: the agent stops
+    /// its model and tool calls and resolves the outcome to `cancelled` only
+    /// once nothing of the run is still running. The host never calls this
+    /// again while a run is in progress.
+    run: async func(message: user-message, options: run-options) -> started-run;
+}

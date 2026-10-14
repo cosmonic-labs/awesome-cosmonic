@@ -1,0 +1,58 @@
+package cosmonic:agent-spawn@0.1.0;
+
+/// The caller may ask which tools are available to it. Not published; for
+/// discussion.
+///
+/// The host keeps the catalog: tools a person installed or policy allows,
+/// each a pinned component with the grants the host would give it. `list`
+/// answers for this caller only. It shows each offer's fit against the
+/// caller's ceiling and leaves out offers policy would never grant. Asking
+/// starts nothing and loads nothing; to use an offer, pass its `request` to
+/// `spawn` as a child's tool or to `tool-loading.load`.
+///
+/// Knowing what exists is itself information, so discovery is a separate
+/// import from both spawning and loading.
+@since(version = 0.1.0)
+interface tool-discovery {
+    use cosmonic:agent/tools@0.3.0.{tool-def};
+    use types.{tool-request};
+
+    /// How an offer relates to the caller's ceiling.
+    variant fit {
+        /// Inside the caller's ceiling: using it needs no approval unless
+        /// policy asks for one anyway.
+        within-ceiling,
+        /// Beyond the ceiling: using it returns `needs-approval`.
+        needs-approval,
+        /// A relation not captured above. Treat as `needs-approval`.
+        other(option<string>),
+    }
+
+    /// One tool the caller may use or hand down.
+    record tool-offer {
+        /// A ready-made request: the pinned component and the grants the host
+        /// would give it. Pass it on unchanged so its approval digest matches.
+        request: tool-request,
+        /// Implementer-authored summary from the catalog entry, for display.
+        summary: string,
+        /// The tool's own definitions, as its `list` returned them when the
+        /// host catalogued the pinned digest. Written by the tool's author:
+        /// treat names, descriptions and schemas as untrusted input to a model.
+        tools: list<tool-def>,
+        /// Fit against this caller's ceiling, decided by the host.
+        fit: fit,
+    }
+
+    /// Why discovery failed. Detail strings are diagnostic only.
+    variant discovery-error {
+        /// Policy refused discovery for this caller.
+        access-denied(string),
+        /// The implementer could not serve the call. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
+
+    /// The tools this caller may use or hand down, within policy.
+    %list: async func() -> result<list<tool-offer>, discovery-error>;
+}

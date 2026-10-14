@@ -1,0 +1,364 @@
+package cosmonic:agent-spawn@0.1.0;
+
+/// Types shared by every interface in this package. Not published; for
+/// discussion. See README.md and DESIGN-NOTES.md.
+///
+/// Importing this interface grants nothing. The powers live in `spawn`,
+/// `spawn-confined`, `tool-discovery` and `tool-loading`, each a separate
+/// import so a world grants exactly the ones it names.
+///
+/// The contract below binds the implementer of those interfaces, whatever it
+/// is: a native host plugin, a host-installed policy layer in front of it, or
+/// a test double. "The caller" is the component the import is bound to,
+/// identified by its stable workload identity (workload namespace and name,
+/// and component name), never by instance ids that change on every start.
+/// A policy wrapper must be installed by the host and pass the original
+/// caller through: a guest component in front of the implementer would
+/// become the caller, and its own grants would become the ceiling.
+///
+/// Reach. A request's read reach is the union, over the agent and every
+/// tool, of its read grants: volumes, secrets, interfaces the implementer
+/// classifies as reading, and the model binding. Its egress reach is the
+/// union of allowed hosts and interfaces the implementer classifies as
+/// writing. A read-write volume counts both ways.
+///
+/// Ceiling. By default a child's read reach and egress reach, or a loaded
+/// tool's, must each fit inside the caller's. Within that ceiling, results
+/// flowing up are not a leak: the caller could have read the same data
+/// itself. Containment is decided on what a grant reaches, not on its name:
+/// a volume fits only if it is backed by the same storage as one of the
+/// caller's, and an allowed host fits only if one of the caller's entries
+/// contains it (`*.github.com` contains `api.github.com`, not `github.com`).
+/// A grant whose reach the implementer cannot see or compare is beyond the
+/// ceiling.
+///
+/// Attenuation. A caller may request more than the ceiling but cannot grant
+/// it. The implementer is the sole grantor, by policy or a person, and
+/// returns `needs-approval`. An approval is an explicit declassification
+/// (a decision that data may cross a boundary it otherwise could not), bound
+/// to a digest over the caller's identity and the whole request. Content the
+/// caller sends down can reach the child's egress; an approval of egress
+/// beyond the ceiling says so too.
+///
+/// Authorship. A model can paraphrase anything it read, so redaction is not
+/// a security boundary and an open agent's final reply is a declassification
+/// channel by nature. Nothing else the caller sees carries child-authored
+/// text: progress, errors, and reasons are implementer-authored, and every
+/// detail string is diagnostic only, not stable, and not for branching on.
+/// The child's journal is never observable through these interfaces.
+///
+/// Steerable channels. The child cannot author text the caller sees outside
+/// its reply, but it does choose its counts, its finish code, which error
+/// kind a run ends in, whether an outcome exceeds `output.max-bytes`, and
+/// its timing. Each of these is a narrow channel to the caller. That is
+/// minor next to an open agent's reply; for a confined agent it is the
+/// whole channel, so `spawn-confined` returns as little of it as it can.
+/// No interface here closes covert or timing channels.
+///
+/// Credentials never pass through these interfaces. Models and secrets are
+/// named; the implementer resolves them and keeps values out of every
+/// agent's memory.
+///
+/// # References
+/// - OCI image digests: https://github.com/opencontainers/image-spec/blob/main/descriptor.md#digests
+/// - JSON Schema: https://json-schema.org/specification
+@since(version = 0.1.0)
+interface types {
+    use wasi:clocks/types@0.3.0.{duration};
+    use cosmonic:agent/inference-types@0.3.0.{json, attachment, opaque-block, usage};
+
+    /// A component image pinned by content digest, so a moving tag cannot
+    /// change what was approved.
+    record component-ref {
+        /// An OCI reference such as `ghcr.io/acme/agents/coder:1.2.0`. For
+        /// display; `digest` is authoritative.
+        image: string,
+        /// An OCI digest, `sha256:<hex>`.
+        digest: string,
+    }
+
+    /// A named volume mounted into one component. Read-write counts toward
+    /// both read and egress reach.
+    record volume-mount {
+        /// The name of a volume the implementer knows, resolved in the
+        /// caller's scope. Never a host path. The implementer compares the
+        /// storage behind the name with the storage behind the caller's
+        /// mounts; two workloads may use the same name for different storage.
+        volume: string,
+        /// Where the component sees the volume.
+        mount-path: string,
+        /// True mounts the volume read-only.
+        read-only: bool,
+    }
+
+    /// An interface granted to one component. The implementer, not the
+    /// request, classifies it as reading, writing, or both.
+    record interface-grant {
+        /// Fully qualified interface name with version, such as
+        /// `wasi:keyvalue/store@0.2.0`.
+        name: string,
+        /// Interface-specific configuration, such as a bucket or topic.
+        config: list<tuple<string, string>>,
+    }
+
+    /// What one component may touch. Empty grants nothing; nothing is
+    /// inherited from the caller.
+    record grants {
+        /// Hosts this component may reach.
+        allowed-hosts: list<string>,
+        /// Volumes mounted into this component.
+        volumes: list<volume-mount>,
+        /// Interfaces this component may import.
+        interfaces: list<interface-grant>,
+        /// Secret names the implementer injects into this component. Names
+        /// only, never values.
+        secrets: list<string>,
+    }
+
+    /// A tool: one component with its own grants. Used by `spawn` for a
+    /// child's tools and by `tool-loading` for a tool the caller loads.
+    record tool-request {
+        /// Unique among the tools of one agent. Used for naming, display,
+        /// and audit.
+        name: string,
+        /// A component exporting `tool-workload` or, for compatibility,
+        /// `cosmonic:agent/tools@0.3.0`.
+        component: component-ref,
+        /// What this tool component may touch.
+        grants: grants,
+    }
+
+    /// What may come back to the caller, or reach a confined agent's sink.
+    /// Covered by the approval digest.
+    record output-spec {
+        /// JSON Schema that `structured` must satisfy. None means reply
+        /// parts only.
+        schema: option<json>,
+        /// Ceiling on the encoded outcome of one run, in bytes.
+        max-bytes: u32,
+    }
+
+    /// Bounds on the child's work. Covered by the approval digest. None
+    /// takes the implementer's default, which policy may cap.
+    record limits {
+        /// Runs the child may take: the number of `agent.run` calls
+        /// accepted. A confined spawn takes exactly one.
+        max-runs: option<u32>,
+        /// Model calls the child may make in one run. This is the bound
+        /// that stops a runaway run. The OpenAI Agents SDK, the Claude Agent
+        /// SDK and Goose call this bound `max_turns`.
+        max-steps: option<u32>,
+        /// Tokens the child may spend across all runs. An implementer that
+        /// does not meter the child's model calls as they happen enforces
+        /// this when a run ends, so the run that crosses it may overshoot.
+        max-tokens: option<u64>,
+        /// Wall-clock budget, measured from spawn. Passing it mid-run ends
+        /// the run with an outcome whose finish is `deadline`, not an error.
+        deadline: option<duration>,
+    }
+
+    /// Everything needed to start a sub-agent. Declarative: the tool set is
+    /// fixed for the agent's lifetime. Construction is lenient; `spawn` and
+    /// `spawn-confined` validate and return `invalid-request`.
+    record spawn-request {
+        /// A component targeting the `runnable-agent` world, so the
+        /// implementer can hand it runs in process.
+        agent: component-ref,
+        /// An inference binding name, as `models.open` takes it. Resolved
+        /// against the bindings the caller's spawn grant delegates, since a
+        /// caller that never chats has no model scope of its own. Counts
+        /// toward read reach like any other grant.
+        model: string,
+        /// The child's instructions.
+        instructions: string,
+        /// Hosts the agent component itself may reach. Tools carry their own.
+        allowed-hosts: list<string>,
+        /// The child's tools. Names must be unique.
+        tools: list<tool-request>,
+        /// What may come back, and how much.
+        output: output-spec,
+        /// Bounds on the child's lifetime work.
+        limits: limits,
+        /// For logs, audit, and display. Never policy input.
+        labels: list<tuple<string, string>>,
+    }
+
+    /// A grantor's decision on a request that needed approval.
+    variant decision {
+        /// Granted. Resend the identical request; it is admitted.
+        granted,
+        /// Refused, with an implementer-authored reason.
+        refused(string),
+        /// No decision before the approval expired.
+        expired,
+        /// A decision not captured above. Treat as refused.
+        other(option<string>),
+    }
+
+    /// A request beyond the caller's ceiling, sent to a grantor. The
+    /// approval outlives the call that produced it: it stays pending until
+    /// the grantor decides or it expires, whether or not anyone is waiting.
+    /// A grant admits one identical request from the same caller before the
+    /// approval expires.
+    record approval {
+        /// Implementer-issued id, to correlate with the approval UI and audit log.
+        id: string,
+        /// `sha256:<hex>` over the caller's identity and the whole request:
+        /// for a spawn, the `spawn-request` including `output` and `limits`
+        /// (and `sink`, for a confined spawn); for a load, the
+        /// `tool-request`. A changed request has a different digest and is a
+        /// new request.
+        request-digest: string,
+        /// Implementer-authored. States what is declassified, for example
+        /// "results of this agent (schema S, at most N bytes) return to <caller>".
+        detail: string,
+        /// Resolves when the grantor decides. Dropping it stops waiting; it
+        /// does not withdraw the request, so a person who decides after the
+        /// caller's own request has ended is not too late.
+        decision: future<decision>,
+    }
+
+    /// Which implementer limit a request would exceed.
+    variant limit-scope {
+        /// Agents running at once for this caller. May clear when one ends.
+        concurrent-agents,
+        /// Nesting depth of spawned agents. Does not clear.
+        depth,
+        /// Memory the implementer reserves for the child.
+        memory,
+        /// Tools loaded into one agent at once. May clear when one is dropped.
+        loaded-tools,
+        /// A scope not captured above.
+        other(option<string>),
+    }
+
+    /// An implementer limit a request would exceed.
+    record over-limit {
+        /// Which limit.
+        scope: limit-scope,
+        /// The limit's value, where the implementer reports it.
+        limit: option<u64>,
+    }
+
+    /// Why a spawn did not start an agent, or a load did not load a tool.
+    /// Either way nothing ran: no child started and no tool was attached.
+    /// Detail strings are implementer-authored and diagnostic only.
+    variant admission-error {
+        /// A policy or a person refused. The capability is partially granted:
+        /// a different request may succeed.
+        access-denied(string),
+        /// Beyond the ceiling and sent to a grantor. Await `decision`, then
+        /// resend the identical request.
+        needs-approval(approval),
+        /// An implementer limit would be exceeded.
+        over-limit(over-limit),
+        /// Malformed: a malformed digest, a duplicate tool name, an unknown
+        /// binding, a component that does not target the right world.
+        invalid-request(string),
+        /// The implementer could not serve the call. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
+
+    /// A final reply part. No tool use, reasoning, or continuation data.
+    variant reply-part {
+        /// Reply text.
+        text(string),
+        /// An attachment the child produced.
+        attachment(attachment),
+        /// A part kind not captured above, passed through unchanged.
+        other(opaque-block),
+    }
+
+    /// Why a run ended. Implementer-authored.
+    variant finish {
+        /// The agent ended its reply.
+        done,
+        /// `limits.max-runs` was reached.
+        max-runs,
+        /// `limits.max-steps` was reached in this run.
+        max-steps,
+        /// `limits.max-tokens` was reached.
+        max-tokens,
+        /// `limits.deadline` passed.
+        deadline,
+        /// A reason not captured above.
+        other(option<string>),
+    }
+
+    /// Counters for one run.
+    record step-counts {
+        /// Model calls made.
+        steps: u32,
+        /// Tool calls made.
+        tool-calls: u32,
+        /// Token usage. None in a field means unreported.
+        usage: usage,
+    }
+
+    /// The result of one run: the final reply and what it cost.
+    record run-outcome {
+        /// Final reply parts, in order.
+        reply: list<reply-part>,
+        /// Satisfies `output.schema`; present only when one was set.
+        structured: option<json>,
+        /// What the run cost.
+        counts: step-counts,
+        /// Why the run ended.
+        finish: finish,
+    }
+
+    /// Why a run is paused. Implementer-authored.
+    variant blocked-reason {
+        /// A tool call waits on a person or the auditor.
+        tool-approval,
+        /// Policy holds the outcome until a person or the auditor releases it.
+        outcome-release,
+        /// A reason not captured above.
+        other(option<string>),
+    }
+
+    /// Contentless progress. The implementer coalesces frames and never
+    /// blocks on an unread stream. `steps` counts are cumulative but may lag:
+    /// model calls an implementer does not meter appear only when the run
+    /// ends.
+    variant progress {
+        /// The child is working.
+        working,
+        /// The run is paused.
+        blocked(blocked-reason),
+        /// Cumulative counters for this run so far. Never sent for a
+        /// confined run.
+        steps(step-counts),
+        /// A frame not captured above. Safe to ignore.
+        other(option<string>),
+    }
+
+    /// Why a run failed after it started. Detail strings are
+    /// implementer-authored, never the child's, and diagnostic only.
+    variant run-error {
+        /// The caller dropped the progress stream or the agent. Cancellation
+        /// is cooperative: effects the child or its tools caused before they
+        /// stopped are not rolled back.
+        cancelled,
+        /// The outcome failed `output.schema` or exceeded `output.max-bytes`.
+        output-rejected(string),
+        /// A person or the auditor declined to release the outcome. Open
+        /// agents only.
+        withheld,
+        /// The child failed. Details are on the observation path, not here.
+        failed(string),
+        /// The implementer could not finish serving the run.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
+
+    /// A run that has started: progress frames, then the outcome. The stream closes before the
+    /// outcome resolves; a closed stream alone does not mean success. The
+    /// outcome can be awaited without draining the stream. Dropping the
+    /// stream requests cancellation; an outcome already recorded wins the
+    /// race, so a cancelled run may still resolve to its outcome.
+    type started-run = tuple<stream<progress>, future<result<run-outcome, run-error>>>;
+}
