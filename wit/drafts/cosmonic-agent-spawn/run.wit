@@ -1,0 +1,46 @@
+package cosmonic:agent@0.5.0;
+
+/// Exported by an agent so the implementer of `spawn` can hand it a run in
+/// process, without a protocol of the agent's own over HTTP. Named after
+/// `wasi:cli/run`. Not published; for discussion.
+///
+/// A run is one unit of work: a message in, the agent's loop of model calls
+/// (steps) and tool calls, and a final reply out. Everything the spawn
+/// request carries for the run reaches the agent: the instructions, the
+/// whole message with its attachments, the output schema, and the step
+/// bound. The agent needs no ingress, so nothing but the implementer can
+/// reach it.
+@unstable(feature = agent-spawn)
+interface run {
+    @unstable(feature = agent-spawn)
+    use cosmonic:agent/inference-types@0.3.0.{json, user-message};
+    @unstable(feature = agent-spawn)
+    use spawn-types.{start-error, started-run};
+
+    /// How to do one run.
+    @unstable(feature = agent-spawn)
+    record run-options {
+        /// Instructions for the agent, ahead of its own. Sent on every run so
+        /// the agent holds no state its caller did not give it.
+        instructions: option<string>,
+        /// JSON Schema the agent asks its model to answer in. The
+        /// implementer still checks the outcome against it.
+        schema: option<json>,
+        /// Model calls the agent may make in this run. The agent stops and
+        /// finishes with `max-steps` when it is reached.
+        max-steps: option<u32>,
+    }
+
+    /// Do one run. Returns `start-error` without starting when the agent
+    /// refuses: `busy` if a run is still in progress, `invalid-input` for a
+    /// message or options it cannot take. Once started, the agent reports
+    /// counts as it makes model calls. Dropping the progress stream requests
+    /// cancellation: the agent stops its model and tool calls and resolves
+    /// the outcome to `cancelled` only once nothing of the run is still
+    /// running.
+    @unstable(feature = agent-spawn)
+    run: async func(
+        message: user-message,
+        options: run-options,
+    ) -> result<started-run, start-error>;
+}

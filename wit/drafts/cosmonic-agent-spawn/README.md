@@ -4,8 +4,11 @@
 `cosmonic:agent@0.5.0`, the next version after 0.4.0 (PR #71). They live in
 `wit/drafts/` and stay out of the `wit.yml` build and publish matrix, so they
 cannot collide with the real `cosmonic:agent` package. No identifier carries
-"draft"; generated Rust modules are `agent0_5_0` beside `agent0_3_0`. Rationale,
-research and the stated defaults are in [DESIGN-NOTES.md](DESIGN-NOTES.md).
+"draft". Every interface, type, function and world is marked
+`@unstable(feature = agent-spawn)`, the WIT-native "not published" marker: a
+binding generator or host must enable the `agent-spawn` feature to use them.
+Generated Rust modules are `agent0_5_0` beside `agent0_3_0`. Rationale, research
+and the stated defaults are in [DESIGN-NOTES.md](DESIGN-NOTES.md).
 
 An agent running in a sandbox often needs help: a reviewer for one file, a
 reader for content it should not trust, or a toolset it did not start with.
@@ -34,7 +37,7 @@ when the interfaces join the real package the dependency disappears.
 | Term | Meaning here |
 | --- | --- |
 | run | One unit of work: a message in, the agent's loop of model and tool calls, a final reply out. `agent.run` starts one. Other systems call this a run (OpenAI Assistants API, OpenAI Agents SDK, LangGraph Platform, AutoGen), an invocation (Google ADK) or a turn (Codex app-server). |
-| step | One model call inside a run, as in Assistants run steps and Vercel AI SDK steps. `limits.max-steps` bounds them; the OpenAI Agents SDK, Claude Agent SDK and Goose call that bound `max_turns`. |
+| step | One model call inside a run, as in Assistants run steps and Vercel AI SDK steps. `budget.max-steps` bounds them; the OpenAI Agents SDK, Claude Agent SDK and Goose call that bound `max_turns`. |
 | toolset | One component, with its own grants, that offers one or more tool definitions. |
 | reach | What a request's grants can read (read reach) and send data to (egress reach). |
 | ceiling | By default a child's or a loaded toolset's reach must fit inside the caller's own. |
@@ -48,7 +51,7 @@ when the interfaces join the real package the dependency disappears.
 | `tool-discovery-client` | `tool-discovery` | none | The power to see the catalog |
 | `tool-loading-client` | `tool-loading` | none | The power to change one's own toolsets |
 | `harness` | `cosmonic:agent/agent@0.3.0`, `spawn-client`, `tool-discovery-client`, `tool-loading-client` | none | A top-level harness agent with every power |
-| `runnable-agent` | `cosmonic:agent/agent@0.3.0` | `runnable` | Any agent a host can spawn |
+| `runnable-agent` | `cosmonic:agent/agent@0.3.0` | `run` | Any agent that can be spawned |
 | `tool-provider` | none | `tool-workload` | One toolset component |
 | `spawn-provider` | none | `spawn` | The host plugin, or a test double |
 | `tool-discovery-provider` | none | `tool-discovery` | An implementer of discovery |
@@ -98,7 +101,7 @@ type started-run = tuple<stream<progress>, future<result<run-outcome, run-error>
 record run-outcome {
     reply: list<reply-part>,
     structured: option<json>,
-    counts: step-counts,
+    counts: run-counts,
     finish: finish,
 }
 ```
@@ -115,8 +118,8 @@ let reviewer = Agent::new(pinned("ghcr.io/acme/agents/reviewer:1.2.0", "sha256:9
     .toolset("repo-fs", pinned("ghcr.io/cosmonic/tools/fs:0.2.0", "sha256:1c…"),
           Grants::none().volume("workspace", "/src", ReadOnly))
     .output::<Review>().max_bytes(16_384)           // schema plus size ceiling
-    .limits(Limits { max_runs: Some(3), max_steps: Some(12),
-                     max_tokens: Some(200_000), deadline: Some(mins(10)) })
+    .budget(Budget { max_runs: Some(3), max_steps: Some(12),
+                     max_total_tokens: Some(200_000), max_duration: Some(mins(10)) })
     .spawn().await?;      // needs-approval: await `decision`, resend the same request
 
 // run = agent.run(message), drain progress for display, await the outcome
@@ -136,7 +139,7 @@ agent hands untrusted content (an inbound email, a scraped page) to a child
 with no grants and accepts only a constrained answer. This package supports it
 by convention:
 
-- spawn the reader with no toolsets and no `allowed-hosts`, so it can reach
+- spawn the reader with no toolsets and empty `grants`, so it can reach
   nothing but its model;
 - set `output.schema` to enums, numbers and booleans only, and a small
   `max-bytes`;
@@ -149,7 +152,7 @@ struct Triage { category: Category, urgent: bool, confidence: u8 }   // no strin
 
 let reader = Agent::new(pinned(QUARANTINE_READER, "sha256:…"))
     .model_alias("local-small").output::<Triage>().max_bytes(256)
-    .limits(Limits { max_runs: Some(1), max_steps: Some(1), ..Default::default() })
+    .budget(Budget { max_runs: Some(1), max_steps: Some(1), ..Default::default() })
     .spawn().await?;
 let triage: Triage = reader.run(user(&untrusted_email)).await?.structured()?;
 ```
@@ -165,19 +168,21 @@ A harness asks what it can use before deciding what to give a child.
 
 ```wit
 interface tool-discovery {
-    variant fit { within-ceiling, needs-approval, other(option<string>) }
+    variant ceiling-fit { within-ceiling, beyond-ceiling, other(option<string>) }
     record toolset-offer {
         spec: toolset-spec,
         summary: string,
         tools: list<tool-def>,
-        fit: fit,
+        fit: ceiling-fit,
     }
     %list: async func(query: option<string>) -> result<list<toolset-offer>, discovery-error>;
 }
 ```
 
-The implementer answers for this caller only: offers that fit its ceiling, and
-offers beyond it that policy could approve, each marked with its fit. Anything
+The implementer answers for this caller only: offers within its ceiling, and
+offers beyond it that policy could approve, each marked with its `ceiling-fit`.
+Fit describes reach, not the policy decision: policy may still require approval
+within the ceiling. Anything
 policy would never grant is hidden, even from a matching query. `query` keeps
 the answer small by matching names, summaries and tool descriptions. Asking
 starts nothing. An offer's `spec` is a ready-made `toolset-spec` (pinned
@@ -213,12 +218,14 @@ it spawned; it spawns a new child with different toolsets instead.
 ## Toolsets
 
 A toolset is one component exporting `tool-workload`, which is
-`cosmonic:agent/tools@0.3.0` with one change: `list` returns a `result`, so a
-toolset that cannot describe itself fails instead of disappearing. This is the
-shape the components in cosmonic-labs/sandboxed-agents#24 export today under
-per-component names. The default, open to review, is that a later
-`cosmonic:agent` version folds this change into `tools` itself and retires the
-separate name. `toolset-spec.component` also accepts a component exporting
+`cosmonic:agent/tools@0.3.0` with one change: `list` returns
+`result<list<tool-def>, list-error>`, so a toolset that cannot describe itself
+fails instead of disappearing. This is the shape the components in
+cosmonic-labs/sandboxed-agents#24 export today under per-component names. It is
+a sibling of `tools`, so the published `tools` contract stays untouched for
+the agents and plugins that import it; whether a later `cosmonic:agent` version
+folds it into `tools` is an open question for Bailey (DESIGN-NOTES.md).
+`toolset-spec.component` also accepts a component exporting
 `cosmonic:agent/tools@0.3.0`, for compatibility.
 
 ## Files
@@ -227,7 +234,7 @@ separate name. `toolset-spec.component` also accepts a component exporting
 | --- | --- |
 | [`spawn-types.wit`](spawn-types.wit) | `spawn-types`: the contract (caller, reach, ceiling, attenuation, authorship) and every shared record |
 | [`spawn.wit`](spawn.wit) | `spawn` and the `agent` resource |
-| [`runnable.wit`](runnable.wit) | `runnable`, the export a spawned child provides |
+| [`run.wit`](run.wit) | `run`, the export a spawned child provides, named after `wasi:cli/run` |
 | [`tool-workload.wit`](tool-workload.wit) | `tool-workload`, one toolset's surface |
 | [`tool-discovery.wit`](tool-discovery.wit) | `tool-discovery` |
 | [`tool-loading.wit`](tool-loading.wit) | `tool-loading` |

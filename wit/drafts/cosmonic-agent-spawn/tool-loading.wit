@@ -20,8 +20,9 @@ package cosmonic:agent@0.5.0;
 /// `needs-approval` with a digest over the caller's identity and the
 /// `toolset-spec`. Policy may ask for approval even within the ceiling,
 /// since new code is new risk even when its reach is not.
-@since(version = 0.5.0)
+@unstable(feature = agent-spawn)
 interface tool-loading {
+    @unstable(feature = agent-spawn)
     use spawn-types.{toolset-spec, admission-error};
 
     /// A toolset loaded into the caller. Dropping it unloads the toolset: the
@@ -29,15 +30,18 @@ interface tool-loading {
     /// in progress is cancelled cooperatively; its effects are not rolled
     /// back. The implementer also unloads every toolset when the caller's
     /// store ends.
+    @unstable(feature = agent-spawn)
     resource loaded-toolset {
         /// The tool names under which the caller's `tools` import offers this
         /// toolset's definitions. Chosen by the implementer, which keeps them
         /// unique.
+        @unstable(feature = agent-spawn)
         get-names: async func() -> list<string>;
     }
 
     /// Check the spec against the ceiling and policy, start the toolset, and
     /// offer its tools through the caller's `tools` import. Resolves once
     /// they are offered.
+    @unstable(feature = agent-spawn)
     load: async func(spec: toolset-spec) -> result<loaded-toolset, admission-error>;
 }

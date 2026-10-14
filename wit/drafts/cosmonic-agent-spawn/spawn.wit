@@ -1,60 +1,35 @@
 package cosmonic:agent@0.5.0;
 
-/// The caller may spawn a sub-agent and read its final replies, within
-/// the ceiling stated on `spawn-types`. Not published; for discussion.
-@since(version = 0.5.0)
+/// The caller may spawn a child agent and read its final replies, within the
+/// ceiling stated on `spawn-types`. Not published; for discussion.
+@unstable(feature = agent-spawn)
 interface spawn {
+    @unstable(feature = agent-spawn)
     use cosmonic:agent/inference-types@0.3.0.{user-message};
-    use spawn-types.{spawn-request, admission-error, started-run};
+    @unstable(feature = agent-spawn)
+    use spawn-types.{spawn-request, admission-error, start-error, started-run};
 
-    /// A lifetime budget that can leave an agent unable to take another run.
-    /// Per-run bounds such as `max-steps` end a run instead; see `finish`.
-    variant budget {
-        /// `limits.max-runs` runs were accepted.
-        runs,
-        /// `limits.max-tokens` were spent across all runs.
-        tokens,
-        /// `limits.deadline` passed.
-        duration,
-        /// A budget not captured above.
-        other(option<string>),
-    }
-
-    /// Why `run` did not start a run. In every case nothing reached the child.
-    variant start-error {
-        /// A run is already in progress. One run at a time.
-        busy,
-        /// A lifetime budget is spent; the agent takes no more runs.
-        exhausted(budget),
-        /// The child has ended for good (it failed to start, or stopped and
-        /// cannot be restarted) and will never accept another run. Details
-        /// are on the observation path, not here.
-        failed(string),
-        /// The implementer could not accept the run. Retry may succeed.
-        unavailable(string),
-        /// A failure not captured above. Treat as permanent.
-        other(option<string>),
-    }
-
-    /// A spawned agent, owned by its caller and scoped to the caller's
-    /// store. Dropping the handle ends the child, cancels a run in progress,
-    /// and releases everything the implementer started for it. The
-    /// implementer does the same when the caller's store ends without
+    /// A child agent the caller spawned, owned by the caller and scoped to
+    /// the caller's store. Dropping the handle ends the child, cancels a run
+    /// in progress, and releases everything the implementer started for it.
+    /// The implementer does the same when the caller's store ends without
     /// dropping the handle (a trap, or a handle that was never dropped), so a
     /// child cannot outlive its caller. A caller that gets a fresh store per
     /// request therefore cannot keep a child across its own requests.
+    @unstable(feature = agent-spawn)
     resource agent {
         /// Start one run: hand the child a message and let it work until it
-        /// replies or a limit stops it. Resolves when the implementer accepts
-        /// the run, not when it ends. While a run is in progress, returns
+        /// replies or a budget item stops it. Resolves when the run is
+        /// accepted, not when it ends. While a run is in progress, returns
         /// `busy`, and keeps returning `busy` after a cancellation until the
-        /// child has actually stopped, so two runs never overlap inside the
-        /// child.
+        /// child has actually stopped, so two runs never overlap inside it.
+        @unstable(feature = agent-spawn)
         run: async func(message: user-message) -> result<started-run, start-error>;
     }
 
-    /// Check the request against the ceiling and policy, and start the agent.
+    /// Check the request against the ceiling and policy, and start the child.
     /// Resolves once accepted, not once its components are running; a child
     /// that fails to start reports it on its first run.
+    @unstable(feature = agent-spawn)
     spawn: async func(request: spawn-request) -> result<agent, admission-error>;
 }

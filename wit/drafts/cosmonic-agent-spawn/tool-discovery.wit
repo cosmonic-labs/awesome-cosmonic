@@ -13,23 +13,29 @@ package cosmonic:agent@0.5.0;
 ///
 /// Knowing what exists is itself information, so discovery is a separate
 /// import from both spawning and loading.
-@since(version = 0.5.0)
+@unstable(feature = agent-spawn)
 interface tool-discovery {
+    @unstable(feature = agent-spawn)
     use cosmonic:agent/tools@0.3.0.{tool-def};
+    @unstable(feature = agent-spawn)
     use spawn-types.{toolset-spec};
 
-    /// How an offer relates to the caller's ceiling.
-    variant fit {
-        /// Inside the caller's ceiling: using it needs no approval unless
-        /// policy asks for one anyway.
+    /// How an offer relates to the caller's ceiling. Policy may still
+    /// require approval for an offer within the ceiling; fit describes reach,
+    /// not the policy decision.
+    @unstable(feature = agent-spawn)
+    variant ceiling-fit {
+        /// Inside the caller's ceiling.
         within-ceiling,
-        /// Beyond the ceiling: using it returns `needs-approval`.
-        needs-approval,
-        /// A relation not captured above. Treat as `needs-approval`.
+        /// Beyond the ceiling: using it returns `needs-approval`, and policy
+        /// could grant it.
+        beyond-ceiling,
+        /// A relation not captured above. Treat as `beyond-ceiling`.
         other(option<string>),
     }
 
     /// One toolset the caller may use or hand down.
+    @unstable(feature = agent-spawn)
     record toolset-offer {
         /// A ready-made spec: the pinned component and the grants it would be
         /// given. Pass it on unchanged so its approval digest matches.
@@ -43,10 +49,11 @@ interface tool-discovery {
         /// untrusted input to a model.
         tools: list<tool-def>,
         /// Fit against this caller's ceiling, decided by the implementer.
-        fit: fit,
+        fit: ceiling-fit,
     }
 
     /// Why discovery failed. Detail strings are diagnostic only.
+    @unstable(feature = agent-spawn)
     variant discovery-error {
         /// Policy refused discovery for this caller.
         access-denied(string),
@@ -60,5 +67,6 @@ interface tool-discovery {
     /// keeps the answer small: when present, only offers whose name, summary
     /// or tool names and descriptions contain it, ignoring case, are
     /// returned. The implementer may also cap how many offers it returns.
+    @unstable(feature = agent-spawn)
     %list: async func(query: option<string>) -> result<list<toolset-offer>, discovery-error>;
 }

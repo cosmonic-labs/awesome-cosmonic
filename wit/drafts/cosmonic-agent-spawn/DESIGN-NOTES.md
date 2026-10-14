@@ -7,7 +7,15 @@ declares `cosmonic:agent@0.5.0`, the next version after 0.4.0 (PR #71), and uses
 the published `cosmonic:agent@0.3.0` and `wasi:clocks@0.3.0` through `wkg.lock`.
 The published packages are unchanged, and CI neither builds nor publishes
 `wit/drafts/`, so this directory cannot collide with the real `cosmonic:agent`
-package. To check it locally:
+package. Every interface, type, function and world is marked
+`@unstable(feature = agent-spawn)`, the WIT-native way to say "not published"
+without putting "draft" in an identifier.
+
+**Version tracking.** `cosmonic:agent@0.4.0` (#71) is not published yet (the
+registry has 0.3.0 only, checked 2026-10-14), so these files track 0.3.0 until
+0.4.0 publishes, then move to 0.4.0 so harness bindings share `user-message`
+and the other inference types instead of carrying two versions. Merge them into
+the real package before anyone builds on this. To check it locally:
 
 ```sh
 WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
@@ -66,8 +74,8 @@ specified and answers `unavailable`.
    contradicts "policy wrappers are host-installed".
 4. **Tool discovery and loading**, each its own interface and world (below).
 5. **"Turn" is now "run"**: `agent.run`, `started-run`, `run-outcome`,
-   `run-error`, `run-options`, `limits.max-runs`, and the child's export
-   `runnable` (was `turn`). `send` is `agent.run`, `send-error` is
+   `run-error`, `run-options`, `budget.max-runs`, and the child's export
+   `run` (was `turn`, then `runnable`). `send` is `agent.run`, `send-error` is
    `start-error`. The survey is below.
 6. **The reverse case and research grounding** are new sections. The interface
    did not change for them.
@@ -106,6 +114,54 @@ From a review against the WIT interface design skill:
   longer includes discovery, and `tool-provider-host` is split in two (item 3
   above).
 
+Second pass, the should-fix items:
+
+- **`budget`, not `limits`.** The record is `budget`, with `max-runs`,
+  `max-steps`, `max-total-tokens` and `max-duration` (was `deadline`);
+  `finish.max-duration` and `finish.max-total-tokens` match. "Limit" is kept
+  for the implementer's own caps (`limit-scope`, `over-limit`). The exhaustion
+  variant is `budget-item`.
+- **`max-total-tokens`** counts `usage.prompt-tokens` plus
+  `usage.completion-tokens` over every model call of every run; cached,
+  cache-write and reasoning tokens are parts of those and are not added again.
+  0.3.0's `chat-options.max-tokens` bounds what one call generates, a
+  different thing.
+- **The resource stays `agent`**, not `subagent`. A spawned child is a full
+  agent: the same world, the same run model, and it can spawn in turn within
+  the depth cap, so "sub" names a relationship, not a distinct abstraction.
+  Prior art agrees: Claude subagents and Google ADK `sub_agents` are plain
+  agents in a hierarchy, and the OpenAI Agents SDK has only `Agent`. The
+  resource is scoped to the `spawn` interface, so it does not collide with the
+  `agent` world. Prose says "the caller" and "the child".
+- **`tool-workload.list` has its own `list-error`** (`unavailable`, `other`).
+  A read has no effects to be unsure of, so `call-error`, which #71 turns into
+  `not-dispatched` and `outcome-unknown`, does not fit it.
+- **The child's export is `run`**, after `wasi:cli/run`. The world keeps the
+  name `runnable-agent`: "a runnable agent exports `run`" reads right, and
+  renaming the world to `run-agent` would read as a verb.
+- **The child's `run` returns `result<started-run, start-error>`**, symmetric
+  with `agent.run`, so a child can refuse (`busy`, `invalid-input`) without
+  starting. `start-error` moved to `spawn-types` so both share it, and gained
+  `invalid-input(string)` for a message or options that cannot be taken.
+- **`decision.denied`**, not `refused`, matching `access-denied` and 0.3.0's
+  `denied`.
+- **The agent component gets full `grants`**, like a toolset (was hosts only).
+  The spike enforces it to the same degree as toolset grants: hosts and
+  volumes are checked against the ceiling and wired into the agent's
+  workload; secrets and interfaces always count as beyond the ceiling.
+- **`run-counts`**, not `step-counts`, and the progress case is `counts`.
+- **`ceiling-fit`** with `within-ceiling` and `beyond-ceiling`. Fit describes
+  reach; policy may still require approval within the ceiling.
+- **`@unstable(feature = agent-spawn)`** on every interface and world, and on
+  every item inside them: wasm-tools refuses an ungated type or `use` inside a
+  gated interface when the feature is off, which is also how WASI writes its
+  own unstable interfaces (wasi:clocks `timezone`). `@unstable` replaces
+  `@since` on these items, since an item carries one gate; `@since` returns
+  when the interfaces are stabilized. Consumers opt in: wasmtime's `bindgen!`
+  enables all features but its generated `add_to_linker` takes a
+  `LinkOptions` the host must set `agent_spawn(true)` on, and wit-bindgen
+  takes `features: ["agent-spawn"]`.
+
 ### Alignment with open PRs
 
 - **#71** (agent interruption and dispatch outcomes, 0.4.0) touches only
@@ -114,10 +170,11 @@ From a review against the WIT interface design skill:
   guarantee; an outcome already recorded wins the race against a cancel;
   cancellation does not roll back effects; `admission-error` and `start-error`
   both mean "nothing ran", the same promise as #71's `not-dispatched`.
-  `tool-workload` takes `call-error`
-  from whatever `cosmonic:agent` version it depends on, so moving the
-  dependency to 0.4.0 picks up `not-dispatched` and `outcome-unknown` without
-  a separate change.
+  `tool-workload.call` takes `call-error` from whatever `cosmonic:agent`
+  version it depends on, so moving the dependency to 0.4.0 changes `call` to
+  `not-dispatched` and `outcome-unknown`, and implementers and callers must be
+  updated for it; it is not a free change. `tool-workload.list` has its own
+  `list-error`, so the move does not touch it.
 - **#70** (notifications 0.3.0): Victor asked for worlds and example scenarios
   in package READMEs. README.md follows that, with WIT excerpts beside each
   scenario.
@@ -146,7 +203,7 @@ definition. The WIT states them on `spawn-types`.
 - **Beyond the ceiling: `needs-approval`.** Approval is explicit
   declassification (deciding that data may cross a boundary it otherwise could
   not). The digest covers the caller's identity and the whole request,
-  including `output { schema, max-bytes }` and `limits`; for a load, the
+  including `output { schema, max-bytes }` and `budget`; for a load, the
   `toolset-spec`. The `approval` carries a
   `decision` future: await it, then resend the identical request. Dropping it
   only stops waiting; the approval stays pending until it is decided or
@@ -166,17 +223,19 @@ definition. The WIT states them on `spawn-types`.
 
 ## Runs: the `runnable-agent` world
 
-`agent.run` needs a way to hand the child work. The 0.3.0
-`agent` world only imports, so without an export an implementer has to speak
-each agent's own HTTP protocol through the host ingress. The spike does exactly
-that with minimal-agent, and the bridge drops the instructions, attachments and
-output schema, leaves the child reachable on the ingress, and cannot pass
-`max-steps`. The package adds `runnable`, an export with
-`run(message, options)` returning progress and an outcome, and a
-`runnable-agent` world (`agent` plus `export runnable`) that spawned children
-target. It is additive. Cancelling a run means the agent stops its calls before
-the outcome resolves to `cancelled`, which is what lets `agent.run` promise
-that two runs never overlap inside the child.
+`agent.run` needs a way to hand the child work. The 0.3.0 `agent` world only
+imports, so without an export an implementer has to speak each agent's own HTTP
+protocol through an ingress. The spike does exactly that with minimal-agent, and
+the bridge drops the instructions, attachments and output schema, leaves the
+child reachable on the ingress, and cannot pass `max-steps`. The package adds
+`run`, an export named after `wasi:cli/run`, with
+`run(message, options) -> result<started-run, start-error>`, and a
+`runnable-agent` world (`agent` plus `export run`) that spawned children
+target. The child can refuse a run without starting it, exactly as `agent.run`
+can refuse its caller. It is additive. Cancelling a run means the agent stops
+its calls before the outcome resolves to `cancelled`, which is what lets
+`agent.run` promise that two runs never overlap inside the child. The spike
+does not call the export yet, because minimal-agent does not have it.
 
 ## Naming the unit of work: "run", not "turn" or "prompt"
 
@@ -225,7 +284,7 @@ meanings people already know:
 
 "Turn", by contrast, is inconsistent across SDKs, as the table shows, and the
 one bound most harness authors know by that name, `max_turns`, means our
-`max-steps`. `limits.max-steps` says so in its doc comment. The Assistants API
+`max-steps`. `budget.max-steps` says so in its doc comment. The Assistants API
 is deprecated in favor of the Responses API (its runs become responses and its
 run steps become items), but the run and step vocabulary it popularized is
 still what LangGraph Platform and the Agents SDK use.
@@ -241,8 +300,7 @@ declarative. The package keeps all three.
   policy allows, each a pinned component with the grants it would be given).
   Each `toolset-offer` carries a ready-made `toolset-spec`, an
   implementer-authored summary, the toolset's own tool definitions as
-  catalogued, and its `fit` against the caller's ceiling (`within-ceiling` or
-  `needs-approval`). Offers policy would never grant are absent. An optional
+  catalogued, and its `ceiling-fit` (`within-ceiling` or `beyond-ceiling`). Offers policy would never grant are absent. An optional
   `query` keeps the answer small: it matches offer names, summaries, and tool
   names and descriptions, ignoring case. Asking starts nothing. Discovery is
   its own import because knowing what exists is information.
@@ -285,7 +343,7 @@ grants, and accepts only constrained output. Willison's Dual LLM pattern,
 CaMeL, FIDES and the design-patterns paper all build on it (see "Research
 grounding").
 
-**What we support.** A `spawn` with no toolsets and no `allowed-hosts` is a
+**What we support.** A `spawn` with no toolsets and empty `grants` is a
 quarantined LLM in Willison's sense: it reaches nothing but its model, it
 cannot act, and the host checks its answer against `output.schema` and
 `max-bytes`. With a schema of enums, numbers and booleans, and harness code
@@ -488,14 +546,8 @@ Each former open question below now has a stated default with its reasoning.
 Every one is **default, open to review**: the package and the spike follow it
 until someone argues it down.
 
-**1. `tool-workload` folds into `tools`.** *Default, open to review.* A later
-`cosmonic:agent` version changes `tools.list` to return
-`result<list<tool-def>, call-error>` and retires the separate `tool-workload`
-name. Two interfaces that differ only in whether discovery can fail would
-split every toolset and every implementer in two for no lasting reason;
-sandboxed-agents#24 already shows the fallible shape works, and its toolbox
-adapter has to trap when a child's discovery fails because 0.3.0's `list`
-cannot report it. Until then `toolset-spec` accepts either export.
+**1. Folding `tool-workload` into `tools`: no longer a default.** It is now
+open question (r), for Bailey.
 
 **2. Spawn depth is capped.** *Default, open to review.* A child may spawn
 children of its own only within a depth the host sets; past it, `spawn`
@@ -509,9 +561,9 @@ alias. *Enforced in* the spike's admission; *tested by*
 a grandchild and the grandchild is refused).
 
 **3. Discovery shows what could be granted, marks it, and filters.** *Default,
-open to review.* `tool-discovery.list` returns offers that fit the caller's
+open to review.* `tool-discovery.list` returns offers within the caller's
 ceiling and offers beyond it that policy could approve, each marked with its
-fit, and hides anything never grantable, even from a matching query. Showing
+`ceiling-fit`, and hides anything never grantable, even from a matching query. Showing
 approvable offers lets a harness plan a request a person can approve instead of
 guessing; hiding never-grantable ones keeps the catalog from advertising what
 no one will get. `list(query: option<string>)` keeps answers small: the query
@@ -550,16 +602,19 @@ lives for one request kills its children (and its loaded tools) when the
 request ends. Options: a reattachable id scoped to the parent's session, or
 request-scoped `spawn` now and session-scoped spawning later.
 
-**(e) Progress stream or host UI only.** `steps` counts lag unless the
-implementer meters the child's model calls, and `max-tokens` can only be
+**(e) Progress stream or host UI only.** `counts` frames lag unless the
+implementer meters the child's model calls, and `max-total-tokens` can only be
 enforced when a run ends unless it does.
 
 **(g) Taint propagation, long term.** Narrowing egress as a child reads needs
 runtime revocation of `allowedHosts`.
 
 **(j) Style.** These interfaces follow the WIT design skill
-(`other(option<string>)`, `@since`); 0.3.0 and #71 do not. Align when they join
-the real package.
+(`other(option<string>)`, gates on every item); 0.3.0 and #71 do not. Align
+when they join the real package. One known mismatch: this package says
+`access-denied` in `admission-error` and `denied` in `decision`, while 0.3.0
+uses a bare `denied(string)` for its refusals (`models.open-error`,
+`tools.call-error`).
 
 **(l) Labeled imports for preset agents.** A zero-key `spawn` under a labeled
 import, checked before instantiation. Worth adding?
@@ -570,6 +625,18 @@ rather than harness code enforces the quarantine pattern and an approval can
 state how few bits come back; and opaque handles a parent can pass on but not
 read. Neither is added; see "The reverse case". It is also the third option in
 "Considered and dropped" for a model that must read secret data.
+
+**(r) Fold `tool-workload` into `tools`, and at which version?** For Bailey.
+On 2026-10-11 Eric chose a sibling interface so the published 0.3.0 `tools`
+contract stays untouched: Goose, Pi, minimal-agent and Desktop's tools plugin
+all import it, and the later switch is meant to be a rename plus an agent
+rebuild. Victor's per-tool components in sandboxed-agents#24 are shaped to
+match `tool-workload`. Changing `tools` itself belongs to the next real
+`cosmonic:agent` version (#71 or later), and Bailey has said she is split on
+the tools interface. The case for folding: two interfaces that differ only in
+whether `list` can fail split every toolset and implementer in two, and the
+toolbox adapter in #24 has to trap because 0.3.0's `list` cannot report a
+failure. Until it is decided, `toolset-spec` accepts either export.
 
 Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
 the caller as its stable workload identity, (k) the
@@ -601,7 +668,7 @@ From building it as a native plugin on wash-runtime:
   workloads a plugin starts to their owner. Needed: owned workloads that stop
   with their owner.
 - **Metering.** A per-workload hook on model calls, for live counts and for
-  enforcing `max-tokens` mid-run.
+  enforcing `max-total-tokens` mid-run.
 - **Types-only imports.** A spawn-client imports `inference-types` only for types;
   two plugins that both link it into one component collide.
 - **Host-routed `tools` for any workload** (for `tool-loading`). Today the spike

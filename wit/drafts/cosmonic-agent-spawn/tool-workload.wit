@@ -1,28 +1,42 @@
 package cosmonic:agent@0.5.0;
 
 /// The surface of one toolset component: `cosmonic:agent/tools@0.3.0`
-/// exactly, except that discovery can fail. Not published; for discussion.
+/// exactly, except that `list` can fail with its own `list-error`. Not published; for discussion.
 ///
 /// This is the shape the tools in cosmonic-labs/sandboxed-agents#24 export
 /// today under per-tool names (`cosmonic:iss-position/tool@0.3.0` and its
-/// siblings), ready for a shared `tool-workload` interface. The default,
-/// open to review, is that a later `cosmonic:agent` version folds this into
-/// `tools` itself, with `list` returning a `result`, and retires the
-/// separate name.
+/// siblings), ready for this shared interface. It is a sibling of `tools`,
+/// so the published `tools` contract stays untouched; whether a later
+/// `cosmonic:agent` version folds it into `tools` is an open question (see
+/// DESIGN-NOTES.md).
 ///
 /// One component is one toolset with its own grants: it offers one or more
 /// tool definitions. `list` returns them; `call` rejects a tool name it does
 /// not own with `unknown-tool` before doing any work. Nothing here routes
 /// between toolsets: the implementer lists and dispatches across toolset
 /// workloads, so an agent never carries a router of its own.
-@since(version = 0.5.0)
+@unstable(feature = agent-spawn)
 interface tool-workload {
+    @unstable(feature = agent-spawn)
     use cosmonic:agent/tools@0.3.0.{tool-def, tool-call, tool-response, call-error};
+
+    /// Why a toolset could not list its tool definitions. A read has no
+    /// effects to be unsure of, so it does not reuse `call-error`, whose
+    /// dispatch and outcome cases (#71) describe calls.
+    @unstable(feature = agent-spawn)
+    variant list-error {
+        /// The toolset could not describe itself now. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
 
     /// This toolset's tool definitions. Fails instead of hiding a toolset
     /// that could not describe itself.
-    %list: async func() -> result<list<tool-def>, call-error>;
+    @unstable(feature = agent-spawn)
+    %list: async func() -> result<list<tool-def>, list-error>;
 
     /// Run a tool call. Same contract as `cosmonic:agent/tools.call`.
+    @unstable(feature = agent-spawn)
     call: async func(request: tool-call) -> result<tool-response, call-error>;
 }

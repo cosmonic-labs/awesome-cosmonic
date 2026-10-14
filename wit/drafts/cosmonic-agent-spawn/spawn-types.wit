@@ -62,13 +62,16 @@ package cosmonic:agent@0.5.0;
 /// # References
 /// - OCI image digests: https://github.com/opencontainers/image-spec/blob/main/descriptor.md#digests
 /// - JSON Schema: https://json-schema.org/specification
-@since(version = 0.5.0)
+@unstable(feature = agent-spawn)
 interface spawn-types {
+    @unstable(feature = agent-spawn)
     use wasi:clocks/types@0.3.0.{duration};
+    @unstable(feature = agent-spawn)
     use cosmonic:agent/inference-types@0.3.0.{json, attachment, opaque-block, usage};
 
     /// A component image pinned by content digest, so a moving tag cannot
     /// change what was approved.
+    @unstable(feature = agent-spawn)
     record component-ref {
         /// An OCI reference such as `ghcr.io/acme/agents/coder:1.2.0`. For
         /// display; `digest` is authoritative.
@@ -79,6 +82,7 @@ interface spawn-types {
 
     /// A named volume mounted into one component. Read-write counts toward
     /// both read and egress reach.
+    @unstable(feature = agent-spawn)
     record volume-mount {
         /// The name of a volume the implementer knows, resolved in the
         /// caller's scope. Never a host path. The implementer compares the
@@ -93,6 +97,7 @@ interface spawn-types {
 
     /// An interface granted to one component. The implementer, not the
     /// request, classifies it as reading, writing, or both.
+    @unstable(feature = agent-spawn)
     record interface-grant {
         /// Fully qualified interface name with version, such as
         /// `wasi:keyvalue/store@0.2.0`.
@@ -103,6 +108,7 @@ interface spawn-types {
 
     /// What one component may touch. Empty grants nothing; nothing is
     /// inherited from the caller.
+    @unstable(feature = agent-spawn)
     record grants {
         /// Hosts this component may reach.
         allowed-hosts: list<string>,
@@ -119,6 +125,7 @@ interface spawn-types {
     /// tool definitions. Used by `spawn` for a child's toolsets and by
     /// `tool-loading` for a toolset the caller loads. "Tool" means a single
     /// definition or call, as in `cosmonic:agent/tools`.
+    @unstable(feature = agent-spawn)
     record toolset-spec {
         /// Unique among the toolsets of one agent. Used for naming, display,
         /// and audit.
@@ -132,6 +139,7 @@ interface spawn-types {
 
     /// What may come back to the caller.
     /// Covered by the approval digest.
+    @unstable(feature = agent-spawn)
     record output-spec {
         /// JSON Schema that `structured` must satisfy. None means reply
         /// parts only.
@@ -140,9 +148,11 @@ interface spawn-types {
         max-bytes: u32,
     }
 
-    /// Bounds on the child's work. Covered by the approval digest. None
-    /// takes the implementer's default, which policy may cap.
-    record limits {
+    /// What the child may spend. Covered by the approval digest. None takes
+    /// the implementer's default, which policy may cap. ("Limit" is kept for
+    /// the implementer's own caps: `limit-scope` and `over-limit`.)
+    @unstable(feature = agent-spawn)
+    record budget {
         /// Runs the child may take: the number of `agent.run` calls
         /// accepted.
         max-runs: option<u32>,
@@ -150,18 +160,25 @@ interface spawn-types {
         /// that stops a runaway run. The OpenAI Agents SDK, the Claude Agent
         /// SDK and Goose call this bound `max_turns`.
         max-steps: option<u32>,
-        /// Tokens the child may spend across all runs. An implementer that
-        /// does not meter the child's model calls as they happen enforces
-        /// this when a run ends, so the run that crosses it may overshoot.
-        max-tokens: option<u64>,
+        /// Tokens the child may spend across all runs and all model calls:
+        /// the sum of `usage.prompt-tokens` and `usage.completion-tokens`.
+        /// `cached-prompt-tokens`, `cache-write-tokens` and
+        /// `reasoning-tokens` are parts of those two and are not added
+        /// again. Not 0.3.0's `chat-options.max-tokens`, which bounds the
+        /// tokens one call generates. An implementer that does not meter the
+        /// child's model calls as they happen enforces this when a run ends,
+        /// so the run that crosses it may overshoot.
+        max-total-tokens: option<u64>,
         /// Wall-clock budget, measured from spawn. Passing it mid-run ends
-        /// the run with an outcome whose finish is `deadline`, not an error.
-        deadline: option<duration>,
+        /// the run with an outcome whose finish is `max-duration`, not an
+        /// error.
+        max-duration: option<duration>,
     }
 
     /// Everything needed to start a sub-agent. Declarative: its toolsets are
     /// fixed for the agent's lifetime. Construction is lenient; `spawn`
     /// validates and returns `invalid-request`.
+    @unstable(feature = agent-spawn)
     record spawn-request {
         /// A component targeting the `runnable-agent` world, so the
         /// implementer can hand it runs in process.
@@ -173,27 +190,29 @@ interface spawn-types {
         model-alias: string,
         /// The child's instructions.
         instructions: string,
-        /// Hosts the agent component itself may reach. Toolsets carry their own.
-        allowed-hosts: list<string>,
+        /// What the agent component itself may touch, in the same shape as a
+        /// toolset's grants. Toolsets carry their own.
+        grants: grants,
         /// The child's toolsets. Names must be unique.
         toolsets: list<toolset-spec>,
         /// What may come back, and how much.
         output: output-spec,
-        /// Bounds on the child's lifetime work.
-        limits: limits,
+        /// What the child may spend over its lifetime.
+        budget: budget,
         /// For logs, audit, and display. Never policy input.
         labels: list<tuple<string, string>>,
     }
 
     /// A grantor's decision on a request that needed approval.
+    @unstable(feature = agent-spawn)
     variant decision {
         /// Granted. Resend the identical request; it is admitted.
         granted,
-        /// Refused, with an implementer-authored reason.
-        refused(string),
+        /// Denied, with an implementer-authored reason.
+        denied(string),
         /// No decision before the approval expired.
         expired,
-        /// A decision not captured above. Treat as refused.
+        /// A decision not captured above. Treat as denied.
         other(option<string>),
     }
 
@@ -205,11 +224,12 @@ interface spawn-types {
     /// and nothing else. A changed request, or the same request from another
     /// caller, is a new request. Standing permission belongs in policy a
     /// person wrote, not in a reusable approval.
+    @unstable(feature = agent-spawn)
     record approval {
         /// Implementer-issued id, to correlate with the approval UI and audit log.
         id: string,
         /// `sha256:<hex>` over the caller's identity and the whole request:
-        /// for a spawn, the `spawn-request` including `output` and `limits`;
+        /// for a spawn, the `spawn-request` including `output` and `budget`;
         /// for a load, the `toolset-spec`. A changed request has a different
         /// digest and is a new request.
         request-digest: string,
@@ -225,6 +245,7 @@ interface spawn-types {
     }
 
     /// Which implementer limit a request would exceed.
+    @unstable(feature = agent-spawn)
     variant limit-scope {
         /// Agents running at once for this caller. May clear when one ends.
         concurrent-agents,
@@ -241,6 +262,7 @@ interface spawn-types {
     }
 
     /// An implementer limit a request would exceed.
+    @unstable(feature = agent-spawn)
     record over-limit {
         /// Which limit.
         scope: limit-scope,
@@ -251,6 +273,7 @@ interface spawn-types {
     /// Why a spawn did not start an agent, or a load did not load a toolset.
     /// Either way nothing ran: no child started and no toolset was attached.
     /// Detail strings are implementer-authored and diagnostic only.
+    @unstable(feature = agent-spawn)
     variant admission-error {
         /// A policy or a person refused. The capability is partially granted:
         /// a different request may succeed.
@@ -270,6 +293,7 @@ interface spawn-types {
     }
 
     /// A final reply part. No tool use, reasoning, or continuation data.
+    @unstable(feature = agent-spawn)
     variant reply-part {
         /// Reply text.
         text(string),
@@ -280,21 +304,23 @@ interface spawn-types {
     }
 
     /// Why a run ended. Implementer-authored.
+    @unstable(feature = agent-spawn)
     variant finish {
         /// The agent ended its reply.
         done,
-        /// `limits.max-steps` was reached in this run.
+        /// `budget.max-steps` was reached in this run.
         max-steps,
-        /// `limits.max-tokens` was reached.
-        max-tokens,
-        /// `limits.deadline` passed.
-        deadline,
+        /// `budget.max-total-tokens` was reached.
+        max-total-tokens,
+        /// `budget.max-duration` passed.
+        max-duration,
         /// A reason not captured above.
         other(option<string>),
     }
 
     /// Counters for one run.
-    record step-counts {
+    @unstable(feature = agent-spawn)
+    record run-counts {
         /// Model calls made.
         steps: u32,
         /// Tool calls made.
@@ -304,18 +330,20 @@ interface spawn-types {
     }
 
     /// The result of one run: the final reply and what it cost.
+    @unstable(feature = agent-spawn)
     record run-outcome {
         /// Final reply parts, in order.
         reply: list<reply-part>,
         /// Satisfies `output.schema`; present only when one was set.
         structured: option<json>,
         /// What the run cost.
-        counts: step-counts,
+        counts: run-counts,
         /// Why the run ended.
         finish: finish,
     }
 
     /// Why a run is paused. Implementer-authored.
+    @unstable(feature = agent-spawn)
     variant blocked-reason {
         /// A tool call waits on a person or the auditor.
         tool-approval,
@@ -326,22 +354,59 @@ interface spawn-types {
     }
 
     /// Contentless progress. The implementer coalesces frames and never
-    /// blocks on an unread stream. `steps` counts are cumulative but may lag:
+    /// blocks on an unread stream. `counts` frames are cumulative but may lag:
     /// model calls an implementer does not meter appear only when the run
     /// ends.
+    @unstable(feature = agent-spawn)
     variant progress {
         /// The child is working.
         working,
         /// The run is paused.
         blocked(blocked-reason),
         /// Cumulative counters for this run so far.
-        steps(step-counts),
+        counts(run-counts),
         /// A frame not captured above. Safe to ignore.
+        other(option<string>),
+    }
+
+    /// A budget item that can leave an agent unable to take another run.
+    /// Per-run bounds such as `max-steps` end a run instead; see `finish`.
+    @unstable(feature = agent-spawn)
+    variant budget-item {
+        /// `budget.max-runs` runs were accepted.
+        max-runs,
+        /// `budget.max-total-tokens` were spent across all runs.
+        max-total-tokens,
+        /// `budget.max-duration` passed.
+        max-duration,
+        /// An item not captured above.
+        other(option<string>),
+    }
+
+    /// Why a run did not start. In every case nothing reached the agent.
+    /// Returned by `agent.run` and by an agent's own `run` export.
+    @unstable(feature = agent-spawn)
+    variant start-error {
+        /// A run is already in progress. One run at a time.
+        busy,
+        /// A budget item is spent; the agent takes no more runs.
+        exhausted(budget-item),
+        /// The message or options cannot be taken, for example an attachment
+        /// the agent does not accept. A different message may succeed.
+        invalid-input(string),
+        /// The agent has ended for good (it failed to start, or stopped and
+        /// cannot be restarted) and will never accept another run. Details
+        /// are on the observation path, not here.
+        failed(string),
+        /// The run could not be accepted now. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
         other(option<string>),
     }
 
     /// Why a run failed after it started. Detail strings are
     /// implementer-authored, never the child's, and diagnostic only.
+    @unstable(feature = agent-spawn)
     variant run-error {
         /// The caller dropped the progress stream or the agent. Cancellation
         /// is cooperative: effects the child or its toolsets caused before they
@@ -364,5 +429,6 @@ interface spawn-types {
     /// outcome can be awaited without draining the stream. Dropping the
     /// stream requests cancellation; an outcome already recorded wins the
     /// race, so a cancelled run may still resolve to its outcome.
+    @unstable(feature = agent-spawn)
     type started-run = tuple<stream<progress>, future<result<run-outcome, run-error>>>;
 }
