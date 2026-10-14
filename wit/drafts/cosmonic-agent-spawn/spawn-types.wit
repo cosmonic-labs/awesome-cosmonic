@@ -1,7 +1,9 @@
-package cosmonic:agent-spawn@0.1.0;
+package cosmonic:agent@0.5.0;
 
-/// Types shared by every interface in this package. Not published; for
-/// discussion. See README.md and DESIGN-NOTES.md.
+/// Types shared by the spawn and tool interfaces added in this version of
+/// `cosmonic:agent`. Not published; for discussion. See README.md and
+/// DESIGN-NOTES.md. The version is the next one after 0.4.0 (PR #71); this
+/// file depends on the published 0.3.0 for messages and usage.
 ///
 /// Importing this interface grants nothing. The powers live in `spawn`,
 /// `spawn-confined`, `tool-discovery` and `tool-loading`, each a separate
@@ -62,8 +64,8 @@ package cosmonic:agent-spawn@0.1.0;
 /// # References
 /// - OCI image digests: https://github.com/opencontainers/image-spec/blob/main/descriptor.md#digests
 /// - JSON Schema: https://json-schema.org/specification
-@since(version = 0.1.0)
-interface types {
+@since(version = 0.5.0)
+interface spawn-types {
     use wasi:clocks/types@0.3.0.{duration};
     use cosmonic:agent/inference-types@0.3.0.{json, attachment, opaque-block, usage};
 
@@ -198,8 +200,11 @@ interface types {
     /// A request beyond the caller's ceiling, sent to a grantor. The
     /// approval outlives the call that produced it: it stays pending until
     /// the grantor decides or it expires, whether or not anyone is waiting.
-    /// A grant admits one identical request from the same caller before the
-    /// approval expires.
+    /// A grant is single use and bound to the request digest: it admits one
+    /// identical request from the same caller before the approval expires,
+    /// and nothing else. A changed request, or the same request from another
+    /// caller, is a new request. Standing permission belongs in policy a
+    /// person wrote, not in a reusable approval.
     record approval {
         /// Implementer-issued id, to correlate with the approval UI and audit log.
         id: string,
@@ -222,7 +227,8 @@ interface types {
     variant limit-scope {
         /// Agents running at once for this caller. May clear when one ends.
         concurrent-agents,
-        /// Nesting depth of spawned agents. Does not clear.
+        /// Nesting depth of spawned agents: the implementer caps how deep
+        /// children may spawn children. Does not clear.
         depth,
         /// Memory the implementer reserves for the child.
         memory,

@@ -1,11 +1,11 @@
-package cosmonic:agent-spawn@0.1.0;
+package cosmonic:agent@0.5.0;
 
 /// The caller may spawn an open sub-agent and read its final replies, within
-/// the ceiling stated on `types`. Not published; for discussion.
-@since(version = 0.1.0)
+/// the ceiling stated on `spawn-types`. Not published; for discussion.
+@since(version = 0.5.0)
 interface spawn {
     use cosmonic:agent/inference-types@0.3.0.{user-message};
-    use types.{spawn-request, admission-error, finish, started-run};
+    use spawn-types.{spawn-request, admission-error, finish, started-run};
 
     /// Why `run` did not start a run. In every case nothing reached the child.
     variant start-error {

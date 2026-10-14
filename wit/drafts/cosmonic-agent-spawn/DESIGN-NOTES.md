@@ -1,20 +1,22 @@
-# `cosmonic:agent-spawn`: design notes
+# Spawn and tools for `cosmonic:agent`: design notes
 
 **Status: not published, for discussion.** Started as the scaffold for the
 design jam on 2026-10-13. The WIT is split by interface (see
 [README.md](README.md) for the file and world layout and worked scenarios). It
-declares `cosmonic:agent-spawn@0.1.0` and uses the published
-`cosmonic:agent@0.3.0` and `wasi:clocks@0.3.0` through `wkg.lock`. The published
-packages are unchanged, and CI does not build `wit/drafts/`. To check it locally:
+declares `cosmonic:agent@0.5.0`, the next version after 0.4.0 (PR #71), and uses
+the published `cosmonic:agent@0.3.0` and `wasi:clocks@0.3.0` through `wkg.lock`.
+The published packages are unchanged, and CI neither builds nor publishes
+`wit/drafts/`, so this directory cannot collide with the real `cosmonic:agent`
+package. To check it locally:
 
 ```sh
 WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
-  node .github/scripts/wit/build.mjs wit/drafts/cosmonic-agent-spawn agent-spawn
+  node .github/scripts/wit/build.mjs wit/drafts/cosmonic-agent-spawn agent
 ```
 
-A native wash-runtime plugin implements the package in a local spike
+A native wash-runtime plugin implements the interfaces in a local spike
 (`~/cosmonic/probes/spawn-spike`, not published): `spawn`, `spawn-confined` and
-`tool-discovery.list` work end to end in 15 scenarios; `tool-loading.load` is
+`tool-discovery.list` work end to end in 17 scenarios; `tool-loading.load` is
 specified and answers `unavailable`.
 
 ## What changed in this revision
@@ -28,20 +30,32 @@ specified and answers `unavailable`.
    value in a box only the matching unsealer opens. That is closer to an opaque
    reference than to a confined worker, and the two ideas meet in this design
    (see "The reverse case"), so the collision would mislead.
-2. **No "draft" in any identifier.** The package is `cosmonic:agent-spawn@0.1.0`,
-   matching its directory. Not `cosmonic:agent@0.4.0`: open PR #71 moves the
-   whole agent package to 0.4.0 and is close to publishing, two directories
-   cannot both declare and publish the same package and version, and an
-   unsettled draft should neither hold 0.4.0 back nor ride along with it. A
-   separate package also settles old question (k): bindgen generated both
-   `agent0_3_0` and `agent0_4_0_draft` because the draft was a second version
-   of `cosmonic:agent`. With one version per package the Rust modules are plain
-   `agent` and `agent_spawn`. The "not published" status lives in the prose.
-   Moving the interfaces into `cosmonic:agent` later is a rename.
+2. **No "draft" in any identifier; the interfaces are `cosmonic:agent@0.5.0`.**
+   Eric asked for them in `cosmonic:agent` itself (`cosmonic:agent/spawn`,
+   `cosmonic:agent/spawn-confined`, `cosmonic:agent/tool-discovery` and so on)
+   at the next unpublished version after #71 takes the package to 0.4.0. The
+   shared types interface is `spawn-types`, not a bare `types`, so it reads
+   clearly beside `inference-types`. The files stay in
+   `wit/drafts/cosmonic-agent-spawn/`, outside the `wit.yml` matrix, so CI
+   never builds or publishes a second `cosmonic:agent` directory. The
+   "not published" status lives in the prose.
+   **Build approach: depend on 0.3.0, vendor nothing.** A WIT package may use
+   another version of itself: each `package@version` is a distinct package to
+   the resolver. These files `use cosmonic:agent/inference-types@0.3.0` and
+   `cosmonic:agent/tools@0.3.0`, and the worlds `include
+   cosmonic:agent/agent@0.3.0`. `build.mjs` fetches 0.3.0 from the registry,
+   reproduces `wkg.lock` unchanged, and builds `cosmonic:agent@0.5.0`; the spike
+   generates Rust modules `agent0_3_0` and `agent0_5_0`. Redefining the 0.3.0
+   types inside 0.5.0 was the fallback and was not needed. The cost is the one
+   noted in old question (k): a component importing these interfaces carries
+   two `cosmonic:agent` versions until the interfaces join the real package,
+   when the self-dependency disappears.
 3. **Worlds organize the package.** One file per interface, and worlds per role
    composed with `include`: `spawner`, `confined-spawner`, `tool-discoverer`,
    `tool-loader`, `harness` (all of them), `runnable-agent`, `tool-provider`,
-   and the implementer worlds `spawn-provider` and `tool-broker`. The old
+   and the implementer worlds `spawn-provider` and `tool-provider-host`
+   (renamed from `tool-broker`, since "broker" is reserved for host-wide
+   services). The old
    `spawn-middleware` world is gone: a guest component in front of the
    implementer would become the caller, and its own grants the ceiling, which
    contradicts "policy wrappers are host-installed".
@@ -62,7 +76,9 @@ specified and answers `unavailable`.
 Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`,
 `spawn-confined` and `tool-loading.load`; `limit-scope` gained `loaded-tools`;
 the spike now detaches instead of withdrawing when the caller drops an
-approval's `decision`, as the WIT already said.
+approval's `decision`, as the WIT already said; `tool-discovery.list` takes an
+optional query. The former open questions are now stated defaults (see
+"Defaults, open to review").
 
 ### Alignment with open PRs
 
@@ -164,6 +180,8 @@ primary docs:
 
 | System | One request and the work it causes | One model call in the loop | Bound on the loop | Source |
 | --- | --- | --- | --- | --- |
+| OpenAI Assistants API (deprecated in favor of Responses) | run: "an execution run on a thread"; threads hold messages | run step: "a step in execution of a run" | none | [`run.py`](https://github.com/openai/openai-python/blob/main/src/openai/types/beta/threads/run.py), [`run_step.py`](https://github.com/openai/openai-python/blob/main/src/openai/types/beta/threads/runs/run_step.py), [migration guide](https://developers.openai.com/api/docs/assistants/migration) |
+| LangGraph Platform (LangSmith Deployment) | run: "an invocation of an assistant"; a thread is "a persistent conversation container that maintains state across multiple runs" | super-step (in the graph) | `recursion_limit` | [runs](https://docs.langchain.com/langsmith/runs), [threads](https://docs.langchain.com/langsmith/use-threads) |
 | OpenAI Agents SDK | run (`Runner.run`), "a single logical turn in a chat conversation" | turn ("agent-loop turns (LLM calls)") | `max_turns`, default 10, `MaxTurnsExceeded` | [running agents](https://openai.github.io/openai-agents-python/running_agents/) |
 | Claude Agent SDK | `query()` | turn: "one round trip inside the loop" (output with tool calls, tools run, results fed back) | `max_turns`, counts tool-use turns, `error_max_turns` | [agent loop](https://code.claude.com/docs/en/agent-sdk/agent-loop) |
 | Codex app-server | turn: "a single user request and the agent work that follows"; turns hold items, threads hold turns | item | none found | [app-server](https://learn.chatgpt.com/docs/app-server.md) |
@@ -184,11 +202,27 @@ model calls, which is our `max-steps`. Anyone porting a harness would set the
 wrong bound. "Prompt" is worse still: an MCP prompt is a template, the system
 prompt is the instructions, and only Pi uses `prompt()` for the unit.
 
-**Decision: "run" for the unit, "step" for one model call.** "Run" is what the
-OpenAI Agents SDK (`Runner.run`) and AutoGen (`run(task)`) call the same unit,
-ADK's "invocation" means the same, and it has no second meaning in this
-package. "Step" matches the Vercel AI SDK and LangGraph and already named the
-bound. `limits.max-steps` documents that other SDKs call it `max_turns`.
+**Decision: "run" for the unit, "step" for one model call.** Both words keep
+meanings people already know:
+
+- **Run.** The OpenAI Assistants API organized work as threads, then runs, then
+  run steps: a run is "an execution run on a thread" and a run step is "a step
+  in execution of a run", the same run and step pair used here. LangGraph
+  Platform has the same shape: a thread "maintains state across multiple
+  runs", and a run is "an invocation of an assistant". The OpenAI Agents SDK
+  (`Runner.run`, "a single logical turn in a chat conversation") and AutoGen
+  (`run(task)`) call the same unit a run, and ADK's "invocation" means the same.
+- **Step.** One model call and the tools it asks for: Vercel AI SDK steps
+  ("one model generation and the execution of any local tools"), Assistants
+  run steps, and LangGraph super-steps (one iteration over the graph). It
+  already named the bound, `max-steps`.
+
+"Turn", by contrast, is inconsistent across SDKs, as the table shows, and the
+one bound most harness authors know by that name, `max_turns`, means our
+`max-steps`. `limits.max-steps` says so in its doc comment. The Assistants API
+is deprecated in favor of the Responses API (its runs become responses and its
+run steps become items), but the run and step vocabulary it popularized is
+still what LangGraph Platform and the Agents SDK use.
 
 ## Tool discovery and loading
 
@@ -202,7 +236,9 @@ declarative. The package keeps all three.
   carries a ready-made `tool-request`, an implementer-authored summary, the
   tool's own definitions as catalogued, and its `fit` against the caller's
   ceiling (`within-ceiling` or `needs-approval`). Offers policy would never
-  grant are absent. Asking starts nothing. Discovery is its own import because
+  grant are absent. An optional `query` keeps the answer small: it matches
+  offer names, summaries, and tool names and descriptions, ignoring case.
+  Asking starts nothing. Discovery is its own import because
   knowing what exists is information.
 - **Tool descriptions are untrusted text.** A tool's author writes its names,
   descriptions and schemas, and a model reads them. Discovery puts more of
@@ -226,8 +262,9 @@ Spike coverage: `discovery_lists_against_the_callers_ceiling` registers five
 catalog entries and checks fits for a caller that reads `workspace` and reaches
 `allowed.test` (a reader and a network tool inside, a writer and an unknown
 host beyond, a never-grant entry absent), checks that a caller with no reach
-sees every offer as beyond, spawns an offer unchanged without approval, and
-checks that `load` answers `unavailable`. Loading is not implemented: the
+sees every offer as beyond, filters by query (a match never reveals a
+never-grant entry), spawns an offer unchanged without approval, and checks
+that `load` answers `unavailable`. Loading is not implemented: the
 parent is not a spawned child, so its `tools` import is not routed by the
 plugin, and serving it needs the runtime work listed at the end.
 
@@ -274,7 +311,7 @@ pass into another request but not read) would cover the CaMeL and FIDES case.
 Neither clearly strengthens the model enough today. The first only helps when
 the harness code is not trusted, and then the harness's own grants are the
 larger problem; the second needs host-side value storage and provenance that
-nothing else here has yet. Both are listed as question (n). The pattern is
+nothing else here has yet. Both stay open as question (n). The pattern is
 supported by convention, and Scenario 3 in README.md shows how.
 
 **What we never claim.** This does not block prompt injection. A quarantined
@@ -299,8 +336,8 @@ manipulated. Side channels are not solved.
   (the caller is the party kept out) but the property is his: the
   `confined-outcome` is the legitimate channel, kept to a finish code, and the
   shared services and timing we name as residual risk are his covert channels.
-  The transitivity rule is why a confined child should not be able to spawn an
-  open grandchild that reports to the caller (question (o)).
+  The transitivity rule is why a confined child may import `spawn-confined`
+  but never `spawn` (default 2).
 - **Information-flow control and declassification.** Myers and Liskov,
   "Protecting Privacy using the Decentralized Label Model", ACM TOSEM 9(4),
   2000 ([PDF](https://cs.brown.edu/courses/csci2390/2023/readings/jif.pdf)),
@@ -408,93 +445,116 @@ reach, stay open, as Lampson, EROS, CaMeL and FIDES each say of their own
 systems. "Distinct credentials and egress identities" for confined children is
 not enforced by wash-runtime today. Nothing here blocks prompt injection.
 
-## Open questions
+## Defaults, open to review
 
-Letters are kept from the previous revision so earlier discussion still lines up.
+Each former open question below now has a stated default with its reasoning.
+Every one is **default, open to review**: the package and the spike follow it
+until someone argues it down.
 
-**(a) One workload for agent and tools, or one per tool?** Both run. One
-workload works when the agent imports `tools` once per tool under labels that
-name the tool components (`(implements ..)`, wasmCloud#5593); a single unlabeled
-import with several exporters is refused. Labels fix the number and names of
-tools when the agent is built, suit preset agents, and cannot take a loaded
-tool. One workload per tool, with the host routing `tools` calls, takes a tool
-set chosen at spawn time, makes `tool-loading` possible, and lets the host see
-every tool call for accounting. Proposal: one workload per tool for `spawn` and
-`load`; labeled single-workload placement for presets.
+**1. `tool-workload` folds into `tools`.** *Default, open to review.* A later
+`cosmonic:agent` version changes `tools.list` to return
+`result<list<tool-def>, call-error>` and retires the separate `tool-workload`
+name. Two interfaces that differ only in whether discovery can fail would
+split every tool and every host in two for no lasting reason; sandboxed-agents#24
+already shows the fallible shape works, and its toolbox adapter has to trap
+when a child's discovery fails because 0.3.0's `list` cannot report it. Until
+then `tool-request` accepts either export.
 
-**(b) Sink semantics.** What do `person` and `approval-queue` deliver to on
-Desktop versus Control? Is `volume` enough for machine consumers? A spike
-suggests Desktop's notifications inbox (`cosmonic:notifications`, #70) for
-`person` and its approvals view for `approval-queue`; `volume` is enough once
-volumes are host-level objects, since "not one the caller can read" is
-otherwise checked by name.
+**2. Confinement is transitive, and spawn depth is capped.** *Default, open to
+review.* A confined child may import `spawn-confined` and never `spawn`.
+Lampson's transitivity rule requires that anything a confined program calls is
+confined too. Open `spawn` checks a grandchild only against its immediate
+caller's ceiling, and a grantor approving it sees the confined child as the
+caller; nothing re-checks the confinement rules against the original caller,
+so an approved grandchild could gain reach the original caller shares.
+`spawn-confined` applies those rules at every level, and its results go to a
+sink rather than back up the chain. The host refuses a
+confined child whose component imports `spawn` (it does not start), declares
+only `spawn-confined` for confined children and both for open ones, and
+refuses `spawn` from a confined caller at call time as a second check. Depth is
+capped by the host (the spike's default is 1: children of a workload the person
+started may not spawn at all) and returns `over-limit(depth)` with the cap.
+*Enforced in* the spike's bind hook and `spawn`; *tested by*
+`confinement_is_transitive_and_depth_is_capped` (an open child refused at depth
+1; at depth 2 a child spawns a grandchild and the grandchild is refused; a
+confined child importing `spawn` does not start and nothing reaches the sink).
+
+**3. Discovery shows what could be granted, marks it, and filters.** *Default,
+open to review.* `tool-discovery.list` returns offers that fit the caller's
+ceiling and offers beyond it that policy could approve, each marked with its
+fit, and hides anything never grantable, even from a matching query. Showing
+approvable offers lets a harness plan a request a person can approve instead of
+guessing; hiding never-grantable ones keeps the catalog from advertising what
+no one will get. `list(query: option<string>)` keeps answers small: the query
+matches names, summaries, and tool names and descriptions, ignoring case, and
+the host may cap the count. *Enforced and tested in*
+`discovery_lists_against_the_callers_ceiling`.
+
+**4. A parent cannot load tools into a child it spawned.** *Default, open to
+review.* Spawning stays declarative: a parent that wants different tools spawns
+a new child. Loading into a child would make its tool set change under it and
+make the parent a grantor of sorts for another agent's reach. Revisit once
+loading exists at all. Stated in `tool-loading`.
+
+**5. An approval grant is single use and bound to the request digest.**
+*Default, open to review.* A grant admits one identical request from the same
+caller before it expires, and nothing else: another caller, or the same caller
+with any field changed (labels included), is a different digest and needs its
+own approval. Standing permission belongs in policy a person wrote, where it
+can be read, reviewed and revoked, not in a reusable approval that quietly
+widens what a caller can do. Dropping `decision` stops waiting and does not
+withdraw. *Enforced in* the spike's admission; *tested by*
+`approval_grant_is_single_use_and_bound_to_the_digest`,
+`ceiling_needs_approval_then_identical_resend` and
+`dropping_the_decision_keeps_the_approval_pending`.
+
+**6. Confined children may not reach hosts the caller can reach.** *Default,
+open to review.* "The child's writable reach does not overlap the caller's
+readable reach", read strictly, refuses any allowed host the caller can also
+reach, because a shared host is a channel both can read and write. Distinct
+egress identities would let a host tell the two apart, but wash-runtime does
+not enforce them today, so the conservative reading stands until it does.
+Stated in `spawn-confined`; *enforced in* the spike's confinement rules;
+*tested by* `confined_run_to_sink`.
+
+### Still open
+
+**(a) One workload for agent and tools, or one per tool?** Both run. Labels fix
+the tool set when the agent is built and suit presets; one workload per tool,
+with the host routing `tools`, takes a tool set chosen at spawn time and is
+what `tool-loading` needs. Proposal: one workload per tool for `spawn` and
+`load`, labeled single-workload placement for presets.
+
+**(b) Sink semantics.** `person` likely delivers through Desktop's
+notifications (`cosmonic:notifications`, #70) and `approval-queue` through its
+approvals view. `volume` is enough once volumes are host-level objects.
 
 **(c) Lifetime versus store.** A resource dies with its store, so a parent that
-lives for one request kills its children when the request ends. minimal-agent
-gets a fresh store per request, so it can never keep a child across its own
-runs, and wasmtime does not run a host resource's drop when its store is torn
-down. Options: a reattachable id scoped to the parent's session, or documenting
-`spawn` as request-scoped and adding session-scoped spawning later. The same
-applies to `loaded-tool`.
-
-**(d) What "fits inside" means.** Containment, as drafted: `*.github.com`
-contains `api.github.com` but not `github.com`, decided next to the runtime's
-host matcher so the two cannot drift.
+lives for one request kills its children (and its loaded tools) when the
+request ends. Options: a reattachable id scoped to the parent's session, or
+request-scoped `spawn` now and session-scoped spawning later.
 
 **(e) Progress stream or host UI only.** `steps` counts lag unless the
 implementer meters the child's model calls, and `max-tokens` can only be
 enforced when a run ends unless it does.
 
-**(f) Resolved.** `tool-workload` is defined here in the shape of
-sandboxed-agents#24, and `tool-request` accepts it or `cosmonic:agent/tools`.
-Dynamic loading is `tool-loading`, not a method on the handle. Open: where
-`tool-workload` finally lives (proposed: `cosmonic:agent`).
+**(g) Taint propagation, long term.** Narrowing egress as a child reads needs
+runtime revocation of `allowedHosts`.
 
-**(g) Taint propagation, long term.** Narrowing egress as a child reads would
-beat a fixed ceiling. It needs runtime revocation of `allowedHosts`.
+**(j) Style.** These interfaces follow the WIT design skill
+(`other(option<string>)`, `@since`); 0.3.0 and #71 do not. Align when they join
+the real package.
 
-**(h) Virtualization versus a native plugin.** Kept the native plugin, with the
-caller defined as the component the import is bound to, by stable workload
-identity.
-
-**(i) Confined as one run.** Kept. Separately, "the child's writable reach does
-not overlap the caller's readable reach" refuses any allowed host the caller
-can also reach, and "distinct credentials and egress identities" has no
-enforcement in wash-runtime today. Decide whether shared hosts are allowed when
-egress identities differ.
-
-**(j) Cohesion with `cosmonic:agent`.** This package follows the WIT design
-skill (`other(option<string>)`, `@since`, a `types` interface); 0.3.0 does not.
-#71 keeps 0.3.0's style. Align when the interfaces move into `cosmonic:agent`.
-
-**(k) Resolved** by the separate package (see "What changed").
-
-**(l) Labeled imports for preset agents.** A workload that always spawns the
-same reviewer could import `reviewer: cosmonic:agent-spawn/preset` with a
-zero-key `spawn`, checked before instantiation with no `needs-approval` at
-runtime. Worth adding?
-
-**(m) Partly resolved.** Dropping `approval.decision` detaches, in the WIT and
-now in the spike. Open: single-use grant (as drafted) or valid until expiry.
+**(l) Labeled imports for preset agents.** A zero-key `spawn` under a labeled
+import, checked before instantiation. Worth adding?
 
 **(n) Reverse case in the interface?** A closed-schema output mode with `reply`
 withheld, or opaque handles a parent can pass on but not read. Not added; see
 "The reverse case".
 
-**(o) Nesting and confinement.** Lampson's transitivity rule says a confined
-child's own children must be confined too. The package does not yet say what a
-confined child may spawn, and the spike forbids nesting (`max_depth` 1).
-Proposal: a confined child gets no `spawn` at all, only `spawn-confined` to a
-sink that is not its caller.
-
-**(p) Discovery scope.** Should `tool-discovery.list` show offers beyond the
-ceiling at all, or only `within-ceiling` ones unless policy says otherwise? The
-spike shows both, with their fit. Should it take a query, or is the catalog
-small enough to list?
-
-**(q) Who loads into whom.** `load` attaches to the caller only. Should a
-parent be able to load into a child it spawned? That would make the child's
-tool set non-declarative and the parent a grantor of sorts; the draft says no.
+Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
+the caller as its stable workload identity, (i) confined as one run, (k) the
+two-version binding names, (m) detach on drop.
 
 ## What implementing it needs from the runtime
 

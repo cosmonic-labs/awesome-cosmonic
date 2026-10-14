@@ -1,4 +1,4 @@
-package cosmonic:agent-spawn@0.1.0;
+package cosmonic:agent@0.5.0;
 
 /// Exported by an agent so a host can hand it a run in process, without a
 /// protocol of the agent's own over HTTP. Not published; for discussion.
@@ -9,10 +9,10 @@ package cosmonic:agent-spawn@0.1.0;
 /// reaches the agent: the instructions, the whole message with its
 /// attachments, the output schema, and the step bound. The agent needs no
 /// ingress, so nothing outside the host can reach it.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 interface runnable {
     use cosmonic:agent/inference-types@0.3.0.{json, user-message};
-    use types.{started-run};
+    use spawn-types.{started-run};
 
     /// How to do one run.
     record run-options {

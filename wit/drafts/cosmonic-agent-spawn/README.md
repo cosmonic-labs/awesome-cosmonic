@@ -1,10 +1,11 @@
-# cosmonic:agent-spawn 0.1.0
+# Spawn and tools for `cosmonic:agent` 0.5.0
 
-**Status: not published, for discussion.** This package is not in the `wit.yml`
-build matrix and nothing pushes it to a registry. The version is a normal
-unpublished semver so generated bindings get plain names (`agent_spawn` in Rust);
-the draft status lives in this text, not in any identifier. Rationale, research
-and open questions are in [DESIGN-NOTES.md](DESIGN-NOTES.md).
+**Status: not published, for discussion.** These interfaces are proposed for
+`cosmonic:agent@0.5.0`, the next version after 0.4.0 (PR #71). They live in
+`wit/drafts/` and stay out of the `wit.yml` build and publish matrix, so they
+cannot collide with the real `cosmonic:agent` package. No identifier carries
+"draft"; generated Rust modules are `agent0_5_0` beside `agent0_3_0`. Rationale,
+research and the stated defaults are in [DESIGN-NOTES.md](DESIGN-NOTES.md).
 
 An agent running in a sandbox often needs help: a reviewer for one file, a worker
 that files a ticket with credentials the agent must never hold, or a tool it did
@@ -23,15 +24,18 @@ more than the caller has, but only the host, by policy or a person, can approve
 it. Credentials never pass through these interfaces; models and secrets are
 named and the host resolves them.
 
-The package depends on the published `cosmonic:agent@0.3.0` for messages, usage
-and tool definitions, and on `wasi:clocks@0.3.0` for `duration`.
+These files depend on the published `cosmonic:agent@0.3.0` for messages, usage
+and tool definitions, and on `wasi:clocks@0.3.0` for `duration`, both pinned in
+`wkg.lock`. A WIT package may depend on another version of itself, so nothing
+from 0.3.0 is copied in. When 0.4.0 publishes, the dependency moves to it, and
+when the interfaces join the real package the dependency disappears.
 
 ## Vocabulary
 
 | Term | Meaning here |
 | --- | --- |
-| run | One unit of work: a message in, the agent's loop of model and tool calls, a final reply out. `agent.run` starts one. Other systems call this a run (OpenAI Agents SDK), an invocation (Google ADK) or a turn (Codex app-server). |
-| step | One model call inside a run. `limits.max-steps` bounds them; the OpenAI Agents SDK, Claude Agent SDK and Goose call that bound `max_turns`. |
+| run | One unit of work: a message in, the agent's loop of model and tool calls, a final reply out. `agent.run` starts one. Other systems call this a run (OpenAI Assistants API, OpenAI Agents SDK, LangGraph Platform, AutoGen), an invocation (Google ADK) or a turn (Codex app-server). |
+| step | One model call inside a run, as in Assistants run steps and Vercel AI SDK steps. `limits.max-steps` bounds them; the OpenAI Agents SDK, Claude Agent SDK and Goose call that bound `max_turns`. |
 | reach | What a request's grants can read (read reach) and send data to (egress reach). |
 | ceiling | By default a child's or a loaded tool's reach must fit inside the caller's own. |
 | confined | A child that cannot pass what it learned back to its caller, after Lampson's confinement problem (1973). Partial: timing and shared services remain. |
@@ -49,7 +53,7 @@ and tool definitions, and on `wasi:clocks@0.3.0` for `duration`.
 | `runnable-agent` | `cosmonic:agent/agent@0.3.0` | `runnable` | Any agent a host can spawn |
 | `tool-provider` | none | `tool-workload` | One tool component |
 | `spawn-provider` | none | `spawn`, `spawn-confined` | The host plugin, or a test double |
-| `tool-broker` | none | `tool-discovery`, `tool-loading` | The host's tool broker |
+| `tool-provider-host` | none | `tool-discovery`, `tool-loading` | The host side of discovery and loading |
 
 Worlds compose with `include`. A coding agent that delegates and can itself be
 spawned targets two of them:
@@ -58,8 +62,8 @@ spawned targets two of them:
 package acme:coder@1.0.0;
 
 world coder {
-    include cosmonic:agent-spawn/spawner@0.1.0;
-    include cosmonic:agent-spawn/runnable-agent@0.1.0;
+    include cosmonic:agent/spawner@0.5.0;
+    include cosmonic:agent/runnable-agent@0.5.0;
 }
 ```
 
@@ -86,7 +90,7 @@ interface spawn {
     spawn: async func(request: spawn-request) -> result<agent, admission-error>;
 }
 
-// in `types`
+// in `spawn-types`
 type started-run = tuple<stream<progress>, future<result<run-outcome, run-error>>>;
 record run-outcome {
     reply: list<reply-part>,
@@ -145,8 +149,11 @@ queue, not to the caller, and its digest covers the request and the sink. Once
 a person grants it, the identical request is admitted. The confined run's
 progress carries only `working` and `blocked`, and its outcome is a finish code:
 no reply, no counts, because every count is something the worker could steer to
-signal its caller. The host also refuses a sink the caller can read and a worker
-that could write anywhere the caller reads.
+signal its caller. The host also refuses a sink the caller can read, a worker
+that could write anywhere the caller reads, and (until child and caller have
+distinct egress identities) a worker that could reach any host the caller can.
+The worker itself may hand work on only through `spawn-confined`: a confined
+child that imports `spawn` does not start.
 
 ## Scenario 3: read untrusted content in quarantine
 
@@ -191,12 +198,15 @@ interface tool-discovery {
         tools: list<tool-def>,
         fit: fit,
     }
-    %list: async func() -> result<list<tool-offer>, discovery-error>;
+    %list: async func(query: option<string>) -> result<list<tool-offer>, discovery-error>;
 }
 ```
 
-The host answers for this caller only: each offer's fit against the caller's
-ceiling, and nothing policy would never grant. Asking starts nothing. An offer's
+The host answers for this caller only: offers that fit its ceiling, and offers
+beyond it that policy could approve, each marked with its fit. Anything policy
+would never grant is hidden, even from a matching query. `query` keeps the
+answer small by matching names, summaries and tool descriptions. Asking starts
+nothing. An offer's
 `request` is a ready-made `tool-request` (pinned component and grants), so the
 harness passes it to `spawn` unchanged and the approval digest matches what the
 host showed. Tool names and descriptions are written by the tool's author:
@@ -221,7 +231,8 @@ once, beyond it goes to a grantor, and policy may ask for approval anyway. The
 host starts the tool as its own component and offers its functions through the
 caller's existing `cosmonic:agent/tools` import, so the agent never carries a
 router. Dropping the handle unloads the tool. A spawned child never receives
-`tool-loading` in this version.
+`tool-loading` in this version, and a parent cannot load a tool into a child it
+spawned; it spawns a new child with a different tool set instead.
 
 ## Tools
 
@@ -229,15 +240,15 @@ A tool is one component exporting `tool-workload`, which is
 `cosmonic:agent/tools@0.3.0` with one change: `list` returns a `result`, so a
 tool that cannot describe itself fails instead of disappearing. This is the
 shape the tools in cosmonic-labs/sandboxed-agents#24 export today under
-per-tool names. It is defined here so the package builds; its intended home is
-`cosmonic:agent`, beside `tools`. `tool-request.component` also accepts a
+per-tool names. The default, open to review, is that a later `cosmonic:agent`
+version folds this change into `tools` itself and retires the separate name. `tool-request.component` also accepts a
 component exporting `cosmonic:agent/tools@0.3.0`, for compatibility.
 
 ## Files
 
 | File | Contents |
 | --- | --- |
-| [`types.wit`](types.wit) | `types`: the contract (caller, reach, ceiling, attenuation, authorship) and every shared record |
+| [`spawn-types.wit`](spawn-types.wit) | `spawn-types`: the contract (caller, reach, ceiling, attenuation, authorship) and every shared record |
 | [`spawn.wit`](spawn.wit) | `spawn` and the `agent` resource |
 | [`spawn-confined.wit`](spawn-confined.wit) | `spawn-confined`, sinks, the confined outcome |
 | [`runnable.wit`](runnable.wit) | `runnable`, the export a spawned child provides |
@@ -246,14 +257,19 @@ component exporting `cosmonic:agent/tools@0.3.0`, for compatibility.
 | [`tool-loading.wit`](tool-loading.wit) | `tool-loading` |
 | [`world.wit`](world.wit) | The worlds above |
 
+Every file declares `package cosmonic:agent@0.5.0;`, the same as the real
+package directory will once these interfaces move there.
+
 ## Build locally
 
 `build.mjs` needs `WKG_CONFIG_FILE` for a package that depends on `cosmonic:*`:
 
 ```sh
 WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
-  node .github/scripts/wit/build.mjs wit/drafts/cosmonic-agent-spawn agent-spawn
+  node .github/scripts/wit/build.mjs wit/drafts/cosmonic-agent-spawn agent
 ```
 
 It fetches the two dependencies pinned in `wkg.lock`, checks the lock still
-reproduces, validates the package, and writes `dist/agent-spawn.wasm`.
+reproduces, validates the package, and writes `dist/agent.wasm` (declaring
+`cosmonic:agent@0.5.0`). Never publish that file: it holds only these
+interfaces, not the whole package.

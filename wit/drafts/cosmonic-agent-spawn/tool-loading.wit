@@ -1,4 +1,4 @@
-package cosmonic:agent-spawn@0.1.0;
+package cosmonic:agent@0.5.0;
 
 /// The caller may load a tool into itself while it runs. Not published; for
 /// discussion.
@@ -6,7 +6,9 @@ package cosmonic:agent-spawn@0.1.0;
 /// Spawning is declarative: a child's tools are fixed when it starts. This
 /// interface is the separate, explicit power to change a running agent's own
 /// tool set. A world that does not import it cannot load anything, and a
-/// spawned child never receives it in this version.
+/// spawned child never receives it in this version. A parent cannot load a
+/// tool into a child it spawned; it spawns a new child with a different
+/// tool set instead.
 ///
 /// A loaded tool is a component with its own grants, started by the host.
 /// The host offers its functions through the caller's own
@@ -17,9 +19,9 @@ package cosmonic:agent-spawn@0.1.0;
 /// `needs-approval` with a digest over the caller's identity and the
 /// `tool-request`. Policy may ask for approval even within the ceiling,
 /// since new code is new risk even when its reach is not.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 interface tool-loading {
-    use types.{tool-request, admission-error};
+    use spawn-types.{tool-request, admission-error};
 
     /// A tool loaded into the caller. Dropping it unloads the tool: the host
     /// stops offering its functions and stops its component. A call in

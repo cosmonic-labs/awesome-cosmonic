@@ -1,4 +1,4 @@
-package cosmonic:agent-spawn@0.1.0;
+package cosmonic:agent@0.5.0;
 
 /// The caller may spawn a confined agent: one run whose results go to an
 /// implementer-named sink, never to the caller. The caller gets progress and
@@ -9,18 +9,27 @@ package cosmonic:agent-spawn@0.1.0;
 /// chosen recipients. Confinement here is partial, as Lampson's was.
 ///
 /// For privileged workers whose results the caller must never see. The
-/// implementer enforces, on top of the rules stated on `types`:
+/// implementer enforces, on top of the rules stated on `spawn-types`:
 /// - the sink is not one the caller can read;
 /// - the child's writable reach does not overlap the caller's readable reach;
 /// - child and caller use distinct credentials and egress identities.
+///
+/// Confinement is transitive, as Lampson required: a confined child may
+/// import `spawn-confined` but never `spawn`, so it cannot start an open
+/// grandchild that reports to it, and it cannot hand its results back
+/// through one. The implementer refuses a confined child whose component
+/// imports `spawn`. Until child and caller have distinct egress identities,
+/// the implementer also refuses any allowed host for the child that the
+/// caller can reach.
+///
 /// Residual risk, stated plainly: a confined child and its caller can still
 /// signal each other through an external service both can reach, and through
 /// timing. Confinement narrows the channel; it does not close every covert
 /// one.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 interface spawn-confined {
     use cosmonic:agent/inference-types@0.3.0.{user-message};
-    use types.{spawn-request, admission-error, finish, progress, run-error};
+    use spawn-types.{spawn-request, admission-error, finish, progress, run-error};
 
     /// Where a confined agent's results go. Names only destinations the
     /// implementer knows; the caller cannot name an address, a path, or itself.

@@ -1,20 +1,21 @@
-package cosmonic:agent-spawn@0.1.0;
+package cosmonic:agent@0.5.0;
 
 /// The surface of one tool component: `cosmonic:agent/tools@0.3.0` exactly,
 /// except that discovery can fail. Not published; for discussion.
 ///
 /// This is the shape the tools in cosmonic-labs/sandboxed-agents#24 export
 /// today under per-tool names (`cosmonic:iss-position/tool@0.3.0` and its
-/// siblings), ready for a shared `tool-workload` interface. It is defined
-/// here so this package builds and its worlds can name it; its intended home
-/// is `cosmonic:agent`, beside `tools`.
+/// siblings), ready for a shared `tool-workload` interface. The default,
+/// open to review, is that a later `cosmonic:agent` version folds this into
+/// `tools` itself, with `list` returning a `result`, and retires the
+/// separate name.
 ///
 /// One component is one tool with its own grants. `list` returns that
 /// tool's definitions; `call` rejects a name it does not own with
 /// `unknown-tool` before doing any work. Nothing here routes between tools:
 /// the host lists and dispatches across tool workloads, so an agent never
 /// carries a router of its own.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 interface tool-workload {
     use cosmonic:agent/tools@0.3.0.{tool-def, tool-call, tool-response, call-error};
 

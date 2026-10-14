@@ -1,9 +1,9 @@
 /// Sub-agents, confined workers, and host-mediated tools for sandboxed
 /// agents. Not published; for discussion. See README.md.
-package cosmonic:agent-spawn@0.1.0;
+package cosmonic:agent@0.5.0;
 
 /// An agent that may spawn open sub-agents and read their final replies.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world spawner {
     include cosmonic:agent/agent@0.3.0;
 
@@ -12,7 +12,7 @@ world spawner {
 
 /// An agent that may spawn confined workers. It cannot spawn open agents or
 /// read a confined agent's results.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world confined-spawner {
     include cosmonic:agent/agent@0.3.0;
 
@@ -20,7 +20,7 @@ world confined-spawner {
 }
 
 /// An agent that may ask which tools are available to it.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world tool-discoverer {
     include cosmonic:agent/agent@0.3.0;
 
@@ -29,7 +29,7 @@ world tool-discoverer {
 
 /// An agent that may load tools into itself while it runs. Loading is a
 /// separate power from spawning and is never implied by it.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world tool-loader {
     include tool-discoverer;
 
@@ -37,7 +37,7 @@ world tool-loader {
 }
 
 /// A top-level harness: every power in this package.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world harness {
     include spawner;
     include confined-spawner;
@@ -46,7 +46,7 @@ world harness {
 
 /// An agent a host can hand runs to in process: the world a spawned child
 /// targets.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world runnable-agent {
     include cosmonic:agent/agent@0.3.0;
 
@@ -54,22 +54,22 @@ world runnable-agent {
 }
 
 /// One tool component with its own grants.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world tool-provider {
     export tool-workload;
 }
 
 /// An implementer of both spawn interfaces, such as a host plugin or a test
 /// double.
-@since(version = 0.1.0)
+@since(version = 0.5.0)
 world spawn-provider {
     export spawn;
     export spawn-confined;
 }
 
-/// An implementer of tool discovery and loading: the host's tool broker.
-@since(version = 0.1.0)
-world tool-broker {
+/// An implementer of tool discovery and loading: the host side of tool discovery and loading.
+@since(version = 0.5.0)
+world tool-provider-host {
     export tool-discovery;
     export tool-loading;
 }
