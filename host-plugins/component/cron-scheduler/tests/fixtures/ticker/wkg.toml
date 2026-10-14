@@ -1,0 +1,4 @@
+# `cosmonic:cron` is read from this repository, the same copy the plugin is
+# built against.
+[overrides]
+"cosmonic:cron" = { path = "../../../../../../wit/cosmonic-cron" }

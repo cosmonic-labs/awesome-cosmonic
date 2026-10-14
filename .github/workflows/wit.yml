@@ -1,4 +1,4 @@
-# Validates the cosmonic:agent, cosmonic:kafka and cosmonic:notify WIT packages and publishes
+# Validates the cosmonic:agent, cosmonic:cron, cosmonic:kafka and cosmonic:notify WIT packages and publishes
 # them to GHCR as ghcr.io/cosmonic-labs/cosmonic/<package>.
 #
 # The version in each package's `package` declaration is the release version.
@@ -49,6 +49,8 @@ jobs:
         include:
           - package: agent
             dir: wit/cosmonic-agent
+          - package: cron
+            dir: wit/cosmonic-cron
           - package: kafka
             dir: wit/cosmonic-kafka
           - package: notify
@@ -100,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [agent, kafka, notify]
+        package: [agent, cron, kafka, notify]
     env:
       GITHUB_ACTOR: ${{ github.actor }}
       REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

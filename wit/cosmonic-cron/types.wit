@@ -1,0 +1,249 @@
+package cosmonic:cron@0.1.0;
+
+/// Types shared by `scheduler` and `handler`.
+///
+/// Times use `wasi:clocks@0.3.0`: periods use `types.duration` and instants use
+/// `system-clock.instant`.
+@since(version = 0.1.0)
+interface types {
+    @since(version = 0.1.0)
+    use wasi:clocks/types@0.3.0.{duration};
+    @since(version = 0.1.0)
+    use wasi:clocks/system-clock@0.3.0.{instant};
+
+    /// A workload-local schedule name of 1 to 64 ASCII letters, digits, `-`, `_`, or
+    /// `.`, used to identify its firings.
+    @since(version = 0.1.0)
+    type schedule-name = string;
+
+    /// An inclusive range with `start <= end`.
+    @since(version = 0.1.0)
+    record calendar-range {
+        start: u8,
+        end: u8,
+    }
+
+    /// An inclusive range with `start <= end` and a positive step.
+    @since(version = 0.1.0)
+    record calendar-stepped {
+        start: u8,
+        end: u8,
+        step: u8,
+    }
+
+    /// A calendar field selection, with values bounded by the field's range.
+    @since(version = 0.1.0)
+    variant calendar-part {
+        /// Every value, equivalent to `*`.
+        any,
+        /// One value.
+        at(u8),
+        /// Every value in an inclusive range.
+        range(calendar-range),
+        /// Every nth value from the field's minimum, with a positive step.
+        every(u8),
+        /// Every nth value in an inclusive range.
+        stepped(calendar-stepped),
+    }
+
+    /// A nonempty union of selections; order and duplicates do not matter.
+    @since(version = 0.1.0)
+    type calendar-selector = list<calendar-part>;
+
+    /// Named weekdays independent of backend numbering.
+    @since(version = 0.1.0)
+    flags weekdays {
+        sunday,
+        monday,
+        tuesday,
+        wednesday,
+        thursday,
+        friday,
+        saturday,
+    }
+
+    /// Named months independent of backend numbering.
+    @since(version = 0.1.0)
+    flags months {
+        january,
+        february,
+        march,
+        april,
+        may,
+        june,
+        july,
+        august,
+        september,
+        october,
+        november,
+        december,
+    }
+
+    /// A typed alternative to a five-field crontab expression.
+    ///
+    /// Restricted day-of-month and weekday fields match with OR, as in POSIX cron.
+    /// Clock and daylight saving behavior follow `schedule.cron`.
+    @since(version = 0.1.0)
+    record calendar-schedule {
+        /// Minute selections in 0-59.
+        minutes: calendar-selector,
+        /// Hour selections in 0-23.
+        hours: calendar-selector,
+        /// Day selections in 1-31, or `none` for every day of the month.
+        days-of-month: option<calendar-selector>,
+        /// Selected weekdays, nonempty when set, or `none` for every weekday.
+        weekdays: option<weekdays>,
+        /// Selected months, nonempty when set, or `none` for every month.
+        months: option<months>,
+        /// An IANA time zone, or `none` for UTC.
+        timezone: option<string>,
+    }
+
+    /// A crontab expression and its time zone.
+    ///
+    /// # References
+    ///
+    /// - [POSIX crontab](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html)
+    /// - [IANA Time Zone Database](https://www.iana.org/time-zones)
+    @since(version = 0.1.0)
+    record cron-schedule {
+        /// Five space-separated fields: minute (0-59), hour (0-23), day of month
+        /// (1-31), month (1-12), and day of week (0-6, Sunday is 0).
+        ///
+        /// Fields accept `*`, numbers, ranges (`1-5`), comma-separated lists, step
+        /// suffixes (`*/15`, `0-30/10`), and English three-letter month and weekday
+        /// names (`jan`, `mon`).
+        /// When both day fields are restricted, either may match, per POSIX crontab.
+        ///
+        /// Use `interval` for periods shorter than a minute.
+        /// Implementers may accept extensions such as `@hourly` or a seconds field;
+        /// expressions within the rules above are portable, and unsupported expressions
+        /// return `invalid-schedule`.
+        expression: string,
+        /// The IANA time zone, such as `America/New_York`, or `none` for UTC.
+        ///
+        /// Handling of local times skipped or repeated by daylight saving is
+        /// implementation-defined; use UTC if skipped or repeated firings would matter.
+        timezone: option<string>,
+    }
+
+    /// When a schedule fires: `cron` and `interval` repeat until removed, while
+    /// `once-at` and `once-after` fire once.
+    ///
+    /// The `other` case supports additional schedule kinds without breaking existing
+    /// components.
+    @since(version = 0.1.0)
+    variant schedule {
+        /// Fire at system-clock times matching a crontab expression.
+        ///
+        /// Forward clock corrections report skipped matches as `missed`.
+        /// For backward corrections, the implementer decides whether to wait for the
+        /// previous time or reschedule from the new time, and which step sizes trigger
+        /// each behavior.
+        cron(cron-schedule),
+        /// Fire at a fixed rate on a monotonic clock, starting one period after
+        /// registration takes effect.
+        ///
+        /// Handler duration does not shift the rate, and periods below the
+        /// implementer's minimum return `invalid-schedule`.
+        interval(duration),
+        /// Fire once at this system-clock instant.
+        ///
+        /// New registrations require a future instant; past instants return
+        /// `invalid-schedule` and cannot restart completed schedules.
+        once-at(instant),
+        /// Fire once after this monotonic delay from when registration takes effect.
+        ///
+        /// The same minimum duration as `interval` applies, preventing handlers from
+        /// repeatedly scheduling immediate calls.
+        once-after(duration),
+        /// An additional schedule kind in the implementer's syntax.
+        ///
+        /// Unrecognized text returns `unsupported`; listings also use this case for
+        /// schedules the caller's version cannot express.
+        other(string),
+    }
+
+    /// A schedule held for the caller's workload.
+    @since(version = 0.1.0)
+    record registration {
+        name: schedule-name,
+        schedule: schedule,
+        /// `true` for a schedule declared in the workload's grant; `false` for one
+        /// created with `scheduler.register`.
+        ///
+        /// Components can view and handle declared schedules but cannot replace or
+        /// remove them.
+        declared: bool,
+        /// The next due time as forecast by the implementer at the time of the call, or
+        /// `none` if no firing remains.
+        ///
+        /// A one-shot already being handled has no next firing, nor does a registration
+        /// that will end before its next due time.
+        /// Use this forecast rather than computing one locally, since cron rules,
+        /// daylight saving behavior, and clock readings depend on the implementer.
+        ///
+        /// For `cron` and `once-at`, this is the next firing's `scheduled-at`.
+        /// For `interval` and `once-after`, it maps the monotonic deadline to the
+        /// current system clock and shifts with system-clock corrections.
+        ///
+        /// Occurrences skipped while the previous handler runs are excluded; a time at
+        /// or before now indicates a firing awaiting delivery.
+        /// Retries are redeliveries and are excluded from this forecast.
+        next: option<instant>,
+    }
+
+    /// A scheduled firing delivered to `handler`.
+    @since(version = 0.1.0)
+    record firing {
+        /// The schedule that came due.
+        name: schedule-name,
+        /// The firing's due time, which may precede handler execution.
+        ///
+        /// For `cron`, this is the exact matching instant, stable across redeliveries
+        /// and usable with `name` as an idempotency key.
+        /// For `once-at`, it is the requested instant; for `interval` and `once-after`,
+        /// it is the system-clock reading when the period or delay elapsed.
+        scheduled-at: instant,
+        /// Firings skipped since the previous delivery, always 0 for one-shot
+        /// schedules.
+        ///
+        /// Firings are skipped when a previous handler is still running, the workload
+        /// is unreachable, or the implementer falls behind.
+        /// Handlers that only need to run near the current time can ignore this count.
+        ///
+        /// The count is a lower bound: implementers may cap it after long gaps or lose
+        /// it across restarts.
+        /// To account for every period, compare the exact `scheduled-at` of this latest
+        /// occurrence with your own record of the previous one.
+        missed: u32,
+        /// The delivery attempt, starting at 1 and increasing with each redelivery
+        /// requested by `retry`.
+        attempt: u32,
+    }
+
+    /// Why a schedule could not be registered, removed or listed.
+    @since(version = 0.1.0)
+    variant schedule-error {
+        /// An empty, oversized, or invalid schedule name in a register or unregister
+        /// call, with diagnostic details.
+        invalid-name(string),
+        /// An invalid or impossible schedule, with diagnostic details.
+        ///
+        /// Causes include a malformed expression, unknown time zone, zero or undersized
+        /// duration, instant at or before registration time, or one-shot due after the
+        /// registration ends.
+        invalid-schedule(string),
+        /// An unsupported schedule kind, with diagnostic details.
+        unsupported(string),
+        /// The caller lacks a scheduling grant or tried to change a declared schedule.
+        access-denied,
+        /// The registration limit is reached; remove a schedule before adding another.
+        limit-exceeded,
+        /// The caller's workload has no `handler` export to receive firings.
+        no-handler,
+        /// An unspecified failure with optional, unstable diagnostic text, allowing
+        /// implementers to extend errors without breaking callers.
+        other(option<string>),
+    }
+}

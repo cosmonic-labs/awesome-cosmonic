@@ -9,6 +9,7 @@ Long-lived operations use native WIT streams and futures.
 | Package | Contract |
 | --- | --- |
 | [`cosmonic:agent`](cosmonic-agent/world.wit) 0.3.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:cron`](cosmonic-cron/world.wit) 0.1.0 | An API for being called on crontab, interval and one-shot schedules, declared with a workload or registered at run time, with time spelled in `wasi:clocks@0.3.0` types. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
 | [`cosmonic:notify`](cosmonic-notify/notify.wit) 0.2.0 | An API for sending notifications to users and getting their responses, with actions such as links and callbacks. |
 
@@ -74,9 +75,24 @@ agent -> authorized model aliases + chat + tools + session
 wasm-tools component wit wit/cosmonic-agent
 ```
 
-`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, which `wkg.lock` pins by
-digest. The build script fetches them and checks the lock still reproduces:
+`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, and `cosmonic:cron`
+imports those and `wasi:clocks`. Each package's `wkg.lock` pins them by digest.
+The build script fetches them and checks the lock still reproduces:
 
 ```sh
 node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
+node .github/scripts/wit/build.mjs wit/cosmonic-cron cron
 ```
+
+## Scheduling worlds
+
+| World | Imports | Exports |
+| --- | --- | --- |
+| `scheduled-handler` | None | `handler` |
+| `scheduler-client` | `scheduler` | `handler` |
+| `host-plugin` | `handler`, `wasi:clocks`, `wasmcloud:host` | `types`, `scheduler`, `wasi:cli/run`, `wasmcloud:host/workload-lifecycle` |
+
+A workload whose schedules are known at deploy time declares them in its
+binding and implements `scheduled-handler`. One that decides at run time
+implements `scheduler-client`. [`cron-scheduler`](../host-plugins/component/cron-scheduler/)
+implements `host-plugin`.

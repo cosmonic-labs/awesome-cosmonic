@@ -1,0 +1,66 @@
+package cosmonic:cron@0.1.0;
+
+/// Manage schedules for the caller's workload.
+///
+/// Each firing calls the `handler` export of the workload that registered it.
+/// The caller cannot schedule other workloads or choose a different export.
+///
+/// Import `scheduler` for schedules created at runtime; workloads with only
+/// deployment-time schedules need only export `handler`.
+///
+/// ## Registration lifetime
+///
+/// The implementer stores registrations by name, so they outlive component instances
+/// without a live handle.
+///
+/// Registrations end when:
+///
+/// - The caller unregisters them.
+/// - A one-shot firing completes or exhausts its retries.
+/// - The implementer enforces a lifetime or firing limit, without notifying the
+///   workload.
+/// - The caller's workload stops.
+///
+/// Persistence across implementer restarts is implementation-defined; use
+/// `list-registrations` to check existing schedules and register missing ones again.
+@since(version = 0.1.0)
+interface scheduler {
+    @since(version = 0.1.0)
+    use types.{schedule-name, schedule, calendar-schedule, registration, schedule-error};
+
+    /// Register `schedule` under `name` for the caller's workload.
+    ///
+    /// Replacing a schedule takes effect immediately and restarts an `interval` period,
+    /// but waits for any running handler for the same name to finish.
+    ///
+    /// Registering an identical schedule preserves its timing and lifetime limits, so
+    /// components can safely register on every startup.
+    ///
+    /// A schedule whose last firing is already being handled counts as spent; its
+    /// handler can register the same name and delay for another `once-after` firing.
+    ///
+    /// The implementer validates the schedule before returning `ok`.
+    @since(version = 0.1.0)
+    register: async func(name: schedule-name, schedule: schedule)
+        -> result<_, schedule-error>;
+
+    /// Register a typed calendar schedule with the same rules and limits as `register`.
+    ///
+    /// Both functions share names; listings return typed schedules as `schedule.cron`
+    /// with a normalized expression, which can be passed to `register` unchanged.
+    @since(version = 0.1.0)
+    register-calendar: async func(name: schedule-name, schedule: calendar-schedule)
+        -> result<_, schedule-error>;
+
+    /// Remove the caller's registration for `name`, succeeding if it is already absent.
+    ///
+    /// A running handler may finish but is not retried; a new registration of the same
+    /// name waits for it to finish.
+    @since(version = 0.1.0)
+    unregister: async func(name: schedule-name) -> result<_, schedule-error>;
+
+    /// List the caller's registered and declared schedules by name, including each
+    /// schedule's next due time.
+    @since(version = 0.1.0)
+    list-registrations: async func() -> result<list<registration>, schedule-error>;
+}

@@ -1,0 +1,12 @@
+package cosmonic-plugins:ticker;
+
+// `cosmonic:cron/scheduler-client` (register schedules, handle firings), plus
+// an HTTP front so a test can drive `scheduler` over HTTP, and a monotonic
+// clock so one handler can run long on purpose.
+world ticker {
+    include cosmonic:cron/scheduler-client@0.1.0;
+
+    import wasi:clocks/monotonic-clock@0.3.0;
+
+    export wasi:http/handler@0.3.0;
+}

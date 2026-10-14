@@ -1,0 +1,9 @@
+package cosmonic-plugins:cron-scheduler;
+
+// Everything this plugin serves, calls and needs is the published
+// `cosmonic:cron/host-plugin` world: it exports `scheduler`, the workload
+// lifecycle hooks and its own run loop, calls `handler` on workloads, and
+// waits on `wasi:clocks@0.3.0`.
+world plugin {
+    include cosmonic:cron/host-plugin@0.1.0;
+}

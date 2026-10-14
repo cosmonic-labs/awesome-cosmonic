@@ -1,0 +1,143 @@
+package cosmonic:cron@0.1.0;
+
+/// A workload that handles deployment-time schedules without permission to add, change,
+/// or remove them.
+@since(version = 0.1.0)
+world scheduled-handler {
+    @since(version = 0.1.0)
+    export handler;
+}
+
+/// A workload that manages its own schedules through `scheduler` and handles both
+/// registered and declared firings through `handler`.
+@since(version = 0.1.0)
+world scheduler-client {
+    @since(version = 0.1.0)
+    import scheduler;
+
+    @since(version = 0.1.0)
+    export handler;
+}
+
+/// The scheduling capability implemented as a wasmCloud host component plugin.
+///
+/// One plugin serves all host workloads, isolates schedules by workload identity,
+/// waits on `wasi:clocks/monotonic-clock`, and calls each owner's `handler`.
+///
+/// ## Declaring schedules with a binding
+///
+/// Declare schedules in a host-interface entry's `config` for workloads that
+/// only export `handler`:
+///
+/// ```yaml
+/// hostInterfaces:
+///   - namespace: cosmonic
+///     package: cron
+///     version: "0.1.0"
+///     interfaces: [handler]
+///     config:
+///       schedule.nightly-report: "0 2 * * *"
+///       schedule.business-hours: "*/15 9-17 * * mon-fri"
+///       interval.poll-inbox: 30s
+///       timezone: America/New_York
+/// ```
+///
+/// - `schedule.<name>` declares a named `cron` schedule from a crontab expression.
+/// - `interval.<name>` declares a named `interval` using durations such as
+///   `500ms`, `30s`, or `1h30m`, with units `ms`, `s`, `m`, `h`, and `d`.
+/// - `timezone` sets the IANA zone for the entry's `schedule.*` keys, defaulting
+///   to UTC.
+///
+/// Names must be unique, so `schedule.x` and `interval.x` cannot coexist.
+/// Only repeating schedules may be declared, since one-shots would fire again
+/// on every bind.
+///
+/// Retry settings apply to both declared and registered schedules:
+///
+/// - `retry.max-attempts` limits delivery attempts per firing, including the first.
+/// - `retry.backoff` sets the initial retry delay, doubling for each redelivery.
+///
+/// ## Letting components register schedules
+///
+/// Include `scheduler` to let components register schedules:
+///
+/// ```yaml
+///     interfaces: [handler, scheduler]
+///     config:
+///       max-registrations: "8"
+///       min-interval: 5s
+///       max-lifetime: 24h
+///       max-firings: "500"
+/// ```
+///
+/// - `max-registrations` limits concurrent registrations, excluding declared schedules.
+/// - `min-interval` sets the minimum `interval` period and `once-after` delay,
+///   including declared intervals.
+/// - `max-lifetime` removes a registration after this duration, even if it never fired.
+/// - `max-firings` removes a registration after this many firings, excluding retries.
+///
+/// Lifetime and firing limits apply only to registered schedules.
+/// Registering an identical schedule preserves these limits; registering after
+/// removal starts them afresh.
+///
+/// ## What the provider does with a binding
+///
+/// The provider documents its defaults and rejects unknown keys and invalid values.
+/// Bindings that declare schedules or grant `scheduler` must also list `handler`.
+///
+/// Multiple `cosmonic:cron` entries combine their schedules, with `timezone`
+/// scoped to each entry and limits shared across the workload.
+/// Each limit may be set by only one entry.
+///
+/// Rebinding applies new limits to existing registrations:
+///
+/// - Revoking `scheduler` removes all registrations.
+/// - Raising `min-interval` removes shorter schedules.
+/// - Lowering `max-registrations` removes the newest excess registrations.
+/// - Lowering `max-firings` removes schedules already at the limit.
+/// - `max-lifetime` restarts from the bind without extending existing deadlines.
+///
+/// ## What a declared schedule guarantees
+///
+/// Declared schedules are restored from the binding on every bind, including
+/// after plugin restarts.
+/// Registered schedules live in plugin memory unless the provider documents
+/// persistence, so components should register them on every startup.
+@since(version = 0.1.0)
+world host-plugin {
+    /// Export shared types from the host, keeping workloads from having to provide
+    /// them.
+    @since(version = 0.1.0)
+    export types;
+    @since(version = 0.1.0)
+    export scheduler;
+
+    /// Load declared schedules on workload bind and remove all workload schedules on
+    /// unbind.
+    @since(version = 0.1.0)
+    export wasmcloud:host/workload-lifecycle@0.1.3;
+
+    /// Run the loop that waits for due schedules and dispatches their firings.
+    @since(version = 0.1.0)
+    export wasi:cli/run@0.3.0;
+
+    /// Call the workload's exported handler.
+    @since(version = 0.1.0)
+    import handler;
+
+    /// Select the workload that receives a firing.
+    @since(version = 0.1.0)
+    import wasmcloud:host/workload-call@0.1.3;
+
+    /// Identify the caller of `scheduler` to isolate each workload's schedules.
+    @since(version = 0.1.0)
+    import wasmcloud:host/identity@0.1.3;
+
+    /// Wait for due schedules and measure `interval` periods.
+    @since(version = 0.1.0)
+    import wasi:clocks/monotonic-clock@0.3.0;
+
+    /// Read system-clock times for `cron` schedules.
+    @since(version = 0.1.0)
+    import wasi:clocks/system-clock@0.3.0;
+}

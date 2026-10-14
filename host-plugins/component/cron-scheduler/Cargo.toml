@@ -1,0 +1,42 @@
+[package]
+name = "cron-scheduler"
+version = "0.1.0"
+edition = "2024"
+# Edition 2024 needs 1.85; the async wit-bindgen features below need 1.88.
+rust-version = "1.88"
+description = "cosmonic:cron@0.1.0 as a wasmCloud host component plugin: calls workloads on crontab and interval schedules, timed by wasi:clocks@0.3.0."
+license = "Apache-2.0"
+repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
+publish = false
+
+[lib]
+# `cdylib` is the component. `rlib` is there so `cargo test` can link the
+# schedule logic into a native test binary.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
+croner = "4"
+
+# The bindings and the dispatch loop exist only in the component. Keeping them
+# out of a native build is what lets `cargo test` run the schedule logic on
+# the host.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+# 0.60+ is required: every function a host component plugin serves or calls is
+# an `async func`, and earlier releases encode those names in a form current
+# wit-component rejects.
+wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }
+
+# For tests/e2e.rs, which drives a real host: it calls the test workload over
+# HTTP and interrupts the host to stop it. Unix only, and never part of the
+# component.
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1", features = ["process"] }
+ureq = { version = "3", default-features = false }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true

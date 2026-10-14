@@ -1,0 +1,19 @@
+[package]
+name = "ticker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Test workload for the cron-scheduler plugin: handles cosmonic:cron firings and registers schedules over HTTP."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.60", features = ["async-spawn", "inter-task-wakeup"] }
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
