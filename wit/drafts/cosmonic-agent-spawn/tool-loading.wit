@@ -18,18 +18,31 @@ package cosmonic:agent@0.5.0;
 /// Admission follows `spawn`: the toolset's reach must fit inside the
 /// caller's ceiling, and anything beyond it goes to a grantor and returns
 /// `needs-approval` with a digest over the caller's identity and the
-/// `toolset-spec`. Policy may ask for approval even within the ceiling,
-/// since new code is new risk even when its reach is not.
+/// `toolset-spec`. A grant is single use, as for `spawn`. Policy may ask
+/// for approval even within the ceiling, since new code is new risk even
+/// when its reach is not. A `toolset-spec` from a `tool-discovery` offer
+/// loads unchanged, and its digest matches what the caller was shown.
+///
+/// The toolset joins the caller's session: its tools are offered from the
+/// caller's next `tools.list` on, under aliases assigned by the same rules as
+/// declared toolsets (own names first, namespaced only on a collision, never
+/// renamed), and its calls are routed to the workload the implementer
+/// started for it. A caller whose `tools` import the implementer does not
+/// serve has nowhere to offer them, and `load` answers `unavailable`. An
+/// implementer that does not enable loading answers `access-denied`.
 @unstable(feature = agent-spawn)
 interface tool-loading {
     @unstable(feature = agent-spawn)
     use spawn-types.{toolset-spec, admission-error};
 
     /// A toolset loaded into the caller. Dropping it unloads the toolset: the
-    /// implementer stops offering its tools and stops its component. A call
-    /// in progress is cancelled cooperatively; its effects are not rolled
-    /// back. The implementer also unloads every toolset when the caller's
-    /// store ends.
+    /// implementer stops offering its tools and stops its component, and a
+    /// later call to one of its aliases answers `unknown-tool`. Its aliases
+    /// stay reserved for the session and are never given to another tool. A
+    /// call in progress is cancelled cooperatively; its effects are not
+    /// rolled back. The implementer also unloads every toolset when the
+    /// caller's store ends, so a caller that wants a toolset across requests
+    /// keeps the handle in an instance that outlives them.
     @unstable(feature = agent-spawn)
     resource loaded-toolset {
         /// The aliases under which the caller's `tools` import offers this

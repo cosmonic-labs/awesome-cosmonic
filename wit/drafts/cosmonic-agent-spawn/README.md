@@ -216,7 +216,8 @@ carries a router; that is why `tool-loading-provider` exports both
 offered under: their own names unless another toolset in the session already
 has one, and stable for the toolset's lifetime in the session (DESIGN-NOTES.md,
 "Tool naming: identity, alias, display").
-Dropping the handle unloads the toolset. A spawned child never receives
+Dropping the handle unloads the toolset: its workload stops and its aliases
+answer `unknown-tool`, but stay reserved for the session. A spawned child never receives
 `tool-loading` in this version, and a parent cannot load a toolset into a child
 it spawned; it spawns a new child with different toolsets instead.
 

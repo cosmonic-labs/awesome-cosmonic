@@ -24,9 +24,9 @@ WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
 
 A native wash-runtime plugin implements the interfaces in a local spike
 (`~/cosmonic/probes/spawn-spike`, not published): `spawn` and
-`tool-discovery.list` work end to end, a host-side dispatcher serves agents'
-`tools` imports from toolsets that each run as their own workload, and
-`tool-loading.load` is specified and answers `unavailable`.
+`tool-discovery.list` and `tool-loading.load` work end to end, and a
+host-side dispatcher serves agents' `tools` imports from toolsets that each
+run as their own workload.
 
 ## What changed in this revision
 
@@ -342,9 +342,21 @@ catalog entries and checks fits for a caller that reads `workspace` and reaches
 host beyond, a never-grant entry absent), checks that a caller with no reach
 sees every offer as beyond, filters by query (a match never reveals a
 never-grant entry), spawns an offer unchanged without approval, and checks
-that `load` answers `unavailable`. Loading is not implemented: the
-parent is not a spawned child, so its `tools` import is not routed by the
-plugin, and serving it needs the runtime work listed at the end.
+that `load` from a caller with no `tools` import answers `unavailable`.
+
+Loading runs end to end against the published minimal-agent 0.2.0, unchanged,
+with a small loader composed in front of it (`wac plug`), so one component
+imports both `tools` and `tool-loading`, the shape of a harness that can load.
+`load_mid_session_then_drop` loads `distance-km` mid-session, and the agent's
+next run lists and calls it; dropping the handle stops its workload, the alias
+answers `unknown-tool`, and another toolset with the same tool is namespaced
+because the alias stays reserved. `load_beyond_the_ceiling_needs_approval_once`
+loads `iss-position` with a host the caller cannot reach: it goes to a
+grantor, the grant admits the identical load once, and the next identical load
+needs approval again. `load_from_a_discovery_offer` loads an offer's spec
+unchanged. `load_is_denied_when_loading_is_off` checks the provider switch.
+The loader keeps its handles in a warm instance, since the implementer unloads
+a caller's toolsets when its store ends.
 
 ## Tool naming: identity, alias, display
 
