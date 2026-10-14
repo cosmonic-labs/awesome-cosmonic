@@ -1,0 +1,67 @@
+package cosmonic:notifications@0.3.0;
+
+/// Trusted wiring binds notifier and events to one stable caller scope.
+/// Ids, tags, rate budget, and queued results belong to that scope across
+/// invocations. A terminal component instance serves exactly one scope.
+@since(version = 0.3.0)
+interface notifier {
+  @since(version = 0.3.0)
+  use types.{notification, notification-id, response, error-code,
+             supported-features};
+
+  /// An accepted notification and its eventual result.
+  @since(version = 0.3.0)
+  record sent {
+    /// Correlates responses and permits withdrawal within this caller scope.
+    id: notification-id,
+    /// Resolves with an outcome or delivery error. With no reader when it
+    /// settles, the same result goes to events.subscribe. Dropping this future
+    /// never withdraws the notification. Delivery is best effort, not durable.
+    response: future<result<response, error-code>>,
+  }
+
+  /// Discover effective support without UI. Unavailable services still return
+  /// available false; an unreachable provider returns an error.
+  @since(version = 0.3.0)
+  get-features: async func() -> result<supported-features, error-code>;
+
+  /// Accept delivery, without guaranteeing visibility. First send may request
+  /// platform authorization. Await response or drop it to collect a queued
+  /// result later. Unavailable services return unavailable.
+  @since(version = 0.3.0)
+  send: async func(notification: notification) -> result<sent, error-code>;
+
+  /// Settle a pending id as closed. Unknown or completed ids, and an
+  /// unavailable service, are a no-op. Caller access policy still applies.
+  @since(version = 0.3.0)
+  close: async func(id: notification-id) -> result<_, error-code>;
+}
+
+/// Queued results for the same caller scope as notifier. Reading does not
+/// start an invocation; the embedding supplies a trigger for short-lived callers.
+@since(version = 0.3.0)
+interface events {
+  @since(version = 0.3.0)
+  use types.{event, error-code};
+
+  /// A response stream and its final delivery status.
+  @since(version = 0.3.0)
+  record subscription {
+    /// Competing readers take each queued event at most once. Unread events
+    /// stay queued when this reader drops. Dropping it cancels the subscription.
+    events: stream<event>,
+    /// Resolves after the stream closes: ok for a drained finite backlog or
+    /// reader cancellation; error for failed delivery, unavailability, or
+    /// revoked access. Drain events before awaiting this. Dropping completion
+    /// does not cancel events. Closure alone never proves successful delivery.
+    completion: future<result<_, error-code>>,
+  }
+
+  /// Open a finite backlog (follow false) or backlog plus live results (true).
+  /// Finite streams include only events queued when opened; competing readers
+  /// may take those events first. Overflow drops the oldest queued events.
+  /// Returns unavailable when the service is unavailable, or limit-exceeded
+  /// when too many subscriptions are open. Later failures use completion.
+  @since(version = 0.3.0)
+  subscribe: async func(follow: bool) -> result<subscription, error-code>;
+}

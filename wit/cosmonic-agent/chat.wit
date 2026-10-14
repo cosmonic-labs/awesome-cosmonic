@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.3.1;
 
 /// Streaming inference with a prepared model.
 interface chat {

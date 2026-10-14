@@ -1,0 +1,169 @@
+package cosmonic:notifications@0.3.0;
+
+/// Notification values shared by callers and providers. Display text is plain.
+@since(version = 0.3.0)
+interface types {
+  @since(version = 0.3.0)
+  use wasi:clocks/types@0.3.0.{duration};
+
+  /// What happens when the user activates an action or the notification body.
+  @since(version = 0.3.0)
+  variant action-target {
+    /// Open an application route. Reject schemes, hosts, `..`, and leading `//`.
+    /// An unknown route only focuses the application.
+    deep-link(string),
+    /// Open an HTTP or HTTPS URL. Other schemes return invalid-argument.
+    url(string),
+    /// Report the response without navigation.
+    callback,
+  }
+
+  /// A button displayed with a notification.
+  @since(version = 0.3.0)
+  record action {
+    /// Nonblank printable id, unique across actions and input. Never trimmed.
+    /// Accept at least 64 UTF-8 bytes; reject invalid or oversized ids with
+    /// invalid-argument. Echo accepted ids exactly; never truncate them.
+    id: string,
+    /// Button text. Providers may normalize an empty label.
+    label: string,
+    /// Navigation or callback behavior when selected.
+    target: action-target,
+  }
+
+  /// An optional inline reply control.
+  @since(version = 0.3.0)
+  record text-input {
+    /// Same rules as `action.id`.
+    id: string,
+    /// Input label. Providers may normalize an empty label.
+    label: string,
+    /// Hint shown in an empty input; none requests no hint.
+    placeholder: option<string>,
+  }
+
+  /// Presentation hints matching the freedesktop urgency levels.
+  /// Unsupported urgency uses normal; it does not alter the response deadline.
+  @since(version = 0.3.0)
+  enum urgency {
+    /// Background information.
+    low,
+    /// Ordinary information needing attention.
+    normal,
+    /// Information needing immediate attention.
+    critical,
+  }
+
+  /// Content, interaction targets, and response deadline for one notification.
+  @since(version = 0.3.0)
+  record notification {
+    /// Must contain a non-whitespace character. Truncate oversized display
+    /// text at a character boundary; providers may strip display controls.
+    title: string,
+    /// Supporting display text; may be empty. Same display rules as title.
+    body: string,
+    /// Presentation hint; see `supported-features.urgency`.
+    urgency: urgency,
+    /// Truncated to max-actions; the provider logs what it drops.
+    actions: list<action>,
+    /// Without inline reply, use a same-id callback button if actions are
+    /// supported and a max-actions slot remains after the listed actions.
+    /// Otherwise drop the input and log it. The button returns action(id).
+    input: option<text-input>,
+    /// Body-click target. None lets the embedding choose, including no navigation.
+    default-target: option<action-target>,
+    /// Replacement key, trimmed before validation. None disables replacement;
+    /// blank returns invalid-argument. Accept at least 64 UTF-8 bytes; reject
+    /// oversized tags without truncation. The same tag in this caller scope
+    /// replaces a pending notification, whose outcome is closed.
+    tag: option<string>,
+    /// Response deadline after acceptance, in nanoseconds. None uses the
+    /// provider's default; zero expires immediately. Clamp to the provider's
+    /// maximum. Native display lifetime is best effort.
+    timeout: option<duration>,
+  }
+
+  /// Opaque id, unique within the caller scope and never reused there.
+  /// Ids remain valid across component instances.
+  @since(version = 0.3.0)
+  type notification-id = u64;
+
+  /// A submitted inline reply.
+  @since(version = 0.3.0)
+  record text-reply {
+    /// The input id exactly as sent.
+    input-id: string,
+    /// User-submitted text; may be empty.
+    text: string,
+  }
+
+  /// A terminal outcome reported by the notification service.
+  @since(version = 0.3.0)
+  variant response {
+    /// The user activated the notification body.
+    activated,
+    /// The selected action id.
+    action(string),
+    /// The input id and submitted text.
+    reply(text-reply),
+    /// The user dismissed it; reported only with dismissal support.
+    dismissed,
+    /// The response deadline passed, or dismissal could not be observed.
+    expired,
+    /// Withdrawn by close, replaced by a tag, or ended by orderly shutdown.
+    closed,
+    /// Another terminal outcome; detail is diagnostic only. Do not assume
+    /// user activation or retry automatically. Providers use this case for
+    /// outcomes outside the listed set without adding a new discriminant.
+    other(option<string>),
+  }
+
+  /// An accepted notification's queued outcome or delivery failure.
+  @since(version = 0.3.0)
+  record event {
+    /// The id returned by send.
+    id: notification-id,
+    /// The same result that would have resolved sent.response.
+    response: result<response, error-code>,
+  }
+
+  /// Operation or delivery failures. Detail strings are diagnostic only.
+  @since(version = 0.3.0)
+  variant error-code {
+    /// Permission or caller policy forbids access, or wiring lacks a caller scope.
+    access-denied,
+    /// A rate or resource limit was reached. Retry after backoff or resource release.
+    limit-exceeded,
+    /// The service cannot deliver now, including declined authorization.
+    unavailable,
+    /// A malformed or unacceptable value, including an invalid id or tag.
+    invalid-argument(string),
+    /// The provider cannot adapt the request to its service.
+    not-supported(string),
+    /// A delivery or subscription failed after the service attempted it.
+    failed(string),
+    /// An unclassified failure; optional detail is diagnostic only.
+    other(option<string>),
+  }
+
+  /// Effective behavior of the composed service; a snapshot, not a guarantee.
+  @since(version = 0.3.0)
+  record supported-features {
+    /// False when nothing can be displayed; sends return unavailable.
+    available: bool,
+    /// Buttons are supported; false requires max-actions to be zero.
+    actions: bool,
+    /// Text input can produce reply rather than a fallback action.
+    inline-reply: bool,
+    /// The service honors urgency hints.
+    urgency: bool,
+    /// User dismissal can be observed. Enable required platform opt-ins for
+    /// every notification; otherwise dismissed notifications expire.
+    dismissal: bool,
+    /// The service honors deep-link and url targets under embedding policy;
+    /// otherwise they act as callback.
+    navigation: bool,
+    /// At most 8, and zero without actions. Fallback buttons count.
+    max-actions: u32,
+  }
+}

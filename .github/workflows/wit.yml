@@ -1,5 +1,5 @@
-# Validates the cosmonic:agent, cosmonic:kafka and cosmonic:notify WIT packages and publishes
-# them to GHCR as ghcr.io/cosmonic-labs/cosmonic/<package>.
+# Validates the cosmonic:agent, cosmonic:kafka and cosmonic:notifications WIT packages and publishes
+# them to GHCR as ghcr.io/cosmonic-labs/<namespace>/<package>.
 #
 # The version in each package's `package` declaration is the release version.
 # A merge to main that bumps it publishes that version. A change without a bump
@@ -48,11 +48,17 @@ jobs:
       matrix:
         include:
           - package: agent
+            namespace: cosmonic
+            id: cosmonic:agent
             dir: wit/cosmonic-agent
           - package: kafka
+            namespace: cosmonic
+            id: cosmonic:kafka
             dir: wit/cosmonic-kafka
-          - package: notify
-            dir: wit/cosmonic-notify
+          - package: notifications
+            namespace: cosmonic
+            id: cosmonic:notifications
+            dir: wit/cosmonic-notifications
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,13 +72,16 @@ jobs:
         with:
           wash-version: ${{ env.WASH_VERSION }}
 
+      - name: Test WIT workflow helpers
+        run: node --test .github/scripts/wit/*.test.mjs
+
       - name: Validate and build
-        run: node .github/scripts/wit/build.mjs "${{ matrix.dir }}" "${{ matrix.package }}"
+        run: node .github/scripts/wit/build.mjs "${{ matrix.dir }}" "${{ matrix.id }}"
 
       # Anonymous and read-only, so it only sees public packages; one that is
       # not published yet, or not public, passes with a notice.
       - name: Fail if the version is published with different contents
-        run: node .github/scripts/wit/registry.mjs check "${{ matrix.package }}" "dist/${{ matrix.package }}.wasm" --anonymous
+        run: node .github/scripts/wit/registry.mjs check "${{ matrix.id }}" "dist/${{ matrix.package }}.wasm" --anonymous
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -100,7 +109,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [agent, kafka, notify]
+        include:
+          - package: agent
+            namespace: cosmonic
+            id: cosmonic:agent
+          - package: kafka
+            namespace: cosmonic
+            id: cosmonic:kafka
+          - package: notifications
+            namespace: cosmonic
+            id: cosmonic:notifications
     env:
       GITHUB_ACTOR: ${{ github.actor }}
       REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -133,17 +151,17 @@ jobs:
       # then failed, fail when the version holds other contents.
       - name: Check whether this version is already published
         id: check
-        run: node .github/scripts/wit/registry.mjs check "${{ matrix.package }}" "dist/${{ matrix.package }}.wasm"
+        run: node .github/scripts/wit/registry.mjs check "${{ matrix.id }}" "dist/${{ matrix.package }}.wasm"
 
       - name: Push
         id: push
         if: steps.check.outputs.action == 'push'
-        run: node .github/scripts/wit/registry.mjs push "${{ matrix.package }}" "dist/${{ matrix.package }}.wasm"
+        run: node .github/scripts/wit/registry.mjs push "${{ matrix.id }}" "dist/${{ matrix.package }}.wasm"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
-          subject-name: ghcr.io/cosmonic-labs/cosmonic/${{ matrix.package }}
+          subject-name: ghcr.io/cosmonic-labs/${{ matrix.namespace }}/${{ matrix.package }}
           subject-digest: ${{ steps.push.outputs.digest || steps.check.outputs.digest }}
           push-to-registry: true
 
@@ -151,5 +169,6 @@ jobs:
       - name: Verify what landed
         env:
           PACKAGE: ${{ matrix.package }}
+          PACKAGE_ID: ${{ matrix.id }}
           DIGEST: ${{ steps.push.outputs.digest || steps.check.outputs.digest }}
-        run: node .github/scripts/wit/registry.mjs verify "$PACKAGE" "dist/${PACKAGE}.wasm" "$DIGEST"
+        run: node .github/scripts/wit/registry.mjs verify "$PACKAGE_ID" "dist/${PACKAGE}.wasm" "$DIGEST"

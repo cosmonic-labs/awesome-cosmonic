@@ -1,4 +1,4 @@
-// Registry steps for a built WIT package at ghcr.io/cosmonic-labs/cosmonic/<package>.
+// Registry steps for a built WIT package at ghcr.io/cosmonic-labs/<namespace>/<package>.
 //
 //   check  <package> <wasm> [--anonymous]   is this version published, and is it these bytes?
 //   push   <package> <wasm>                 push the package, print its digest
@@ -11,10 +11,9 @@ import { readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { declaredPackage, notice, run, runMain, setOutput, warning } from "./lib.mjs";
+import { declaration, declaredPackage, packageInfo, notice, run, runMain, setOutput, warning } from "./lib.mjs";
 
 const REGISTRY = "ghcr.io";
-const OWNER = "cosmonic-labs/cosmonic";
 const ACCEPT = [
   "application/vnd.oci.image.manifest.v1+json",
   "application/vnd.oci.image.index.v1+json",
@@ -48,8 +47,10 @@ export async function probe(name, version, { anonymous }) {
 }
 
 async function check(pkg, wasm, anonymous) {
-  const version = versionOf(await declaredPackage(wasm));
-  const name = `${OWNER}/${pkg}`;
+  const built = await declaredPackage(wasm);
+  const version = versionOf(built);
+  if (built !== declaration(pkg, version)) throw new Error(`artifact declares '${built}', expected ${packageInfo(pkg).id}`);
+  const name = packageInfo(pkg).repository;
   const ref = `${REGISTRY}/${name}:${version}`;
   const { status, body, digest } = await probe(name, version, { anonymous });
 
@@ -78,8 +79,10 @@ async function check(pkg, wasm, anonymous) {
 }
 
 async function push(pkg, wasm) {
-  const version = versionOf(await declaredPackage(wasm));
-  const ref = `${REGISTRY}/${OWNER}/${pkg}:${version}`;
+  const built = await declaredPackage(wasm);
+  const version = versionOf(built);
+  if (built !== declaration(pkg, version)) throw new Error(`artifact declares '${built}', expected ${packageInfo(pkg).id}`);
+  const ref = `${REGISTRY}/${packageInfo(pkg).repository}:${version}`;
   const out = await run("wash", ["-o", "json", "oci", "push", ref, wasm]);
   console.log(out);
   const digest = JSON.parse(out).data?.digest;
@@ -88,12 +91,14 @@ async function push(pkg, wasm) {
 }
 
 async function verify(pkg, wasm, digest) {
-  const version = versionOf(await declaredPackage(wasm));
-  const ref = `${REGISTRY}/${OWNER}/${pkg}@${digest}`;
-  const pulled = join(process.env.RUNNER_TEMP ?? tmpdir(), `pulled-${pkg}.wasm`);
+  const built = await declaredPackage(wasm);
+  const version = versionOf(built);
+  if (built !== declaration(pkg, version)) throw new Error(`artifact declares '${built}', expected ${packageInfo(pkg).id}`);
+  const ref = `${REGISTRY}/${packageInfo(pkg).repository}@${digest}`;
+  const pulled = join(process.env.RUNNER_TEMP ?? tmpdir(), `pulled-${packageInfo(pkg).namespace}-${packageInfo(pkg).name}.wasm`);
   await run("wash", ["oci", "pull", ref, pulled]);
   const decl = await declaredPackage(pulled);
-  if (!decl.startsWith(`package cosmonic:${pkg}@${version}`)) throw new Error(`${ref} declares '${decl}'`);
+  if (decl !== declaration(pkg, version)) throw new Error(`${ref} declares '${decl}'`);
   console.log(`${ref} declares ${decl}`);
 }
 

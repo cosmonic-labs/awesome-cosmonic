@@ -1,0 +1,20 @@
+/// User notifications supplied by a host or a component.
+package cosmonic:notifications@0.3.0;
+
+/// Consume notifications and queued responses from one caller scope.
+@since(version = 0.3.0)
+world notification-consumer {
+  @since(version = 0.3.0)
+  import notifier;
+  @since(version = 0.3.0)
+  import events;
+}
+
+/// Provide notifications and queued responses for one caller scope.
+@since(version = 0.3.0)
+world notification-provider {
+  @since(version = 0.3.0)
+  export notifier;
+  @since(version = 0.3.0)
+  export events;
+}
