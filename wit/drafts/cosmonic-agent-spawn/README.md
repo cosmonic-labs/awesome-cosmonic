@@ -41,6 +41,8 @@ when the interfaces join the real package the dependency disappears.
 | toolset | One component, with its own grants, that offers one or more tool definitions. |
 | reach | What a request's grants can read (read reach) and send data to (egress reach). |
 | ceiling | By default a child's or a loaded toolset's reach must fit inside the caller's own. |
+| budget | What a child may spend (`max-runs`, `max-steps`, `max-total-tokens`, `max-duration`), chosen by its caller and not carved from the caller's own. |
+| operator limits | Optional caps on the spawn tree (depth, total agents, concurrent agents), set in host or policy configuration and unset by default. Reaching one returns `over-limit`. |
 | caller | The component the import is bound to, identified by workload namespace, workload name and component name. |
 
 ## Worlds

@@ -128,7 +128,7 @@ Second pass, the should-fix items:
   different thing.
 - **The resource stays `agent`**, not `subagent`. A spawned child is a full
   agent: the same world, the same run model, and it can spawn in turn within
-  the depth cap, so "sub" names a relationship, not a distinct abstraction.
+  any operator limits, so "sub" names a relationship, not a distinct abstraction.
   Prior art agrees: Claude subagents and Google ADK `sub_agents` are plain
   agents in a hierarchy, and the OpenAI Agents SDK has only `Agent`. The
   resource is scoped to the `spawn` interface, so it does not collide with the
@@ -300,10 +300,11 @@ declarative. The package keeps all three.
   policy allows, each a pinned component with the grants it would be given).
   Each `toolset-offer` carries a ready-made `toolset-spec`, an
   implementer-authored summary, the toolset's own tool definitions as
-  catalogued, and its `ceiling-fit` (`within-ceiling` or `beyond-ceiling`). Offers policy would never grant are absent. An optional
-  `query` keeps the answer small: it matches offer names, summaries, and tool
-  names and descriptions, ignoring case. Asking starts nothing. Discovery is
-  its own import because knowing what exists is information.
+  catalogued, and its `ceiling-fit` (`within-ceiling` or `beyond-ceiling`).
+  Offers policy would never grant are absent. An optional `query` keeps the
+  answer small: it matches offer names, summaries, and tool names and
+  descriptions, ignoring case. Asking starts nothing. Discovery is its own
+  import because knowing what exists is information.
 - **Tool descriptions are untrusted text.** A toolset's author writes its tool
   names, descriptions and schemas, and a model reads them. Discovery puts more
   of that text in front of models, so the implementer should show provenance
@@ -549,16 +550,64 @@ until someone argues it down.
 **1. Folding `tool-workload` into `tools`: no longer a default.** It is now
 open question (r), for Bailey.
 
-**2. Spawn depth is capped.** *Default, open to review.* A child may spawn
-children of its own only within a depth the host sets; past it, `spawn`
-returns `over-limit(depth)` with the cap. Each level of nesting is another
-agent whose reach is checked only against its immediate parent, another set of
-workloads, and another place a person has to look, so the cap is small (the
-spike's default is 1: children of a workload the person started may not spawn
-at all). A child calls at its own depth and delegates only its own model
-alias. *Enforced in* the spike's admission; *tested by*
-`spawn_depth_is_capped` (a child refused at depth 1; at depth 2 a child spawns
-a grandchild and the grandchild is refused).
+**2. Caller-set budgets, optional operator limits, no budget carving.**
+*Default, open to review.* Each spawn carries a budget its caller chooses
+(`max-runs`, `max-steps`, `max-total-tokens`, `max-duration`), and it does not
+have to fit inside the caller's own remaining budget. The spawn tree may be
+bounded by optional operator limits, set in host or policy configuration and
+unset by default: depth, total agents per caller tree, and concurrent agents
+per caller. When one is set and reached, `spawn` returns `over-limit` with the
+matching `limit-scope` (`depth`, `total-agents`, `concurrent-agents`) and the
+limit. Privilege attenuation stays mandatory: a child's grants fit inside its
+caller's ceiling unless a grantor approves.
+
+Why: a spawned agent is just an agent, so nothing about being spawned should
+give it a smaller or different budget model than any other agent. How big a
+tree may grow is an operator decision about cost and capacity, made where the
+operator already sets provider spend limits, not something each caller should
+have to compute. And cost is not a security boundary: carving budgets would
+complicate every harness without protecting anything that the ceiling and the
+approval digest do not already protect.
+
+*Enforced in* the spike's admission (`SpikeConfig::max_depth`, `max_agents`,
+`max_concurrent`, all `None` by default); *tested by* `spawn_depth_is_capped`
+(with `max_depth` set to 1, a child is refused; with 2, a grandchild is
+refused), `no_limit_configured_allows_deep_chains` (with no limit set, a
+chain four agents deep spawns and the leaf answers),
+`max_agents_counts_the_whole_tree` (descendants and ended agents count toward
+the tree's total; another caller is another tree) and
+`over_limit_concurrent_agents`.
+
+Prior art:
+
+- **Claude Code and the Claude Agent SDK** let subagents spawn subagents and
+  bound the tree with operator settings: `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
+  (default 3; 1 stops subagents from spawning), `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`
+  (default 20), and an optional query-wide spend cap, `max_budget_usd`, with no
+  limit by default ([subagents, "Cap subagent depth, concurrency, and
+  spend"](https://code.claude.com/docs/en/agent-sdk/subagents)). These are
+  limits on the whole tree, set by whoever runs the query, not budgets each
+  subagent carves for its children. The docs note that earlier releases lack
+  some of these limits or default differently.
+- **Google ADK, CrewAI's hierarchical process and LangGraph subgraphs** fix the
+  topology in code: ADK sub-agents and workflow agents that "operate based on
+  predefined logic" ([workflow agents](https://adk.dev/agents/workflow-agents/)),
+  a CrewAI manager that delegates among the agents listed on the crew
+  ([hierarchical process](https://docs.crewai.com/en/learn/hierarchical-process)),
+  and LangGraph subgraphs compiled into the parent graph
+  ([subgraphs](https://docs.langchain.com/oss/python/langgraph/use-subgraphs)).
+- **Iteration caps are per run and not inherited:** the OpenAI Agents SDK's
+  `max_turns` ([running agents](https://openai.github.io/openai-agents-python/running_agents/)),
+  LangGraph's `recursion_limit`
+  ([graph API](https://docs.langchain.com/oss/python/langgraph/graph-api)),
+  AutoGen's termination conditions
+  ([termination](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/termination.html)),
+  and CrewAI's per-agent `max_iter`, "Maximum iterations before the agent must
+  provide its best answer. Default is 20"
+  ([agents](https://docs.crewai.com/en/concepts/agents)).
+- None of these carve a child's budget out of its parent's. Spend limits, where
+  they exist, sit outside the agent definitions: a query-wide cap in the Claude
+  Agent SDK, and provider or account limits elsewhere.
 
 **3. Discovery shows what could be granted, marks it, and filters.** *Default,
 open to review.* `tool-discovery.list` returns offers within the caller's
@@ -568,7 +617,7 @@ approvable offers lets a harness plan a request a person can approve instead of
 guessing; hiding never-grantable ones keeps the catalog from advertising what
 no one will get. `list(query: option<string>)` keeps answers small: the query
 matches names, summaries, and tool names and descriptions, ignoring case, and
-the host may cap the count. *Enforced and tested in*
+the implementer may cap the count. *Enforced and tested in*
 `discovery_lists_against_the_callers_ceiling`.
 
 **4. A parent cannot load tools into a child it spawned.** *Default, open to

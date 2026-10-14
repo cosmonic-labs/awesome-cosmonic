@@ -244,14 +244,21 @@ interface spawn-types {
         decision: future<decision>,
     }
 
-    /// Which implementer limit a request would exceed.
+    /// Which implementer limit a request would exceed. The tree limits
+    /// (`concurrent-agents`, `depth`, `total-agents`) are operator limits:
+    /// optional, set in host or policy configuration, and unset by default,
+    /// so nothing caps them unless an operator chooses to. A child's budget
+    /// is chosen by its caller and is not carved from the caller's own.
     @unstable(feature = agent-spawn)
     variant limit-scope {
         /// Agents running at once for this caller. May clear when one ends.
         concurrent-agents,
-        /// Nesting depth of spawned agents: the implementer caps how deep
-        /// children may spawn children. Does not clear.
+        /// Nesting depth of spawned agents, where a child of a workload the
+        /// person started is at depth 1. Does not clear.
         depth,
+        /// Agents spawned in total by one caller tree: the root caller and
+        /// every descendant. Ended agents still count. Does not clear.
+        total-agents,
         /// Memory the implementer reserves for the child.
         memory,
         /// Toolsets loaded into one agent at once. May clear when one is
