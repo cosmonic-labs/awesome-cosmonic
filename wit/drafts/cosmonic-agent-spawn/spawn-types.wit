@@ -53,6 +53,22 @@ package cosmonic:agent@0.5.0;
 /// detail string is diagnostic only, not stable, and not for branching on.
 /// The child's journal is never observable through these interfaces.
 ///
+/// Toolsets. A toolset is one component, with its own grants, that exports
+/// `cosmonic:agent/tools@0.4.0` (the `tool-provider` world): the same
+/// interface an agent imports. Its `call` rejects a tool name it does not own
+/// with `not-dispatched(unknown-tool)` before doing any work. It egresses as
+/// itself: a call is host-internal, made with the toolset's own grants and
+/// workload identity; the calling agent and its session are audit context,
+/// never delegated authority. The implementer may offer a tool under an alias
+/// that is not its own name (`<toolset>__<tool>` when another toolset already
+/// has the name) and passes the tool's own name to `call`, so a description
+/// should not name sibling tools. The implementer may bound what a call
+/// returns before the agent sees it: text beyond its cap is cut at a UTF-8
+/// boundary and followed by a text part of the form `[output truncated:
+/// showing N of M bytes; narrow the request]`; a structured result beyond the
+/// cap becomes `is-error` with a text part saying it was too large; an inline
+/// attachment beyond its own cap is replaced by a text note.
+///
 /// Steerable channels. The child cannot author text the caller sees outside
 /// its reply, but it does choose its counts, its finish code, which error
 /// kind a run ends in, whether an outcome exceeds `output.max-bytes`, and
@@ -160,8 +176,11 @@ interface spawn-types {
         /// namespaced alias; never used for routing or authorization, which
         /// follow the workload the implementer started for the toolset.
         name: string,
-        /// A component exporting `tool-workload` or, for compatibility,
-        /// `cosmonic:agent/tools@0.3.0`.
+        /// A component targeting `cosmonic:agent/tool-provider@0.4.0`: it
+        /// exports `tools`. An implementer may also accept a component
+        /// exporting `cosmonic:agent/tools@0.3.0`, whose `list` cannot fail.
+        /// The implementer lists and dispatches across toolset workloads, so an
+        /// agent never carries a router of its own.
         component: component-ref,
         /// What this toolset component may touch.
         grants: grants,

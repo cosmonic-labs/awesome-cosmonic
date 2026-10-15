@@ -54,7 +54,6 @@ when the interfaces join the real package the dependency disappears.
 | `tool-loading-client` | `tool-loading` | none | The power to change one's own toolsets |
 | `harness` | `cosmonic:agent/agent@0.3.0`, `spawn-client`, `tool-discovery-client`, `tool-loading-client` | none | A top-level harness agent with every power |
 | `runnable-agent` | `cosmonic:agent/agent@0.3.0` | `run` | Any agent that can be spawned |
-| `toolset` | none | `tool-workload` | One toolset component (named for its role, so it does not reuse 0.3.0's `tool-provider`) |
 | `spawn-provider` | none | `spawn` | The host plugin, or a test double |
 | `tool-discovery-provider` | none | `tool-discovery` | An implementer of discovery |
 | `tool-loading-provider` | none | `tool-loading`, `cosmonic:agent/tools@0.3.0` | An implementer of loading, which must also serve the caller's `tools` import |
@@ -223,18 +222,13 @@ it spawned; it spawns a new child with different toolsets instead.
 
 ## Toolsets
 
-A toolset is one component exporting `tool-workload`, which is
-`cosmonic:agent/tools@0.3.0` with one change: `list` returns
-`result<list<tool-def>, list-error>`, so a toolset that cannot describe itself
-fails instead of disappearing. The components in
-cosmonic-labs/sandboxed-agents#24 export nearly this shape today under
-per-component names, with one difference: their `list` fails with
-`call-error`, not `list-error` (the spike's dispatcher adapts). It is
-a sibling of `tools`, so the published `tools` contract stays untouched for
-the agents and plugins that import it; whether a later `cosmonic:agent` version
-folds it into `tools` is an open question for Bailey (DESIGN-NOTES.md).
-`toolset-spec.component` also accepts a component exporting
-`cosmonic:agent/tools@0.3.0`, for compatibility.
+A toolset is one component targeting `cosmonic:agent/tool-provider@0.4.0`: it
+exports `tools`, the same interface an agent imports, whose `list` returns
+`result<list<tool-def>, list-error>` so a toolset that cannot describe itself
+fails instead of disappearing. Its records come from the function-less
+`tool-types`, so it imports no tool-calling power. An implementer may also
+accept toolsets exporting `cosmonic:agent/tools@0.3.0`, whose `list` cannot
+fail; the spike does, for the published per-tool components.
 
 Calls reach a toolset by its workload identity, never by a name. The agent
 sees aliases: a tool's own name first, `<toolset>__<tool>` only for a later
@@ -249,7 +243,6 @@ tool's `title` and the toolset's name.
 | [`spawn-types.wit`](spawn-types.wit) | `spawn-types`: the contract (caller, reach, ceiling, attenuation, authorship) and every shared record |
 | [`spawn.wit`](spawn.wit) | `spawn` and the `agent` resource |
 | [`run.wit`](run.wit) | `run`, the export a spawned child provides, named after `wasi:cli/run` |
-| [`tool-workload.wit`](tool-workload.wit) | `tool-workload`, one toolset's surface |
 | [`tool-discovery.wit`](tool-discovery.wit) | `tool-discovery` |
 | [`tool-loading.wit`](tool-loading.wit) | `tool-loading` |
 | [`world.wit`](world.wit) | The worlds above |

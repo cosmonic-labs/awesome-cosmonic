@@ -41,14 +41,6 @@ world runnable-agent {
     export run;
 }
 
-/// One toolset component with its own grants. Named for its role, like
-/// `wasi:cli/command`, so it does not reuse the published 0.3.0
-/// `tool-provider` world, which exports `tools` instead.
-@unstable(feature = agent-spawn)
-world toolset {
-    export tool-workload;
-}
-
 /// An implementer of `spawn`, such as a native plugin or a test double.
 @unstable(feature = agent-spawn)
 world spawn-provider {
