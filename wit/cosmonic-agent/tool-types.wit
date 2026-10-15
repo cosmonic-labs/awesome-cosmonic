@@ -97,4 +97,15 @@ interface tool-types {
         /// Dispatch or completion cannot be confirmed; effects remain unknown.
         outcome-unknown(outcome-error),
     }
+
+    /// Why the tools could not be listed. A read has no effects to be unsure
+    /// of, so it does not reuse call-error.
+    variant list-error {
+        /// The tools cannot be described now. Retry may succeed.
+        unavailable(string),
+        /// A person or policy refused to list tools to this caller.
+        denied(string),
+        /// Diagnostic detail; never parse it.
+        other(string),
+    }
 }

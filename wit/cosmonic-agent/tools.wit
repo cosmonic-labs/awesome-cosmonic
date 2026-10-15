@@ -5,10 +5,13 @@ package cosmonic:agent@0.4.0;
 /// sits behind a host that lists and dispatches across several providers.
 interface tools {
     use inference-types.{tool-call};
-    use tool-types.{tool-def, tool-response, call-error};
+    use tool-types.{tool-def, tool-response, call-error, list-error};
 
-    /// All tools offered by this provider.
-    %list: async func() -> list<tool-def>;
+    /// All tools offered by this provider. Fails rather than returning an empty
+    /// list when the tools cannot be described, so a caller can tell "none" from
+    /// "unknown". A host listing several providers keeps offering one that stops
+    /// after it was listed; calls to it fail instead.
+    %list: async func() -> result<list<tool-def>, list-error>;
 
     /// Run a tool call. Its id correlates execution with the requesting turn.
     /// Retries reuse the same id and arguments; providers supporting repeat
