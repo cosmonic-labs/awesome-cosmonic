@@ -40,7 +40,9 @@ package cosmonic:agent@0.5.0;
 @unstable(feature = agent-spawn)
 interface tool-workload {
     @unstable(feature = agent-spawn)
-    use cosmonic:agent/tools@0.3.0.{tool-def, tool-call, tool-response, call-error};
+    use cosmonic:agent/tool-types@0.4.0.{tool-def, tool-response, call-error};
+    @unstable(feature = agent-spawn)
+    use cosmonic:agent/inference-types@0.4.0.{tool-call};
 
     /// Why a toolset could not list its tool definitions. A read has no
     /// effects to be unsure of, so it does not reuse `call-error`, whose

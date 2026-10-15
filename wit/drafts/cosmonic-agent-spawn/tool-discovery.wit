@@ -16,7 +16,7 @@ package cosmonic:agent@0.5.0;
 @unstable(feature = agent-spawn)
 interface tool-discovery {
     @unstable(feature = agent-spawn)
-    use cosmonic:agent/tools@0.3.0.{tool-def};
+    use cosmonic:agent/tool-types@0.4.0.{tool-def};
     @unstable(feature = agent-spawn)
     use spawn-types.{toolset-spec};
 

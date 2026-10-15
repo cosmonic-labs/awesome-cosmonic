@@ -26,7 +26,7 @@ world tool-loading-client {
 /// A top-level harness: an agent with every power in this package.
 @unstable(feature = agent-spawn)
 world harness {
-    include cosmonic:agent/agent@0.3.0;
+    include cosmonic:agent/agent@0.4.0;
     include spawn-client;
     include tool-discovery-client;
     include tool-loading-client;
@@ -36,7 +36,7 @@ world harness {
 /// targets.
 @unstable(feature = agent-spawn)
 world runnable-agent {
-    include cosmonic:agent/agent@0.3.0;
+    include cosmonic:agent/agent@0.4.0;
 
     export run;
 }
@@ -67,5 +67,5 @@ world tool-discovery-provider {
 @unstable(feature = agent-spawn)
 world tool-loading-provider {
     export tool-loading;
-    export cosmonic:agent/tools@0.3.0;
+    export cosmonic:agent/tools@0.4.0;
 }

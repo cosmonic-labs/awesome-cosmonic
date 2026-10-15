@@ -11,15 +11,20 @@ package. Every interface, type, function and world is marked
 `@unstable(feature = agent-spawn)`, the WIT-native way to say "not published"
 without putting "draft" in an identifier.
 
-**Version tracking.** `cosmonic:agent@0.4.0` (#71) is not published yet (the
-registry has 0.3.0 only, checked 2026-10-14), so these files track 0.3.0 until
-0.4.0 publishes, then move to 0.4.0 so harness bindings share `user-message`
-and the other inference types instead of carrying two versions. Merge them into
-the real package before anyone builds on this. To check it locally:
+**Version tracking.** These files depend on `cosmonic:agent@0.4.0`: #71's
+breaking release with the tools fold (branch `draft/tools-fold`, see open
+question (r)). This branch is stacked on that one, so 0.4.0 is the package
+directory in this repository. 0.4.0 is not published yet, so `wkg.toml`
+resolves `cosmonic:agent` from that directory and `wkg.lock` pins only
+`wasi:clocks`. Harness bindings share one `user-message` and one set of tool
+types, because a harness imports 0.4.0 anyway. Merge these interfaces into the
+real package before anyone builds on them; the self-dependency goes away then.
+To check it locally:
 
 ```sh
-WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
-  node .github/scripts/wit/build.mjs wit/drafts/cosmonic-agent-spawn agent
+cd wit/drafts/cosmonic-agent-spawn
+WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit fetch .
+WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit build -d . -o /tmp/agent-spawn.wasm
 ```
 
 A native wash-runtime plugin implements the interfaces in a local spike

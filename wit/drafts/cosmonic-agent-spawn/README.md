@@ -259,14 +259,15 @@ package directory will once these interfaces move there.
 
 ## Build locally
 
-`build.mjs` needs `WKG_CONFIG_FILE` for a package that depends on `cosmonic:*`:
+The draft depends on `cosmonic:agent@0.4.0` (#71 with the tools fold), which
+is not published yet, so `wkg.toml` resolves it from `wit/cosmonic-agent` in
+this repository and `wkg.lock` pins only `wasi:clocks`:
 
 ```sh
-WKG_CONFIG_FILE=$PWD/wit/wkg-registries.toml \
-  node .github/scripts/wit/build.mjs wit/drafts/cosmonic-agent-spawn agent
+cd wit/drafts/cosmonic-agent-spawn
+WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit fetch .
+WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit build -d . -o /tmp/agent-spawn.wasm
 ```
 
-It fetches the two dependencies pinned in `wkg.lock`, checks the lock still
-reproduces, validates the package, and writes `dist/agent.wasm` (declaring
-`cosmonic:agent@0.5.0`). Never publish that file: it holds only these
-interfaces, not the whole package.
+`deps/` is fetched, never committed. `build.mjs` cannot build the draft until
+0.4.0 publishes, because it stages only `.wit` files and the lock.

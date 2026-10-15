@@ -5,7 +5,7 @@ package cosmonic:agent@0.5.0;
 @unstable(feature = agent-spawn)
 interface spawn {
     @unstable(feature = agent-spawn)
-    use cosmonic:agent/inference-types@0.3.0.{user-message};
+    use cosmonic:agent/inference-types@0.4.0.{user-message};
     @unstable(feature = agent-spawn)
     use spawn-types.{spawn-request, admission-error, start-error, started-run};
 
