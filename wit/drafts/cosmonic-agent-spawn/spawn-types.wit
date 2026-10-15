@@ -416,8 +416,11 @@ interface spawn-types {
         text(string),
         /// An attachment the child produced.
         attachment(attachment),
-        /// A part kind not captured above, passed through unchanged.
-        other(opaque-block),
+        /// A provider-specific block passed through unchanged, as 0.4.0's
+        /// `opaque-block` carries it.
+        opaque(opaque-block),
+        /// A part kind not captured above. Treat as unknown.
+        other(option<string>),
     }
 
     /// Why a run ended. Implementer-authored.

@@ -937,6 +937,16 @@ declaration order and the pinned toolsets' names, so they need no storage.
 Durable alias storage and session-scoped handles (s) then gate loading and
 spawn, each behind its operator switch, off by default.
 
+**(aa) Style of the 0.4.0 package against the WIT design skill.** For Bailey.
+The fold follows #71's style so `tool-types` stays consistent: `list-error`
+uses `denied(string)` and `other(string)` like `dispatch-error`, where the
+skill would use `access-denied` and `other(option<string>)`. The skill also
+asks for shared types in an interface named `types` (the package uses
+`inference-types` and now `tool-types`) and `@since` on every interface (#71
+annotates none; the fold annotates only its own additions: `tool-types` and
+the fallible `tools.list`, both `@since(version = 0.4.0)`). Aligning the whole
+package either way is a 0.4.0 decision.
+
 Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
 the caller's workload identity, (k) the two-version generated module names,
 (m) detach on drop.
@@ -997,6 +1007,25 @@ this package. What they changed, all now in the WIT and the spike:
 - **Budgets** are the implementer's to enforce; `max-steps` is advisory to the
   agent; self-reported counts are steerable. **Approval authority** never
   belongs to a spawned agent; an auditor is installed by host policy.
+
+## Conformance with the WIT design skill
+
+Checked against Bailey's WIT design skill on 2026-10-15. Where the skill and
+this draft differ, the draft follows the skill unless that would split style
+inside one package.
+
+| Gap | Skill guidance | Chosen | Reason |
+| --- | --- | --- | --- |
+| `@since` | On every interface, and on items added later | Not added here | Every item is `@unstable(feature = agent-spawn)`, and WIT allows one gate per item; `@since` replaces `@unstable` when an item stabilizes. The fold's own items carry `@since(version = 0.4.0)` |
+| `reply-part.other(opaque-block)` | `other` is the trailing catch-all carrying `option<string>` | Adopted: `opaque(opaque-block)` plus a trailing `other(option<string>)` | No downside: the draft's other variants already end this way |
+| Catch-alls and refusals in this draft | `other(option<string>)` last; `access-denied` where a power may be partly granted | Already so | `admission-error` and `discovery-error` carry `access-denied` and `disabled`; every variant ends in `other(option<string>)` |
+| Shared types in an interface named `types` | `types` | Kept `spawn-types` | Reads clearly beside the package's `inference-types` and `tool-types`; the package's convention wins over the generic name |
+| `approval` is a record holding a `future` | Resources for handles with methods; records cannot grow | Kept, open question (w) | A design change, not a style fix |
+| Capped `tool-discovery.list` without a truncation signal | (not a skill rule) | Kept, noted | Changing the return later breaks callers; worth settling before stabilizing |
+
+The fold's `list-error` keeps #71's style (`denied`, `other(string)`) because it
+sits beside #71's `dispatch-error` and `outcome-error` in `tool-types`; see
+open question (aa).
 
 ## What implementing it needs from the runtime
 
