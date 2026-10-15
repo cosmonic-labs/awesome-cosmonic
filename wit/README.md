@@ -75,6 +75,12 @@ The published 0.3.0 artifact remains unchanged.
   `outcome-unknown(outcome-error)`. The first confirms that this attempt produced
   no execution or effects; the second includes uncertain dispatch and lost replies.
   Both preserve typed cancellation, timeout, upstream failure, and diagnostic detail.
+- Handle `tools.list` failing with `list-error` (`unavailable`, `denied`,
+  `other`) instead of reading an empty list as "no tools". The same `tools`
+  interface is imported by agents and exported by tool providers.
+- Import tool records from the function-less `tool-types` interface, where
+  `tool-def`, `tool-response` and the error types now live. A tool provider
+  no longer imports `tools` just for its types.
 - Keep completed execution failures in `tool-response.is-error`, with their output
   available to the model. Cancellation and timeout do not imply rollback.
 - Record an unknown tool outcome or abandoned call as an unresolved operation.
