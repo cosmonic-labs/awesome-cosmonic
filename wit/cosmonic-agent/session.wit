@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.4.0;
 
 /// A workload-scoped append-only journal and opaque agent state. The host
 /// binds the session to the workload, grants component access, stamps authors

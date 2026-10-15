@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.4.0;
 
 /// Workload-scoped aliases resolved by the host to an inference provider.
 /// Trusted catalog and residency controls are separate.
