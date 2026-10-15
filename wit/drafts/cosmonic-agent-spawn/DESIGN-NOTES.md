@@ -91,6 +91,12 @@ run as their own workload.
    operator's override, and `name` is a
    DNS label of at most 32 characters. See "Tool naming: identity, alias,
    display".
+8. **Review fixes.** Three independent reviews (security, runtime, API
+   design) produced the changes in "Review fixes" below: a typed `disabled`
+   case, explicit child powers, `grants.credentials`, `get-aliases`, the
+   `toolset` world, an approval digest with a domain tag, the caller's
+   incarnation and canonical JSON, expiring and shared grants, and fail-closed
+   volumes.
 
 Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`
 and `tool-loading.load`; `limit-scope` gained `loaded-toolsets`;
@@ -233,8 +239,11 @@ definition. The WIT states them on `spawn-types`.
 - **Steerable channels.** Counts, the finish code, the error kind, an
   `output-rejected` over `max-bytes`, and timing are all chosen by the child.
   Each is a narrow channel, minor next to the reply itself.
-- **Caller identity** is the stable workload identity (namespace, name,
-  component name), never instance ids. Policy wrappers are host-installed.
+- **Caller identity** is the caller's workload identity. Approval digests
+  bind its deployment incarnation (the spike: workload id and component
+  instance id), so a workload recreated under the same name is a different
+  caller and needs its own approval; namespace, name and component name are
+  display metadata. Policy wrappers are host-installed.
 
 ## Runs: the `runnable-agent` world
 
@@ -856,25 +865,131 @@ of returning an empty list. If #71 cannot take it, keep `tool-workload` gated
 and fold when spawn stabilizes. Until it is decided, `toolset-spec` accepts
 either export.
 
+**(s) Store-scoped handles, and reattaching.** For Bailey. A handle dies with
+its caller's store, and most callers get a fresh store per request, so a
+child or loaded toolset cannot outlive one request (the spike keeps handles
+in a warm instance). *Recommendation from the reviews (medium confidence):*
+keep store scope as the default, and add an explicit, consume-by-move
+`detach(label)` on `agent` and `loaded-toolset` with an `attach(label)` to
+reclaim it, authorized by the host-derived caller identity and session, never
+by a label the guest could leak; parked children count toward
+`concurrent-agents` and end at an idle TTL, their `max-duration`, or the
+session's end. In memory first, durable with the session work.
+
+**(t) Types-only interfaces.** For the runtime. A component that imports an
+interface only for its types (a spawn client imports `inference-types`, a
+toolset imports `tools`) must still have it linked, and two plugins that both
+link one collide. *Recommendation (medium confidence):* the runtime links
+interfaces that have no functions and no resources itself, once per linker,
+before plugins bind; an interface that defines resources stays with the
+plugin whose functions return them. The `tool-types` split in (r) removes the
+toolset case.
+
+**(u) The cancellation trigger, and a `cancelling` frame.** Dropping the
+progress stream requests cancellation today, so a harness that does not want
+progress must hold an unread stream, and idiomatic bindings drop it and
+cancel by accident. *Recommendation (medium confidence):* key cancellation on
+dropping the outcome future (dropping the stream only stops progress), and add
+`progress.cancelling` for the window in which `agent.run` answers `busy`
+because a cancelled run has not stopped. The spike already holds `busy` until
+the old run drains or is hard-stopped.
+
+**(v) Where the gate lives.** Settled: `cosmonic:agent@0.5.0` with
+`@unstable(feature = agent-spawn)` on every item. *Alternative recorded for
+Bailey (from the API design review):* WASI's own practice is to ship gated
+interfaces inside the next real version rather than a separate one, which
+removes the two-version problem, and to give each power its own gate
+(`agent-spawn`, `tool-discovery`, `tool-loading`), since the four powers are
+not equally mature.
+
+**(w) `approval` as a resource.** `approval` is a record holding a `future`,
+returned inside an error variant, and records cannot grow additively. *Open,
+with the reviews' recommendation:* a `resource approval` with `get-` accessors
+and a `wait-for-decision`, which can gain fields and methods without breaking.
+
+**(x) Uncatalogued code within the ceiling.** Today a caller may spawn or load
+any digest the implementer can resolve without a person, as long as its grants
+fit. Grants are reach, not effective reach: a toolset loaded with the agent's
+own hosts turns a latent grant into egress chosen by a model. *Open (medium
+confidence):* within the ceiling, admit at once only digests in the operator's
+catalog, and send any other digest to a grantor; the WIT already lets policy
+ask for approval within the ceiling.
+
+**(y) Product defaults for tree limits.** The plugin keeps them optional and
+unset; turning spawn on then allows an unbounded tree. *Open, a Desktop and
+Control decision:* ship non-null defaults when an operator enables spawn (the
+Claude Agent SDK uses depth 3 and 20 concurrent subagents), and cap a single
+child's budget per host.
+
+**(z) Desktop sequencing.** *Recommendation from the reviews (medium-high
+confidence):* ship the dispatcher for operator-declared toolsets first
+(per-toolset isolation, bounded results, metadata-only audit, per-component
+sessions); with declared toolsets only, aliases are a pure function of
+declaration order and the pinned toolsets' names, so they need no storage.
+Durable alias storage and session-scoped handles (s) then gate loading and
+spawn, each behind its operator switch, off by default.
+
 Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
-the caller as its stable workload identity, (k) the
-two-version generated module names, (m) detach on drop.
+the caller's workload identity, (k) the two-version generated module names,
+(m) detach on drop.
 
 ## Follow-ups
 
 - **Per-toolset secret bindings for toolset components.** A toolset's grants
   name secrets, but Desktop's custom-agent tool form has no secret field today.
-- **Host-brokered credentials for tool egress.** A toolset component holds a
-  credential reference: a stable logical name, not secret data. The operator
-  creates a credential binding that maps the reference to a credential, scoped
-  to one workload deployment. At call time the host resolves the reference for
-  the calling workload and applies the credential to the outbound request,
-  as an injected Authorization header, an mTLS client identity, or a signed
-  request. The guest never sees the value. The host owns the authentication
-  headers, so a value the guest supplies for one of them is rejected. This
-  extends the named model-alias approach to toolsets, and it rests on each
-  toolset being its own workload with its own identity (wasmCloud/wasmCloud#5653,
-  wasmCloud/wasmCloud#5588).
+- **Host-brokered credentials for tool egress, a platform-owned broker.** Each
+  toolset workload is a service principal with its own workload identity,
+  scoped to its deployment incarnation. A toolset component holds a credential
+  reference (`grants.credentials`): a stable logical name, not secret data.
+  The operator creates a credential binding that maps the reference to a
+  credential, scoped to one workload deployment. At call time the host
+  resolves the reference for the calling workload and applies the credential
+  to the outbound request, as an injected Authorization header, an mTLS client
+  identity, or a signed request. The guest never sees the value. The host owns
+  the authentication headers, so a value the guest supplies for one of them is
+  rejected. The broker belongs to the platform (the runtime's egress path for
+  the mechanism; Control and Desktop for binding objects and their UI); this
+  package only names references. Until it exists, an implementer treats every
+  reference as beyond the ceiling, and the spike refuses them for toolsets.
+  Display names stay metadata, never used for authorization, and the guest
+  sees only authorized opaque aliases (see "Tool naming"). It rests on each
+  toolset being its own workload, which can present its own egress identity
+  (wasmCloud/wasmCloud#5653, wasmCloud/wasmCloud#5588).
+
+## Review fixes
+
+Three independent reviews (security, runtime, API design) of the spike and
+this package. What they changed, all now in the WIT and the spike:
+
+- **Powers attenuate, not only reach.** A child inherits no powers:
+  `spawn-request.powers` (`flags agent-powers { spawn }`) grants `spawn`
+  explicitly; discovery and loading are never granted to a child.
+- **A typed `disabled` case** in `admission-error` and `discovery-error` for a
+  power the operator has not enabled (or did not grant this agent), so a
+  harness adapts instead of branching on a detail string.
+- **Credentials stay out of agent memory.** `grants.credentials` names
+  references the host applies on egress; `secrets` are refused on a spawned
+  agent's own component.
+- **Approvals.** Grants expire; identical pending requests share one approval;
+  pending approvals per caller may be capped; the digest has a domain tag, the
+  caller's incarnation and a canonical JSON form; summaries use validated
+  values only.
+- **Volumes fail closed.** Names are never compared; a volume grant whose
+  storage the implementer cannot compare is beyond the ceiling.
+- **Grant-bearing config is the operator's.** The spike's delegable `models`
+  and its toolset declarations (one `toolsets` key) are host-owned in the
+  plugin's binding schema, so a workload cannot write them under the
+  runtime's default policy.
+- **Loading is per component.** A loaded toolset is offered only to the
+  component that loaded it.
+- **Names.** `alias-prefix` (operator-owned), `get-aliases`, the `toolset`
+  world; a digest change under a toolset name holding aliases is refused
+  rather than renaming or taking the alias; tool definitions are capped at
+  attach.
+- **No overlapping runs.** `busy` until a cancelled run has actually stopped.
+- **Budgets** are the implementer's to enforce; `max-steps` is advisory to the
+  agent; self-reported counts are steerable. **Approval authority** never
+  belongs to a spawned agent; an auditor is installed by host policy.
 
 ## What implementing it needs from the runtime
 
@@ -897,7 +1012,15 @@ From building it as a native plugin on wash-runtime:
   enforcing `max-total-tokens` mid-run.
 - **Types-only imports.** A spawn-client imports `inference-types` only for types;
   two plugins that both link it into one component collide.
-- **Host-routed `tools` for any workload** (for `tool-loading`). Today the spike
-  routes `tools` only for children it started. Loading into an arbitrary caller
-  needs the host to serve that caller's `tools` import and add or remove
-  dispatch targets while it runs.
+- **Typed dispatch outcomes.** A plugin cannot tell from the runtime whether
+  a dispatched call ran, trapped or ran past its deadline (the errors are
+  strings). The spike records it itself (its own deadline, and whether the
+  call entered the guest), but a trap that ends the store never reaches the
+  plugin's code, so "trapped" and "instance lost" stay one case.
+- **Comparable volume identity and names-only reach** at bind, and an
+  `AllowedHost::contains` next to the matcher (the spike compares parsed
+  values itself until then).
+- **Owned workloads** (`start_owned`): normal admission, the owner's namespace,
+  host-stamped owner fields that a manifest cannot set, stop with the owner,
+  and a dispatch handle for each item whatever it exports (today a plugin can
+  dispatch only into a workload it is bound to).

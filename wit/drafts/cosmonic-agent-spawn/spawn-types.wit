@@ -292,7 +292,9 @@ interface spawn-types {
     ///
     /// A grant expires too: it admits the identical request only within the
     /// implementer's grant lifetime, set by the operator. An identical request
-    /// while one is pending returns that same pending approval, and the
+    /// while one is pending returns that same pending approval (one prompt,
+    /// not many), and the grant then admits each request that shared it,
+    /// once. The
     /// implementer may cap how many approvals one caller has pending, so a
     /// looping agent cannot bury the person in prompts (it gets `over-limit`).
     /// The caller is bound by its workload incarnation, not its name: a
