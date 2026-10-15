@@ -41,9 +41,11 @@ world runnable-agent {
     export run;
 }
 
-/// One toolset component with its own grants.
+/// One toolset component with its own grants. Named for its role, like
+/// `wasi:cli/command`, so it does not reuse the published 0.3.0
+/// `tool-provider` world, which exports `tools` instead.
 @unstable(feature = agent-spawn)
-world tool-provider {
+world toolset {
     export tool-workload;
 }
 

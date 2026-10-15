@@ -55,6 +55,9 @@ interface tool-discovery {
     /// Why discovery failed. Detail strings are diagnostic only.
     @unstable(feature = agent-spawn)
     variant discovery-error {
+        /// The operator has not enabled discovery on this host, or did not
+        /// grant it to this agent. Permanent for this caller.
+        disabled,
         /// Policy refused discovery for this caller.
         access-denied(string),
         /// The implementer could not serve the call. Retry may succeed.

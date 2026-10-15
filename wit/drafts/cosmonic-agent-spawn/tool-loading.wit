@@ -29,7 +29,12 @@ package cosmonic:agent@0.5.0;
 /// renamed), and its calls are routed to the workload the implementer
 /// started for it. A caller whose `tools` import the implementer does not
 /// serve has nowhere to offer them, and `load` answers `unavailable`. An
-/// implementer that does not enable loading answers `access-denied`.
+/// implementer that does not enable loading answers `disabled`.
+///
+/// The toolset joins the calling component's session: its tools are offered
+/// to the component that loaded it and to no sibling component in the same
+/// workload, so a sibling cannot use a toolset admitted against another
+/// component's ceiling.
 @unstable(feature = agent-spawn)
 interface tool-loading {
     @unstable(feature = agent-spawn)
@@ -48,11 +53,11 @@ interface tool-loading {
         /// The aliases under which the caller's `tools` import offers this
         /// toolset's definitions, in the toolset's own order. An alias is the
         /// model-facing selection key and carries no authority. Chosen by the
-        /// implementer (see `toolset-spec.expose-as`), unique in the caller's
+        /// implementer (see `toolset-spec.alias-prefix`), unique in the caller's
         /// session, and stable for the toolset's lifetime in that session:
         /// loading another toolset never changes it.
         @unstable(feature = agent-spawn)
-        get-names: async func() -> list<string>;
+        get-aliases: async func() -> list<string>;
     }
 
     /// Check the spec against the ceiling and policy, start the toolset, and

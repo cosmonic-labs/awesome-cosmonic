@@ -60,7 +60,7 @@ run as their own workload.
    import and include neither `cosmonic:agent/agent` nor each other, so each
    is exactly one grant; an agent writes `include agent; include spawn-client;`. `harness`
    includes the agent world and all three. `runnable-agent` is the world a
-   spawned child targets, and `tool-provider` is one toolset component. The
+   spawned child targets, and `toolset` is one toolset component. The
    implementer worlds are `spawn-provider`, `tool-discovery-provider` and
    `tool-loading-provider`; the last also exports `cosmonic:agent/tools`,
    because loading only works when the same implementer serves the caller's
@@ -68,8 +68,11 @@ run as their own workload.
    `tool-broker`: world names carry neither "host" nor "broker", which is
    reserved for host-wide services.) Import-side worlds end in `-client`
    because it pairs with `-provider` and matches the published
-   `inference-client`. `tool-provider` keeps its name: it is the published
-   0.3.0 world, and the per-tool components of sandboxed-agents#24 target it.
+   `inference-client`. The toolset world is named for its role, `toolset`,
+   rather than reusing `tool-provider`: the published 0.3.0 `tool-provider`
+   exports `tools`, and one world name should never mean two contracts. If
+   `tool-workload` folds into `tools` (open question (r)), `toolset` goes and
+   `tool-provider` is the toolset world again.
    The old `spawn-middleware` world is gone: a guest component in front of the
    implementer would become the caller, and its own grants the ceiling, which
    contradicts "policy wrappers are host-installed".
@@ -84,7 +87,8 @@ run as their own workload.
    and authorized by the toolset's workload identity; the model sees an
    alias that carries no authority, its own name first, namespaced only on a
    later collision, and never renamed; people see display metadata.
-   `toolset-spec` gains `expose-as`, the operator's override, and `name` is a
+   `toolset-spec` gains `alias-prefix` (first drafted as `expose-as`), the
+   operator's override, and `name` is a
    DNS label of at most 32 characters. See "Tool naming: identity, alias,
    display".
 
@@ -103,7 +107,8 @@ From a review against the WIT interface design skill:
   `toolset-spec`, `loaded-tool` is `loaded-toolset`, `tool-offer` is
   `toolset-offer`, and `spawn-request.tools` is `toolsets`. "Tool" stays for a
   single definition or call, as in 0.3.0 (`tool-def`, `tool-call`).
-- **Accessors use `get-`.** `loaded-toolset.names` is `get-names`.
+- **Accessors use `get-`.** `loaded-toolset.names` is `get-aliases` (first
+  `get-names`; renamed to match the alias it returns).
 - **Aliases, not bindings, for models.** `spawn-request.model` is
   `model-alias`, matching 0.3.0's `models.open(alias)` and `unknown-alias`.
   "Binding" is kept only for credential bindings, a different idea (see
@@ -189,8 +194,10 @@ Second pass, the should-fix items:
 - **cosmonic-labs/sandboxed-agents#24** (merged): each tool exports a
   per-tool interface shaped like the planned `tool-workload`, ships as its own
   image with its own grants, and the `toolbox` guest router is kept only for
-  compatibility. This package defines `tool-workload` in exactly that shape
-  and makes the host, not a guest, list and dispatch across tools.
+  compatibility. This package defines `tool-workload` in nearly that shape
+  (one difference: #24's `list` fails with `call-error`, `tool-workload`'s
+  with `list-error`) and makes the host, not a guest, list and dispatch
+  across tools.
 
 ## Information-flow rules
 
@@ -328,7 +335,7 @@ declarative. The package keeps all three.
   reach is not. The implementer starts the toolset as its own component and
   offers its tools through the caller's existing `cosmonic:agent/tools`
   import, so it must serve that import too; `tool-loading-provider` exports
-  both. `loaded-toolset.get-names` returns the aliases it assigned (see
+  both. `loaded-toolset.get-aliases` returns the aliases it assigned (see
   "Tool naming: identity, alias, display"); they are stable for the toolset's
   lifetime in the session. Dropping the handle unloads the toolset.
 - **No guest router.** The implementer lists and dispatches across toolset
@@ -399,7 +406,7 @@ inherit calls and grants meant for something else. The rules:
   deterministic and visible in configuration.
 - An alias must be a valid model tool name: only `[A-Za-z0-9_-]`, at most 64
   characters. A tool with no valid free alias refuses the spawn or load.
-- `toolset-spec.expose-as` is the operator's override: a prefix placed before
+- `toolset-spec.alias-prefix` is the operator's override: a prefix placed before
   every tool's own name, where the empty string means the own names. It wins
   over bare first. An alias it asks for that is already taken refuses the
   spawn or load with `invalid-request`; the implementer never renames it.
@@ -420,7 +427,7 @@ toolset author's words; the implementer does not prefix them.
 
 **Trade-off.** Which toolset keeps a bare name depends on attach order: the
 first one to claim it. That is deterministic and visible, but it is a choice
-the order makes for the operator. `expose-as` lets the operator make it
+the order makes for the operator. `alias-prefix` lets the operator make it
 explicitly. Tool descriptions should not name sibling tools, because the
 model may know a sibling by an alias that is not its own name (the
 `distance_km` tool in sandboxed-agents#24 tells the model to call
@@ -769,8 +776,8 @@ implementer can provide all four (the host-side tool dispatcher behind
 operator turns each of the last three on separately. The dispatcher is on
 whenever a workload declares toolsets, because the operator who wrote that
 declaration already granted it. A provider that is off is still linked: its
-calls answer `access-denied` with a reason ("spawn is not enabled on this
-host"), are audited, start nothing and reveal nothing (discovery answers an
+calls answer the typed `disabled` case (in `admission-error` and
+`discovery-error`), are audited, start nothing and reveal nothing (discovery answers an
 error, not an empty catalog). The workload is not refused at start, so a
 component built against the `harness` world runs with whichever powers the
 operator allows and can tell a disabled power from an empty result.
@@ -833,14 +840,21 @@ read. Neither is added; see "The reverse case". It is also the third option in
 **(r) Fold `tool-workload` into `tools`, and at which version?** For Bailey.
 On 2026-10-11 Eric chose a sibling interface so the published 0.3.0 `tools`
 contract stays untouched: Goose, Pi, minimal-agent and Desktop's tools plugin
-all import it, and the later switch is meant to be a rename plus an agent
-rebuild. Victor's per-tool components in sandboxed-agents#24 are shaped to
-match `tool-workload`. Changing `tools` itself belongs to the next real
-`cosmonic:agent` version (#71 or later), and Bailey has said she is split on
-the tools interface. The case for folding: two interfaces that differ only in
-whether `list` can fail split every toolset and implementer in two, and the
-toolbox adapter in #24 has to trap because 0.3.0's `list` cannot report a
-failure. Until it is decided, `toolset-spec` accepts either export.
+all import it. Victor's per-tool components in sandboxed-agents#24 are close
+to `tool-workload`, but not identical: their `list` fails with `call-error`.
+*Recommendation from three independent reviews (security, runtime, API
+design), unanimous:* fold in #71's breaking release, since #71 already breaks
+`tools.call-error` and every agent rebuilds once either way. In that release,
+`tools.list` returns `result<list<tool-def>, list-error>` on both sides (the
+agent's import and the toolset's export, one symmetric interface, so a toolset
+links directly or through the host without adapters); the records
+(`tool-def`, `tool-call`, `tool-response`, `call-error`, `list-error`) move to
+a function-less `tool-types` interface, so a toolset no longer imports `tools`
+for types; `tool-workload` and the `toolset` world retire. A fallible
+agent-side `list` also lets an implementer that cannot answer say so instead
+of returning an empty list. If #71 cannot take it, keep `tool-workload` gated
+and fold when spawn stabilizes. Until it is decided, `toolset-spec` accepts
+either export.
 
 Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
 the caller as its stable workload identity, (k) the

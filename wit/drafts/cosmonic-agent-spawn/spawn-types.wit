@@ -32,7 +32,10 @@ package cosmonic:agent@0.5.0;
 /// caller's, and an allowed host fits only if one of the caller's entries
 /// contains it (`*.github.com` contains `api.github.com`, not `github.com`).
 /// A grant whose reach the implementer cannot see or compare is beyond the
-/// ceiling.
+/// ceiling. Volume names are never compared: two workloads may use one name
+/// for different storage, so an implementer that cannot see the storage
+/// behind a caller's mount treats every volume grant from that caller as
+/// beyond the ceiling.
 ///
 /// Attenuation. A caller may request more than the ceiling but cannot grant
 /// it. The implementer is the sole grantor, by policy or a person, and
@@ -55,9 +58,20 @@ package cosmonic:agent@0.5.0;
 /// its timing. Each of these is a narrow channel to the caller, minor next
 /// to the reply itself. No interface here closes covert or timing channels.
 ///
-/// Credentials never pass through these interfaces. Models and secrets are
-/// named; the implementer resolves them and keeps values out of every
-/// agent's memory.
+/// Credentials never pass through these interfaces. Models, secrets and
+/// credential references are named; the implementer resolves them and keeps
+/// values out of every agent's memory. A spawned agent's own component never
+/// receives secrets.
+///
+/// Powers. A child never inherits its caller's powers. It gets `spawn` only
+/// when its request asks for it (`spawn-request.powers`) and the implementer
+/// has spawn enabled; discovery and loading are never granted to a spawned
+/// child in this version.
+///
+/// Authority to decide. A spawned agent never holds approval or release
+/// authority: the grantor is a person, or policy a person wrote. An auditor
+/// in the policy stack is installed by host policy, never spawned, so the
+/// agent it reviews cannot choose its grants, budget or lifetime.
 ///
 /// # References
 /// - OCI image digests: https://github.com/opencontainers/image-spec/blob/main/descriptor.md#digests
@@ -116,9 +130,21 @@ interface spawn-types {
         volumes: list<volume-mount>,
         /// Interfaces this component may import.
         interfaces: list<interface-grant>,
-        /// Secret names the implementer injects into this component. Names
-        /// only, never values.
+        /// Secret names the implementer delivers into this component's
+        /// memory. Names only, never values. Refused on a spawned agent's own
+        /// component (`spawn-request.grants`), whose memory credentials never
+        /// enter; use `credentials` for authenticated egress.
         secrets: list<string>,
+        /// Credential references: stable logical names, not secret data. The
+        /// implementer resolves each through a credential binding the
+        /// operator scoped to this component's workload deployment, applies
+        /// it to the component's outbound requests (an injected Authorization
+        /// header, an mTLS client identity, or a signed request) and owns
+        /// those authentication headers, so a value the component supplies for
+        /// one is rejected. The value never enters the component. An
+        /// implementer without a credential broker treats every reference as
+        /// beyond the ceiling.
+        credentials: list<string>,
     }
 
     /// A toolset: one component, with its own grants, that offers one or more
@@ -138,16 +164,19 @@ interface spawn-types {
         component: component-ref,
         /// What this toolset component may touch.
         grants: grants,
-        /// How this toolset's tools are offered to the agent, overriding the
-        /// default. None takes the default: each tool keeps its own name if
-        /// no alias in the session has it yet, and otherwise is offered as
+        /// The operator's override of how this toolset's tools are offered.
+        /// None takes the default: each tool keeps its own name if no alias in
+        /// the session has it yet, and otherwise is offered as
         /// `<name>__<tool>`. Some(prefix) offers every tool as the prefix
         /// followed by the tool's own name, so the empty string means the
         /// tools' own names and `"gh__"` means `gh__search`. An alias that is
         /// already taken, or that breaks model tool-name rules (only
         /// `[A-Za-z0-9_-]`, at most 64 characters), refuses the spawn or load
         /// with `invalid-request`; the implementer never renames it.
-        expose-as: option<string>,
+        /// Operator-owned: an operator sets it in a toolset declaration. In a
+        /// caller's spawn or load request an implementer may refuse it, and
+        /// does unless its operator lets callers choose prefixes.
+        alias-prefix: option<string>,
     }
 
     /// What may come back to the caller.
@@ -164,6 +193,13 @@ interface spawn-types {
     /// What the child may spend. Covered by the approval digest. None takes
     /// the implementer's default, which policy may cap. ("Limit" is kept for
     /// the implementer's own caps: `limit-scope` and `over-limit`.)
+    ///
+    /// The implementer enforces the budget, not the child: it refuses a run
+    /// past `max-runs`, ends a run at `max-duration`, and stops accepting runs
+    /// once `max-total-tokens` is spent. Counts the child reports about
+    /// itself (steps, token usage when the implementer does not meter model
+    /// calls) are steerable by the child, so enforcement that relies on them
+    /// is only as good as the child's honesty.
     @unstable(feature = agent-spawn)
     record budget {
         /// Runs the child may take: the number of `agent.run` calls
@@ -171,7 +207,10 @@ interface spawn-types {
         max-runs: option<u32>,
         /// Model calls the child may make in one run. This is the bound
         /// that stops a runaway run. The OpenAI Agents SDK, the Claude Agent
-        /// SDK and Goose call this bound `max_turns`.
+        /// SDK and Goose call this bound `max_turns`. The implementer passes
+        /// it to the agent in `run-options`, where it is advisory: the agent
+        /// counts its own steps. The implementer enforces it only where it
+        /// meters the child's model calls itself.
         max-steps: option<u32>,
         /// Tokens the child may spend across all runs and all model calls:
         /// the sum of `usage.prompt-tokens` and `usage.completion-tokens`.
@@ -186,6 +225,14 @@ interface spawn-types {
         /// the run with an outcome whose finish is `max-duration`, not an
         /// error.
         max-duration: option<duration>,
+    }
+
+    /// Powers a spawned agent may receive. Discovery and loading are never
+    /// granted to a spawned child in this version.
+    @unstable(feature = agent-spawn)
+    flags agent-powers {
+        /// The child may call `spawn`.
+        spawn,
     }
 
     /// Everything needed to start a sub-agent. Declarative: its toolsets are
@@ -212,6 +259,11 @@ interface spawn-types {
         output: output-spec,
         /// What the child may spend over its lifetime.
         budget: budget,
+        /// Powers the child receives. Empty grants none: a child never
+        /// inherits its caller's powers. `spawn` is admitted only when the
+        /// implementer has spawn enabled for the caller; it lets the child
+        /// spawn in turn, within any operator limits.
+        powers: agent-powers,
         /// For logs, audit, and display. Never policy input.
         labels: list<tuple<string, string>>,
     }
@@ -237,19 +289,38 @@ interface spawn-types {
     /// and nothing else. A changed request, or the same request from another
     /// caller, is a new request. Standing permission belongs in policy a
     /// person wrote, not in a reusable approval.
+    ///
+    /// A grant expires too: it admits the identical request only within the
+    /// implementer's grant lifetime, set by the operator. An identical request
+    /// while one is pending returns that same pending approval, and the
+    /// implementer may cap how many approvals one caller has pending, so a
+    /// looping agent cannot bury the person in prompts (it gets `over-limit`).
+    /// The caller is bound by its workload incarnation, not its name: a
+    /// workload recreated under the same name is a different caller and
+    /// needs its own approval. Only a person, or policy a person wrote,
+    /// decides; never a spawned agent.
     @unstable(feature = agent-spawn)
     record approval {
         /// Implementer-issued id, to correlate with the approval UI and audit log.
         id: string,
-        /// `sha256:<hex>` over the caller's identity and the whole request:
-        /// for a spawn, the `spawn-request` including `output` and `budget`;
-        /// for a load, the `toolset-spec`. A changed request has a different
-        /// digest and is a new request.
+        /// `sha256:<hex>` over a domain tag naming the operation and its
+        /// version (`cosmonic:agent/spawn-request@1` or
+        /// `cosmonic:agent/toolset-spec@1`), a zero byte, the caller's
+        /// incarnation, a zero byte, and the request in canonical JSON: object
+        /// keys sorted, lists that are sets (`allowed-hosts`, `secrets`,
+        /// `credentials`, interface `config`) sorted, no insignificant
+        /// whitespace (RFC 8785). For a spawn the request is the whole
+        /// `spawn-request` including `output`, `budget` and `powers`; for a
+        /// load, the `toolset-spec`. A changed request has a different digest
+        /// and is a new request. Compare for equality only.
         request-digest: string,
         /// Implementer-authored text for the person who decides, like
         /// `toolset-offer.summary`, and unlike diagnostic detail strings.
         /// States what is declassified, for example "results of this agent
-        /// (schema S, at most N bytes) return to <caller>".
+        /// (schema S, at most N bytes) return to <caller>". Built only from
+        /// values the implementer has validated (parsed hosts, checked names
+        /// and digests); free text the caller wrote, such as instructions or
+        /// labels, never appears in it.
         summary: string,
         /// Resolves when the grantor decides. Dropping it stops waiting; it
         /// does not withdraw the request, so a person who decides after the
@@ -295,6 +366,10 @@ interface spawn-types {
     /// Detail strings are implementer-authored and diagnostic only.
     @unstable(feature = agent-spawn)
     variant admission-error {
+        /// The operator has not enabled this power on this host, or did not
+        /// grant it to this agent. Permanent for this caller: do not retry,
+        /// adapt instead (for example, hide a delegate action).
+        disabled,
         /// A policy or a person refused. The capability is partially granted:
         /// a different request may succeed.
         access-denied(string),
