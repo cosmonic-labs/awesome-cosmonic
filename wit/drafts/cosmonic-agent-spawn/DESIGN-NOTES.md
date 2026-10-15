@@ -3,9 +3,9 @@
 **Status: not published, for discussion.** Started as the scaffold for the
 design jam on 2026-10-13. The WIT is split by interface (see
 [README.md](README.md) for the file and world layout and worked scenarios). It
-declares `cosmonic:agent@0.5.0`, the next version after 0.4.0 (PR #71), and uses
-the published `cosmonic:agent@0.3.0` and `wasi:clocks@0.3.0` through `wkg.lock`.
-The published packages are unchanged, and CI neither builds nor publishes
+declares `cosmonic:agent@0.5.0`, the next version after 0.4.0 (PR #71 with the
+tools fold), and uses that 0.4.0 and `wasi:clocks@0.3.0`. The published
+packages are unchanged, and CI neither builds nor publishes
 `wit/drafts/`, so this directory cannot collide with the real `cosmonic:agent`
 package. Every interface, type, function and world is marked
 `@unstable(feature = agent-spawn)`, the WIT-native way to say "not published"
@@ -48,24 +48,25 @@ run as their own workload.
    `wit/drafts/cosmonic-agent-spawn/`, outside the `wit.yml` matrix, so CI
    never builds or publishes a second `cosmonic:agent` directory. The
    "not published" status lives in the prose.
-   **Build approach: depend on 0.3.0, vendor nothing.** A WIT package may use
+   **Build approach: depend on 0.4.0, vendor nothing.** A WIT package may use
    another version of itself: each `package@version` is a distinct package to
-   the resolver. These files `use cosmonic:agent/inference-types@0.3.0` and
-   `cosmonic:agent/tools@0.3.0`, and the worlds `include
-   cosmonic:agent/agent@0.3.0`. `build.mjs` fetches 0.3.0 from the registry,
-   reproduces `wkg.lock` unchanged, and builds `cosmonic:agent@0.5.0`; the spike
-   generates Rust modules `agent0_3_0` and `agent0_5_0`. Redefining the 0.3.0
-   types inside 0.5.0 was the fallback and was not needed. The cost is the one
-   noted in old question (k): a component importing these interfaces carries
-   two `cosmonic:agent` versions until the interfaces join the real package,
-   when the self-dependency disappears.
+   the resolver. These files `use cosmonic:agent/inference-types@0.4.0` and
+   `cosmonic:agent/tool-types@0.4.0`, and the worlds `include
+   cosmonic:agent/agent@0.4.0`. First drafted against the published 0.3.0;
+   moved to 0.4.0 with the tools fold, so a harness carries one `user-message`
+   and one set of tool types. Until 0.4.0 publishes, `wkg.toml` resolves it from
+   the package directory (this branch is stacked on #71 and the fold). The spike
+   generates Rust modules `agent0_4_0` and `agent0_5_0` (and `agent0_3_0` for
+   the published agents it still serves). The self-dependency disappears when
+   the interfaces join the real package.
 3. **Worlds organize the package.** One file per interface, and worlds per role
    composed with `include`. The capability worlds `spawn-client`,
    `tool-discovery-client` and `tool-loading-client` each hold only their own
    import and include neither `cosmonic:agent/agent` nor each other, so each
    is exactly one grant; an agent writes `include agent; include spawn-client;`. `harness`
    includes the agent world and all three. `runnable-agent` is the world a
-   spawned child targets, and `toolset` is one toolset component. The
+   spawned child targets. A toolset targets the package's own
+   `tool-provider@0.4.0` world, which exports `tools`. The
    implementer worlds are `spawn-provider`, `tool-discovery-provider` and
    `tool-loading-provider`; the last also exports `cosmonic:agent/tools`,
    because loading only works when the same implementer serves the caller's
@@ -73,10 +74,9 @@ run as their own workload.
    `tool-broker`: world names carry neither "host" nor "broker", which is
    reserved for host-wide services.) Import-side worlds end in `-client`
    because it pairs with `-provider` and matches the published
-   `inference-client`. The toolset world is named for its role, `toolset`,
-   rather than reusing `tool-provider`: the published 0.3.0 `tool-provider`
-   exports `tools`, and one world name should never mean two contracts. If
-   `tool-workload` folds into `tools` (open question (r)), `toolset` goes and
+   `inference-client`. An earlier revision had a `toolset` world exporting
+   `tool-workload`, named so that `tool-provider` would not mean two
+   contracts; with the fold (open question (r)) both are gone and
    `tool-provider` is the toolset world again.
    The old `spawn-middleware` world is gone: a guest component in front of the
    implementer would become the caller, and its own grants the ceiling, which
@@ -98,10 +98,13 @@ run as their own workload.
    display".
 8. **Review fixes.** Three independent reviews (security, runtime, API
    design) produced the changes in "Review fixes" below: a typed `disabled`
-   case, explicit child powers, `grants.credentials`, `get-aliases`, the
-   `toolset` world, an approval digest with a domain tag, the caller's
+   case, explicit child powers, `grants.credentials`, `get-aliases`, an
+   approval digest with a domain tag, the caller's
    incarnation and canonical JSON, expiring and shared grants, and fail-closed
    volumes.
+9. **The tools fold.** `tool-workload` folds into `tools` in #71's 0.4.0
+   (fallible `list`, function-less `tool-types`), this draft depends on that
+   0.4.0, and toolsets target `tool-provider`. See open question (r).
 
 Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`
 and `tool-loading.load`; `limit-scope` gained `loaded-toolsets`;
@@ -157,9 +160,10 @@ Second pass, the should-fix items:
   agents in a hierarchy, and the OpenAI Agents SDK has only `Agent`. The
   resource is scoped to the `spawn` interface, so it does not collide with the
   `agent` world. Prose says "the caller" and "the child".
-- **`tool-workload.list` has its own `list-error`** (`unavailable`, `other`).
-  A read has no effects to be unsure of, so `call-error`, which #71 turns into
-  `not-dispatched` and `outcome-unknown`, does not fit it.
+- **`tools.list` has its own `list-error`** (`unavailable`, `denied`,
+  `other`), from the fold. A read has no effects to be unsure of, so
+  `call-error`, which #71 turns into `not-dispatched` and `outcome-unknown`,
+  does not fit it.
 - **The child's export is `run`**, after `wasi:cli/run`. The world keeps the
   name `runnable-agent`: "a runnable agent exports `run`" reads right, and
   renaming the world to `run-agent` would read as a verb.
@@ -194,21 +198,17 @@ Second pass, the should-fix items:
   guarantee; an outcome already recorded wins the race against a cancel;
   cancellation does not roll back effects; `admission-error` and `start-error`
   both mean "nothing ran", the same promise as #71's `not-dispatched`.
-  `tool-workload.call` takes `call-error` from whatever `cosmonic:agent`
-  version it depends on, so moving the dependency to 0.4.0 changes `call` to
-  `not-dispatched` and `outcome-unknown`, and implementers and callers must be
-  updated for it; it is not a free change. `tool-workload.list` has its own
-  `list-error`, so the move does not touch it.
+  Toolsets now export 0.4.0 `tools`, so their `call` answers
+  `not-dispatched` or `outcome-unknown`, and the fold adds `list-error`.
 - **#70** (notifications 0.3.0): Victor asked for worlds and example scenarios
   in package READMEs. README.md follows that, with WIT excerpts beside each
   scenario.
 - **cosmonic-labs/sandboxed-agents#24** (merged): each tool exports a
-  per-tool interface shaped like the planned `tool-workload`, ships as its own
-  image with its own grants, and the `toolbox` guest router is kept only for
-  compatibility. This package defines `tool-workload` in nearly that shape
-  (one difference: #24's `list` fails with `call-error`, `tool-workload`'s
-  with `list-error`) and makes the host, not a guest, list and dispatch
-  across tools.
+  per-tool interface (`cosmonic:<crate>/tool@0.3.0`, with `list` failing with
+  `call-error`), ships as its own image with its own grants, and the `toolbox`
+  guest router is kept only for compatibility. With the fold, the shared shape
+  is plain `cosmonic:agent/tools@0.4.0`; adopting it is a rename for those
+  components. The host, not a guest, lists and dispatches across tools.
 
 ## Information-flow rules
 
@@ -475,8 +475,9 @@ bounds results there, whatever the toolset does.
 - **Audit** records each cut by identity: the toolset workload, the tool's own
   name, and the original and delivered sizes.
 
-`tool-workload` says the implementer may do this and how truncation is
-signalled, so toolset authors know to offer arguments that narrow a result.
+The toolset paragraph of the `spawn-types` contract says the implementer may
+do this and how truncation is signalled, so toolset authors know to offer
+arguments that narrow a result.
 
 Spike coverage: `tool_results_are_bounded` and
 `bounding_never_splits_a_character`.
@@ -692,8 +693,8 @@ Each former open question below now has a stated default with its reasoning.
 Every one is **default, open to review**: the package and the spike follow it
 until someone argues it down.
 
-**1. Folding `tool-workload` into `tools`: no longer a default.** It is now
-open question (r), for Bailey.
+**1. Folding `tool-workload` into `tools`: decided.** See open question (r),
+closed on 2026-10-15.
 
 **2. Caller-set budgets, optional operator limits, no budget carving.**
 *Default, open to review.* Each spawn carries a budget its caller chooses
@@ -851,24 +852,24 @@ state how few bits come back; and opaque handles a parent can pass on but not
 read. Neither is added; see "The reverse case". It is also the third option in
 "Considered and dropped" for a model that must read secret data.
 
-**(r) Fold `tool-workload` into `tools`, and at which version?** For Bailey.
-On 2026-10-11 Eric chose a sibling interface so the published 0.3.0 `tools`
-contract stays untouched: Goose, Pi, minimal-agent and Desktop's tools plugin
-all import it. Victor's per-tool components in sandboxed-agents#24 are close
-to `tool-workload`, but not identical: their `list` fails with `call-error`.
-*Recommendation from three independent reviews (security, runtime, API
-design), unanimous:* fold in #71's breaking release, since #71 already breaks
-`tools.call-error` and every agent rebuilds once either way. In that release,
-`tools.list` returns `result<list<tool-def>, list-error>` on both sides (the
-agent's import and the toolset's export, one symmetric interface, so a toolset
-links directly or through the host without adapters); the records
-(`tool-def`, `tool-call`, `tool-response`, `call-error`, `list-error`) move to
-a function-less `tool-types` interface, so a toolset no longer imports `tools`
-for types; `tool-workload` and the `toolset` world retire. A fallible
-agent-side `list` also lets an implementer that cannot answer say so instead
-of returning an empty list. If #71 cannot take it, keep `tool-workload` gated
-and fold when spawn stabilizes. Until it is decided, `toolset-spec` accepts
-either export.
+**(r) Fold `tool-workload` into `tools`: decided (Eric, 2026-10-15).** Made
+as the three reviews recommended, in #71's breaking 0.4.0 release (branch
+`draft/tools-fold`, stacked on #71): `tools.list` returns
+`result<list<tool-def>, list-error>`, and the same `tools` interface is the
+agent's import and the toolset's export; the records (`tool-def`,
+`tool-response`, `call-error` with its parts, and the new `list-error`) move to
+a function-less `tool-types`, so a toolset imports only types. `tool-workload`
+and the `toolset` world are retired from this draft; toolsets target
+`tool-provider@0.4.0`. `tool-call` stays in `inference-types`, because messages
+carry it and `tool-types` already uses `inference-types`, so moving it would
+make the two interfaces use each other.
+
+*Compatibility.* The published 0.3.0 artifact is unchanged. Hosts keep
+serving `tools@0.3.0` (infallible `list`) to agents built against it, such as
+minimal-agent 0.2.0, and may keep accepting toolsets that export 0.3.0
+`tools` or a per-package shape like sandboxed-agents#24's; the spike does
+both. Where the host cannot answer `list` for a 0.3.0 agent it returns an
+empty list, as before; a 0.4.0 agent gets `list-error`.
 
 **(s) Store-scoped handles, and reattaching.** For Bailey. A handle dies with
 its caller's store, and most callers get a fresh store per request, so a
@@ -887,8 +888,10 @@ toolset imports `tools`) must still have it linked, and two plugins that both
 link one collide. *Recommendation (medium confidence):* the runtime links
 interfaces that have no functions and no resources itself, once per linker,
 before plugins bind; an interface that defines resources stays with the
-plugin whose functions return them. The `tool-types` split in (r) removes the
-toolset case.
+plugin whose functions return them. With the fold (r), a 0.4.0 toolset
+imports the function-less `tool-types` instead of `tools`, so the remaining
+case is an empty instance any host can link; only 0.3.0 toolsets still
+import `tools` for types.
 
 **(u) The cancellation trigger, and a `cancelling` frame.** Dropping the
 progress stream requests cancellation today, so a harness that does not want
@@ -987,8 +990,7 @@ this package. What they changed, all now in the WIT and the spike:
   runtime's default policy.
 - **Loading is per component.** A loaded toolset is offered only to the
   component that loaded it.
-- **Names.** `alias-prefix` (operator-owned), `get-aliases`, the `toolset`
-  world; a digest change under a toolset name holding aliases is refused
+- **Names.** `alias-prefix` (operator-owned), `get-aliases`; a digest change under a toolset name holding aliases is refused
   rather than renaming or taking the alias; tool definitions are capped at
   attach.
 - **No overlapping runs.** `busy` until a cancelled run has actually stopped.
