@@ -21,7 +21,7 @@ Long-lived operations use native WIT streams and futures.
 | `chat-provider` | None | `inference-types`, `model-admin`, `chat` |
 | `embeddings-provider` | None | `inference-types`, `model-admin`, `embeddings` |
 | `agent` | `inference-types`, `models`, `chat`, `tools`, `session` | None |
-| `tool-provider` | Inference resource types referenced by `tools` | `tools` |
+| `tool-provider` | `tool-types` and the inference types it references (types only) | `tools` |
 
 A serving component that needs chat and embeddings uses `inference-client`; a
 full provider implements `inference-provider`. A caller that only needs chat or
