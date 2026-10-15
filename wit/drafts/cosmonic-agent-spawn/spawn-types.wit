@@ -39,12 +39,12 @@ package cosmonic:agent@0.5.0;
 /// beyond the ceiling.
 ///
 /// Attenuation. A caller may request more than the ceiling but cannot grant
-/// it. The implementer is the sole grantor, by policy or a person, and
-/// returns `needs-approval`. An approval is an explicit declassification
-/// (a decision that data may cross a boundary it otherwise could not), bound
-/// to a digest over the caller's identity and the whole request. Content the
-/// caller sends down can reach the child's egress; an approval of egress
-/// beyond the ceiling says so too.
+/// it. The implementer is the sole grantor, by policy or auditor agent or
+/// human in the loop, and returns `needs-approval`. An approval is an
+/// explicit declassification (a decision that data may cross a boundary it
+/// otherwise could not), bound to a digest over the caller's identity and the
+/// whole request. Content the caller sends down can reach the child's egress;
+/// an approval of egress beyond the ceiling says so too.
 ///
 /// Authorship. A model can paraphrase anything it read, so redaction is not
 /// a security boundary and a child's final reply is a declassification

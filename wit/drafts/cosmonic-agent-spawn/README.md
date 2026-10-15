@@ -22,7 +22,7 @@ so a workload is granted exactly the ones its world names:
 A toolset is one component, with its own grants (allowed hosts, volumes,
 interfaces, secret names), that offers one or more tool definitions. "Tool"
 means a single definition or call, as in `cosmonic:agent/tools`. The host is the only grantor: a request can ask for
-more than the caller has, but only the host, by policy or a person, can approve
+more than the caller has, but only the host, by policy or auditor agent or human in the loop, can approve
 it. Credentials never pass through these interfaces; models and secrets are
 named (a model alias, a secret name) and the host resolves them.
 
