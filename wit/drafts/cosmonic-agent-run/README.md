@@ -79,7 +79,9 @@ interface run {
 }
 
 // in run-types
-type started-run = tuple<stream<run-event>, future<result<run-outcome, run-error>>>;
+type run-events = stream<run-event>;
+type run-result = future<result<run-outcome, run-error>>;
+type started-run = tuple<run-events, run-result>;
 ```
 
 The shape is `chat`'s: a call that is accepted or refused, then a stream and a
@@ -117,10 +119,12 @@ says run. The interface is named after `wasi:cli/run`.
 | `trace-parent: option<string>` | W3C traceparent, passed on to the agent's model calls. |
 
 **There is no session id.** The session a run works in is the agent's
-`cosmonic:agent/session` import, which the host binds to the workload. Naming
-a session in the input would be a forgeable key; the WIT design skill's rule
-is that a single thing a component may touch is a bound import, not a key
-parameter. One workload is one session (decision 2).
+`cosmonic:agent/session` import. The host chooses the session a run works in
+and binds it to the caller; a run never names one (decision 2). Naming a
+session in the input would be a forgeable key; the WIT design skill's rule is
+that a single thing a component may touch is a bound import, not a key
+parameter. An agent must not rely on in-memory state surviving between runs:
+everything it needs to continue is in its session.
 
 ### Streamed events
 
@@ -141,6 +145,7 @@ record step {
 variant step-content {
     assistant(assistant-message),
     tool(list<tool-result>),
+    user(user-message),      // reserved: a message taken in mid-run
     error(string),
     other(option<string>),
 }
@@ -154,7 +159,10 @@ variant step-content {
   already holds: an assistant message (text, reasoning summary, tool calls
   with their arguments, attachments) or the tool results that answer it. An
   `error` step is an error the agent records in the conversation. The person's
-  own message is never sent back; the driver already has it.
+  own message is never sent back; the driver already has it. A `user` step is
+  reserved for a message the agent takes in during the run (see
+  [Review outcomes](#review-outcomes-2026-10-16)); a driver renders it as the
+  person's message.
 - **`counts`** is cumulative after each model call: steps, tool calls, token
   usage. It doubles as a heartbeat.
 
@@ -170,7 +178,7 @@ record run-outcome {
     reply: list<reply-part>,
     structured: option<json>,
     counts: run-counts,
-    finish: finish,          // done, max-steps, max-total-tokens, max-duration, other
+    finish: finish,          // done, input-required, max-steps, max-total-tokens, max-duration, other
     model: option<served-model>,  // alias and the concrete model, for display
 }
 ```
@@ -485,10 +493,10 @@ So it is feasible with no runtime change. What the daemon adds:
     result subject, and then the message is acked.
   - `busy` naks with a delay, so redelivery is the backpressure. `duplicate`
     acks.
-- **Which conversation an event belongs to.** One workload is one session, so
-  a support agent with one conversation per ticket runs one workload per
-  ticket. That is cheap for a Wasm component. Serving many sessions from one
-  workload is a [future option](#future-options).
+- **Which conversation an event belongs to.** The host chooses the session.
+  A host-side router maps a conversation key from the event (a ticket id, a
+  subject token) to its own session; see
+  [Review outcomes](#review-outcomes-2026-10-16).
 
 ### A parent agent, through spawn
 
@@ -679,9 +687,12 @@ The review questions, settled. Reasons kept short.
 
 1. **Version: 0.4.0**, unstable behind `agent-run`. One migration instead of
    two; see [Versioning](#versioning).
-2. **One session per workload.** `run` takes no session handle; the session
-   stays the agent's own import, bound by the host. A key parameter would be
-   forgeable, and nothing needs more yet. See [Future options](#future-options).
+2. **The host chooses the session.** `run` takes no session handle; the
+   session stays the agent's own import, bound by the host, one per workload
+   today and one per conversation through a host router later. A key
+   parameter would be forgeable, and the host attributes everything else by
+   caller, not by a value the guest passes. See
+   [Review outcomes](#review-outcomes-2026-10-16).
 3. **`agent.run.v1` and `agent.run-result.v1` are reserved** in `session.wit`
    in the same release, with the optional `run` field on `agent.step.v1`.
    Hosts that redraw from the journal need to rely on them.
@@ -697,7 +708,7 @@ The review questions, settled. Reasons kept short.
    child-written content, and its errors are implementer-authored.
 7. **The host holds the one-run-per-session lock** (Desktop's daemon). The
    agent's own `busy` check is a backstop against two drivers on one
-   workload.
+   session.
 8. **The `POST /task` adapter lives in the host**, as a Desktop daemon route,
    so agents eventually need no HTTP handler. During the transition the
    daemon drives the typed export when the agent has it and falls back to
@@ -710,13 +721,92 @@ The review questions, settled. Reasons kept short.
 
 ## Future options
 
-- **Many sessions per workload.** Event-driven agents on Control (a
-  conversation per ticket, a "virtual employee" consuming a subject) may want
-  one workload to serve many sessions. The capability-shaped way is for `run`
-  to take a session handle the driver hands in (a resource the host mints),
-  never a session name. It would be a new function or a new minor version.
+- **Many conversations per agent.** Event-driven agents on Control (a
+  conversation per ticket, a "virtual employee" consuming a subject) are
+  served by the host-side router in
+  [Review outcomes](#review-outcomes-2026-10-16), with no change to `run`.
 - **A host-held session lease**, so an agent can enforce one run at a time
   across instances itself rather than relying on the driver and conditional
   commits.
 - **The adapter as a composed component**, for hosts that want `POST /task`
   without implementing it.
+
+## Review outcomes (2026-10-16)
+
+Three adversarial reviews tested the contract before publishing: input that
+arrives while a run is in progress, how runs bind to sessions, and whether a
+JavaScript agent can export `run`. None of them changed the signature of
+`run`. Their conclusions, with the confidence each review stated:
+
+**No input stream on `run`** (high). Every kind of mid-run input sorts into
+one of three groups, and only the third needs new WIT, later and additively.
+
+- Approvals stay at the host's gates, tool dispatch and egress. A held
+  `tools.call` waits while the host asks the person in its own words, then
+  returns the result or `not-dispatched(denied)`. An agent never receives an
+  approval, so it can neither forge one nor draw a permission prompt with
+  text it wrote. MCP, the OpenAI Agents SDK, LangGraph and A2A all keep
+  approvals out of the agent's channel or end the turn for them.
+- A clarifying question is a tool the host serves on the existing `tools`
+  import, the shape of Codex's `request_user_input` and Claude's
+  `AskUserQuestion`. When no one can answer during the run, the agent
+  finishes `input-required` and the answer starts the next run; this maps to
+  A2A's `input-required` task state (medium to high).
+- Steering is pulled, never pushed. Every harness that has it (Codex, Claude
+  Code, Goose, Pi, Cursor) drains a queue after a step's tool calls and
+  before the next model call. It comes later as a pull import,
+  `run-input.take`, in an opt-in world; until then the host queues the
+  message for the next run, or cancels and restarts. The `user` step is
+  reserved now for those messages (medium).
+- When a host cancels a run, it completes the pending calls it serves (a held
+  tool call, a question) with `cancelled`, which closes most of the gap the
+  spike found between a dropped stream and the agent's next write. Time
+  waiting on a person counts toward `max-duration`.
+
+**No session handle on `run`** (high on keeping it out, medium to high on the
+router). A handle on `run` would give the guest many conversations while the
+host still attributes model spend, tool calls, credentials and cancellation to
+one caller, so one prompt-injected ticket could reach another's context. The
+platforms that sell isolation (Cloudflare Agents, AWS Bedrock AgentCore,
+Temporal) instead give each conversation its own unit, addressed by key. The
+host does the same with a router: it maps a tenant-scoped conversation key to
+its own session, creates the session on demand, runs one run at a time per
+key, stops idle instances, and resumes from the journal. That is additive
+later. What had to change now is wording: the host chooses the session (not
+"one workload is one session"), an agent must not rely on in-memory state
+surviving between runs, and `run-id` is unique per session.
+
+**Pi exports `run` natively** (high). A probe built the real 0.4.0 WIT with
+componentize-qjs, the toolchain Pi already uses, and drove it under the
+Wasmtime version Desktop runs: streaming events, the outcome future,
+`duplicate`, `invalid-input`, `busy`, and cancellation (a write resolves to 0
+once the driver drops the stream) all behaved as the WIT says. StarlingMonkey
+cannot yet: it does not implement async function exports
+([ComponentizeJS#335](https://github.com/bytecodealliance/ComponentizeJS/issues/335)).
+Two findings for hosts and agents: a JS agent imports all of
+`inference-types`, including the `model` resource, so Desktop defines that
+resource when it links the 0.4.0 types for a run-only agent; and a JS
+exception from `run` that is not a WIT value traps the instance, so an agent
+maps unknown failures to `other` or `unavailable`. Naming the stream and
+future types (`run-events`, `run-result`) gives JS bindings readable names and
+changes nothing for Rust or Go.
+
+**Added now, before publishing:** `finish.input-required`, the reserved
+`step-content.user`, the named types, and the wording on sessions, approvals,
+waits and cancellation.
+
+**Additive later:**
+
+- Router configuration on the trigger binding (key extraction, idle stop,
+  per-key queue, retention) and a conversations route (`POST
+  /conversations/{key}/runs`).
+- `run-input`, a pull import for steering, in its own opt-in world.
+- A typed `ask` interface, if a host wants one beyond the ask tool.
+- Desktop serving inference and session at 0.4.0, so agents target
+  `runnable-agent` whole.
+
+**Question for Bailey.** Does adding a case to a variant after publishing
+break consumers already compiled against it? We believe it does, because the
+component model checks types structurally at link time and has no variant
+subtyping, but we have not tested it. That is why both new cases are added
+now rather than later.
