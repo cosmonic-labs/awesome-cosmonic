@@ -1,30 +1,26 @@
 # A typed run export for `cosmonic:agent`
 
-**Status: not published, for discussion.** This directory proposes a typed
-export, `cosmonic:agent/run`, that replaces the HTTP convention as the
-contract between a sandboxed agent and whatever drives it. Phase 1 is this
-note and the WIT beside it. No Desktop or agent code changes yet.
+**Status: in `cosmonic:agent@0.4.0`, unstable.** This note is the design of
+a typed export, `cosmonic:agent/run`, that replaces the HTTP convention as
+the contract between a sandboxed agent and whatever drives it. The WIT lives
+in the 0.4.0 package beside the tools fold and the dispatch outcomes, with
+every item marked `@unstable(feature = agent-run)`: 0.4.0 can publish with it,
+and a consumer sees it only by enabling the feature. [Decisions](#decisions)
+records the review questions and how each was settled.
 
-The files declare `cosmonic:agent@0.4.1` so they build beside the unpublished
-0.4.0 in [`wit/cosmonic-agent`](../../cosmonic-agent) (PR #71 with the tools
-fold) without colliding with it. Every item is marked
-`@unstable(feature = agent-run)`, the WIT way to say "not published" without
-putting "draft" in an identifier. Which version should carry it is an open
-question; [Versioning](#versioning) recommends 0.4.0. CI neither builds nor
-publishes `wit/drafts/`. To check it locally:
+To check it locally (the build fetches `wasi:clocks` and checks `wkg.lock`):
 
 ```sh
-cd wit/drafts/cosmonic-agent-run
-WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit fetch .
-WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit build -d . -o /tmp/agent-run.wasm
-wasm-tools component wit /tmp/agent-run.wasm --all-features
+node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
+wasm-tools component wit dist/agent.wasm --all-features
 ```
 
 | File | What it holds |
 | --- | --- |
-| [`run-types.wit`](run-types.wit) | Function-less types: `run-options`, `run-event`, `step`, `run-outcome`, `start-error`, `run-error`, `started-run` |
-| [`run.wit`](run.wit) | The `run` interface an agent exports, with the journal rules |
-| [`world.wit`](world.wit) | `runnable-agent` (the `agent` world plus `export run`) and `run-client` (`import run`) |
+| [`run-types.wit`](../../cosmonic-agent/run-types.wit) | Function-less types: `run-options`, `run-event`, `step`, `run-outcome`, `start-error`, `run-error`, `started-run` |
+| [`run.wit`](../../cosmonic-agent/run.wit) | The `run` interface an agent exports, with the journal rules |
+| [`world.wit`](../../cosmonic-agent/world.wit) | `runnable-agent` (the `agent` world plus `export run`) and `run-client` (`import run`) |
+| [`session.wit`](../../cosmonic-agent/session.wit) | `agent.run.v1` and `agent.run-result.v1` added to the reserved entry kinds |
 
 ## Why
 
@@ -73,7 +69,7 @@ Following the WIT design skill, a component's contract has four parts.
 
 ```wit
 interface run {
-    use cosmonic:agent/inference-types@0.4.0.{user-message};
+    use inference-types.{user-message};
     use run-types.{run-options, started-run, start-error};
 
     run: async func(
@@ -117,15 +113,14 @@ says run. The interface is named after `wasi:cli/run`.
 | `schema: option<json>` | JSON Schema the reply must satisfy; the answer comes back as `run-outcome.structured`. |
 | `max-steps: option<u32>` | Model calls in this run. Ends the run with `finish.max-steps`. |
 | `max-total-tokens: option<u64>` | Prompt plus completion tokens across the run. Ends it with `finish.max-total-tokens`. |
-| `max-duration: option<duration>` | Wall clock from the call. Ends it with `finish.max-duration` and what it has. |
+| `max-duration: option<duration>` | Wall clock from acceptance (when `run` returns ok). Ends it with `finish.max-duration` and what it has. |
 | `trace-parent: option<string>` | W3C traceparent, passed on to the agent's model calls. |
 
 **There is no session id.** The session a run works in is the agent's
 `cosmonic:agent/session` import, which the host binds to the workload. Naming
 a session in the input would be a forgeable key; the WIT design skill's rule
 is that a single thing a component may touch is a bound import, not a key
-parameter. One workload is one session today. Whether an agent should serve
-several sessions is open question 2.
+parameter. One workload is one session (decision 2).
 
 ### Streamed events
 
@@ -244,9 +239,9 @@ reader.
 
 ### One run at a time
 
-`busy` is enforced in two places. The **driver** is the authority: Desktop
-already refuses a second turn per session in its relay, and the daemon takes
-that over. The **agent** checks too, as defence against two drivers on one
+`busy` is enforced in two places. The **driver** is the authority
+(decision 7): Desktop already refuses a second turn per session in its relay,
+and the daemon takes that over. The **agent** checks too, as defence against two drivers on one
 workload (an HTTP adapter and a NATS trigger, say). Its check is in memory,
 which is exact while the workload keeps one warm instance (Desktop's
 `poolSize: 1`), and is backed by the session's conditional commits otherwise:
@@ -390,42 +385,45 @@ that exports `run`:
    `answer`, `turns`); on an error write `failed` with the case and its detail.
 6. When the client goes away, drop the events stream.
 
-It is a hundred or so lines, written once. It lives in one of three places,
-which is open question 8:
+It is a hundred or so lines, written once. It lives **in the host**
+(decision 8): Desktop's daemon serves a route that calls the export and
+writes today's lines, and Control's HTTP ingress can do the same, so an agent
+eventually needs no HTTP handler at all. Two other places were considered:
 
-- **In the agent, during the transition.** The agent keeps exporting
-  `wasi:http/handler`, and its handler calls its own `run` through a shared
-  helper (a small Rust crate and a JS module). Older Desktops keep working
-  unchanged.
-- **In the host.** Control's HTTP ingress, or Desktop's daemon, serves
-  `POST /task` by calling the export. The agent exports only `run`.
+- **In the agent.** The agent keeps exporting `wasi:http/handler`, and its
+  handler calls its own `run`. This is what agents do during the transition,
+  so older Desktops keep working, but it is not where the adapter ends up.
 - **As a composed component** targeting `run-client` plus an export of
   `wasi:http/handler`, plugged in front of any agent with `wac`. This is the
-  virtualizable form: the adapter is just another component.
+  virtualizable form, and stays possible: the contract does not change.
 
 ## How a host drives it
 
 ### Cosmonic Desktop
 
 The daemon calls the agent's export through wash-runtime's plugin-initiated
-dispatch, the mechanism the toolset dispatcher already uses to call tool
-exports. A host plugin resolves a dispatch target for a workload item while
-the workload resolves, then runs a `GuestCall` (its own code, on the instance
-the host picks, under that store's `Accessor`) for each call.
+dispatch, the mechanism Desktop's toolset dispatcher already uses to call
+tool exports. A host plugin resolves a dispatch target for a workload item
+while the workload resolves, then runs a `GuestCall` (its own code, on the
+instance the host picks, under that store's `Accessor`) for each call.
 
-Evidence that it works, from `~/cosmonic/probes/desktop-toolkits` (branch
-`spike/toolkits` at `39e7495b`, the dispatcher behind
-`COSMONIC_TOOLSET_DISPATCHER=1`) and wash-runtime at the pinned `dad8b72`:
+The runtime side is public, in
+[wasmCloud/wasmCloud](https://github.com/wasmCloud/wasmCloud) at `dad8b72`,
+the commit Desktop pins (paths under `crates/wash-runtime/src/`):
 
 | What | Where |
 | --- | --- |
-| A plugin declares the export it drives in its world | `rust/crates/cosmonicd/src/toolset_dispatch.rs:3080` (`exports: cosmonic:agent/tools@0.3.0, @0.4.0`) |
-| It resolves a dispatch target when the workload resolves | `toolset_dispatch.rs:3228`, `:3236` (`workload.dispatch_target(component_id, PLUGIN_ID)`), backed by `wash-runtime/src/engine/workload.rs:2018` |
-| A `GuestCall` finds the export by name and calls it with typed values | `toolset_dispatch.rs:2584` (`impl GuestCall for Job`), `:2615` (`get_export_index`), `:2685` (`call_concurrent`) |
-| The plugin sets the call's deadline and can cancel it | `toolset_dispatch.rs:2594` (`deadline`), `:2721` and `:2732` (`dispatch_traced`, `cancel.cancel()`) |
-| The host can consume a guest's `stream<T>` and `future<T>` | `rust/crates/cosmonicd/src/llm_plugin.rs:1467`, `:1475`, `:1484` (`StreamReader::pipe`, `FutureReader::pipe` with a `StreamConsumer` at `:1522`), today for the `messages` stream `chat` takes |
-| The trait, and its default deadline | `wash-runtime/src/engine/dispatch.rs:139`, `:157`; the default is `WASH_EPHEMERAL_CALL_TIMEOUT_SECS`, 600 s (`wash-runtime/src/timeouts.rs:78`), the same 10 minutes as Desktop's turn cap (`js/packages/cosmonic-desktop/src/main/agentRelay.js:44`) |
-| Cancellation retires the instance, because Wasmtime cannot stop one guest task without dropping its store | `dispatch.rs:43` to `:46` (bytecodealliance/wasmtime#11833) |
+| Plugin-initiated dispatch, and why it exists (push-mode capabilities) | `engine/dispatch.rs:1` to `:9` |
+| A plugin resolves a dispatch target when the workload resolves | `engine/workload.rs:2018` (`dispatch_target(item_id, plugin)`) |
+| The `GuestCall` trait, and its default deadline | `engine/dispatch.rs:139`, `:157`; the default is `WASH_EPHEMERAL_CALL_TIMEOUT_SECS`, 600 s (`timeouts.rs:78`), the same 10 minutes as Desktop's turn cap |
+| Cancellation retires the instance, because Wasmtime cannot stop one guest task without dropping its store | `engine/dispatch.rs:43` to `:46` (bytecodealliance/wasmtime#11833) |
+
+On the Desktop side, the toolset dispatcher already declares the `tools`
+export it drives in its plugin world, resolves a dispatch target per toolset,
+finds the export by name and calls it with typed values (`call_concurrent`),
+and sets and cancels the call's deadline. Desktop's inference plugin already
+consumes a guest's `stream<T>` and `future<T>` (the `messages` stream `chat`
+takes).
 
 So it is feasible with no runtime change. What the daemon adds:
 
@@ -442,8 +440,8 @@ So it is feasible with no runtime change. What the daemon adds:
   The dispatch cancel handle is the fallback when the agent does not stop in
   time. It retires the instance, which costs nothing durable: the agent's state
   is in the session.
-- **One run per session in the daemon**, moved from main's relay
-  (`agentRelay.js:256`, `:268`), so every path into a session shares it.
+- **One run per session in the daemon**, moved from the app's relay, so
+  every path into a session shares it.
 - **A control-plane route**, for example `POST /v1/workloads/{ns}/{name}/runs`
   streaming the events and `DELETE .../runs/{run-id}` to stop. Main relays it
   to the renderer the way `agentRelay.js` relays the ingress today. The control
@@ -467,8 +465,7 @@ So it is feasible with no runtime change. What the daemon adds:
   binds, and for each message calls `run`. This is the push-mode case
   wash-runtime's dispatch module was written for (`dispatch.rs:1` to `:9`),
   and the shape of Control's Kafka plugin, which drives the `cosmonic:kafka`
-  handler export the same way (`crates/plugin-kafka/src/handler.rs` in
-  cosmonic/control). Per message:
+  handler export the same way. Per message:
   - The message becomes a `user-message`: its payload as an attachment with
     its content type (or as text), `name` from the subject.
   - `run-id` is the message's id (the JetStream sequence or a `Nats-Msg-Id`
@@ -481,7 +478,8 @@ So it is feasible with no runtime change. What the daemon adds:
     acks.
 - **Which conversation an event belongs to.** One workload is one session, so
   a support agent with one conversation per ticket runs one workload per
-  ticket. That is cheap for a Wasm component, but it is open question 2.
+  ticket. That is cheap for a Wasm component. Serving many sessions from one
+  workload is a [future option](#future-options).
 
 ### A parent agent, through spawn
 
@@ -495,31 +493,34 @@ removes that bridge.
 
 ## Versioning
 
-**Recommendation: land it in 0.4.0, with #71 and the tools fold, if 0.4.0 has
-not published when this is reviewed. Otherwise 0.4.1. Not 0.5.0.** Bailey's
-call.
+**It lands in 0.4.0, unstable** (decision 1), with #71's dispatch outcomes and
+the tools fold.
 
-- **One migration, not two.** Desktop and all three agents must port to 0.4.0
+- **One migration, not two.** Desktop and all three agents port to 0.4.0
   anyway (the fold moves the tool records to `tool-types` and makes
   `tools.list` fallible; #71 changes dispatch outcomes). Adding the export in
   the same port means one allowlist change and one round of agent releases.
 - **The same Desktop work.** The 0.4.0 port is when the daemon's dispatcher
   starts calling `tools@0.4.0` exports. Calling `run` is the same mechanism.
 - **It is additive.** It changes no existing interface and no existing world.
-  `agent` stays imports-only; `runnable-agent` is a new world. So it does not
-  widen #71's break, and if review takes longer it can follow as 0.4.1 with
-  nothing breaking. WASI ships additions in patch releases with `@since` the
-  same way, and Wasmtime links a 0.4.0 importer against a 0.4.1 host.
+  `agent` stays imports-only; `runnable-agent` is a new world.
+- **Unstable, not `@since`.** The WIT design skill keeps `@since` for what a
+  release commits to and `@unstable(feature = ...)` for experimental items.
+  0.4.0 has not published, so `@since(version = 0.4.0)` was possible, but the
+  run surface has only been exercised by one agent and one host spike. Marked
+  unstable, 0.4.0 can publish on #71's schedule whether or not `run` is
+  settled: a consumer that does not enable `agent-run` never sees it, and
+  promoting it later is `@since(version = 0.4.x)` with no break. The built
+  package keeps the gated items, so enabling the feature (`features` in
+  `wit-bindgen`, `--features agent-run` in `wasm-tools`) is all a consumer
+  does.
 - **0.5.0 is the spawn draft's version.** Spawn depends on `run`, not the
-  other way round, so `run` should land first.
+  other way round, so `run` lands first.
 
-Landing it means moving `run-types.wit` and `run.wit` into
-`wit/cosmonic-agent`, changing the package line, adding the two worlds to
-`world.wit`, and replacing `@unstable(feature = agent-run)` with
-`@since(version = ...)`. One side effect to accept: `cosmonic:agent` gains a
-dependency on `wasi:clocks/types@0.3.0` for `duration`. The alternative is a
-`max-duration-ms` field, as `request-meta.deadline-ms` does in the same
-package.
+One side effect: `cosmonic:agent` gains a dependency on
+`wasi:clocks/types@0.3.0` for `duration`, pinned in the package's `wkg.lock`.
+The alternative was a `max-duration-ms` field, as `request-meta.deadline-ms`
+does in the same package; reusing the WASI type follows the skill.
 
 ## Migration plan
 
@@ -586,40 +587,58 @@ older Desktops age out.
   type mirroring the `step` line. A client gets tool arguments, reasoning, and
   attachment bytes without a second schema. The cost is continuation data
   (`assistant-part.opaque`) a driver ignores; the agent may leave it out.
-  Open question 5.
 - **Events carry content** instead of pointing at journal entries, for the
   reasons under [The journal](#the-journal).
 - **`run-id` is required and driver-chosen**, so event redelivery has a
   natural key and every run has a name in logs and the journal.
 - **`run-options` is a record**, like `chat-options` and the spawn draft's
-  `run-options`. Records cannot gain fields without a break. Open question 4.
+  `run-options`.
 - **No `blocked` event from the agent**, since the host is the one that knows.
 
-## Open questions for Bailey
+## Decisions
 
-1. **Version.** 0.4.0 with #71 and the fold (recommended), or 0.4.1 after it?
-2. **Sessions per workload.** One workload is one session today, and `run`
-   relies on that by keeping the session an import. Event-driven agents (a
-   conversation per ticket) may want one workload to serve many sessions. The
-   capability-shaped way would be for `run` to take a session handle the driver
-   hands in, never a session name. Keep the import for now?
-3. **Journal kinds.** Should `agent.run.v1` and `agent.run-result.v1` join the
-   reserved list in `session.wit` in the same release, with the optional `run`
-   field on `agent.step.v1`?
-4. **`run-options` as a record or a resource.** A resource with accessors, as
-   `wasi:http` does for request options, can grow; a record cannot.
-5. **Step content.** Reuse `assistant-message` (with continuation data a driver
-   ignores), or a slimmer display type?
-6. **Names shared with spawn.** `start-error`, `run-error` and `started-run`
-   would exist in both `run-types` and `spawn-types`, legal and namespaced by
-   interface in bindings. Keep them, or rename the parent's view?
-7. **`busy` across instances.** The driver is the authority and the agent's
-   check is exact only with one warm instance. Is a host-held session lease
-   wanted so an agent can enforce it itself?
-8. **Where the `POST /task` adapter lives.** In each agent during the
-   transition, in the host, or as a composed `run-client` component?
-9. **Backpressure.** Events follow `chat` (the agent may wait on a slow
-   reader), while the spawn implementer promises never to block. Is that
-   split right?
-10. **`max-duration` start.** Measured from the call (as drafted) or from
-    acceptance?
+The review questions, settled. Reasons kept short.
+
+1. **Version: 0.4.0**, unstable behind `agent-run`. One migration instead of
+   two; see [Versioning](#versioning).
+2. **One session per workload.** `run` takes no session handle; the session
+   stays the agent's own import, bound by the host. A key parameter would be
+   forgeable, and nothing needs more yet. See [Future options](#future-options).
+3. **`agent.run.v1` and `agent.run-result.v1` are reserved** in `session.wit`
+   in the same release, with the optional `run` field on `agent.step.v1`.
+   Hosts that redraw from the journal need to rely on them.
+4. **`run-options` stays a record**, consistent with `chat`'s request options.
+   A need it cannot carry comes as a new function or a new minor version,
+   which is cheaper to reason about than a resource with accessors.
+5. **Steps reuse `assistant-message`** and the existing inference types. One
+   schema for messages, and the continuation data is cheap to ignore.
+6. **Shared types live in `run-types`.** Spawn uses `run-outcome`,
+   `run-counts`, `finish`, `reply-part` and `served-model` directly, and
+   names its own `progress`, `started-run`, `start-error` and `run-error`
+   only because they genuinely differ: the parent's view carries no
+   child-written content, and its errors are implementer-authored.
+7. **The host holds the one-run-per-session lock** (Desktop's daemon). The
+   agent's own `busy` check is a backstop against two drivers on one
+   workload.
+8. **The `POST /task` adapter lives in the host**, as a Desktop daemon route,
+   so agents eventually need no HTTP handler. During the transition the
+   daemon drives the typed export when the agent has it and falls back to
+   HTTP otherwise.
+9. **Backpressure follows `chat`.** The agent may wait on a slow event
+   reader. Spawn's implementer buffers, so spawn never blocks a parent.
+10. **`max-duration` counts from acceptance**, after `run` returns ok, so
+    time spent reading the session before the run starts is not charged to
+    it.
+
+## Future options
+
+- **Many sessions per workload.** Event-driven agents on Control (a
+  conversation per ticket, a "virtual employee" consuming a subject) may want
+  one workload to serve many sessions. The capability-shaped way is for `run`
+  to take a session handle the driver hands in (a resource the host mints),
+  never a session name. It would be a new function or a new minor version.
+- **A host-held session lease**, so an agent can enforce one run at a time
+  across instances itself rather than relying on the driver and conditional
+  commits.
+- **The adapter as a composed component**, for hosts that want `POST /task`
+  without implementing it.
