@@ -1,8 +1,10 @@
 package cosmonic:agent@0.4.0;
 
-/// A workload-scoped append-only journal and opaque agent state. The host
-/// binds the session to the workload, grants component access, stamps authors
-/// and timestamps, and deletes it with the workload.
+/// An append-only journal and opaque agent state, scoped by the host to the
+/// caller. The host chooses the session a caller works in (one per workload,
+/// or one per conversation) and binds it; the caller never names one. The
+/// host grants component access, stamps authors and timestamps, and deletes
+/// the session when its scope ends.
 ///
 /// Commits apply entries and state atomically. State writes require both state
 /// and journal-end conditions; entry-only writes may omit them. A failed
@@ -32,6 +34,13 @@ package cosmonic:agent@0.4.0;
 ///   cancelled means it was not dispatched or a model call will repeat;
 ///   unresolved means its effects are unknown.
 /// - agent.context-reset.v1: {} when unreadable saved state requires fresh context.
+/// - agent.run.v1: run, the run id, in the commit that opens a run of the
+///   `run` interface, with the person's message; that commit's commit-id is
+///   run:<run-id>. An agent.step.v1 written by a run may carry run as well.
+/// - agent.run-result.v1: run, and outcome (done, failed, or cancelled) with
+///   finish or error, in the commit that ends the run. finish input-required
+///   means the run stopped for a person's answer, which starts the next run.
+///   A run with agent.run.v1 and no agent.run-result.v1 was cut off.
 /// All agent.* kinds are reserved. Writers may define other kinds; readers
 /// skip those they do not understand.
 ///

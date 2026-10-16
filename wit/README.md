@@ -22,12 +22,23 @@ Long-lived operations use native WIT streams and futures.
 | `embeddings-provider` | None | `inference-types`, `model-admin`, `embeddings` |
 | `agent` | `inference-types`, `models`, `chat`, `tools`, `session` | None |
 | `tool-provider` | `tool-types` and the inference types it references (types only) | `tools` |
+| `runnable-agent` (unstable, `agent-run`) | Those of `agent` | `run` |
+| `run-client` (unstable, `agent-run`) | `run` | None |
 
 A serving component that needs chat and embeddings uses `inference-client`; a
 full provider implements `inference-provider`. A caller that only needs chat or
 embeddings can import those interfaces directly and use the smaller providers.
 A provider serving one operation still implements the other interface and
 reports unsupported models there.
+
+`run` is the typed export a host calls to hand an agent one unit of work: a
+message in, the agent's loop of model and tool calls, a final reply out. It
+streams text deltas and whole steps while the agent works, then resolves to an
+outcome or a typed error. It replaces the `POST /task` HTTP convention as the
+contract between an agent and whatever drives it. `run`, `run-types` and the
+two worlds that use them are marked `@unstable(feature = agent-run)`: a
+consumer enables that feature to see them. The design note is
+[`drafts/cosmonic-agent-run/README.md`](drafts/cosmonic-agent-run/README.md).
 
 `model-admin` exposes the trusted catalog and preparation controls. Preparing a
 model can load local weights or open a remote connection. A remote provider can
@@ -83,6 +94,9 @@ The published 0.3.0 artifact remains unchanged.
   no longer imports `tools` just for its types.
 - Keep completed execution failures in `tool-response.is-error`, with their output
   available to the model. Cancellation and timeout do not imply rollback.
+- Optionally export `run` (unstable, `agent-run`) and target `runnable-agent`.
+  A run writes `agent.run.v1` and `agent.run-result.v1`, now reserved in
+  `session`.
 - Record an unknown tool outcome or abandoned call as an unresolved operation.
   Retry with the same id and arguments only when trusted configuration authorizes
   repeat detection. Provider annotations cannot authorize replay. A not-dispatched
@@ -97,15 +111,18 @@ client -> cosmonic:agent inference -> local provider
 agent -> authorized model aliases + chat + tools + session
 ```
 
-`cosmonic:agent` and `cosmonic:notify` are self-contained:
+`cosmonic:notify` is self-contained:
 
 ```sh
-wasm-tools component wit wit/cosmonic-agent
+wasm-tools component wit wit/cosmonic-notify
 ```
 
-`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, which `wkg.lock` pins by
-digest. The build script fetches them and checks the lock still reproduces:
+`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, and `cosmonic:agent`
+imports `wasi:clocks` (for the `duration` in `run-types`), which each
+package's `wkg.lock` pins by digest. The build script fetches them and checks
+the lock still reproduces:
 
 ```sh
 node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
+node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
 ```

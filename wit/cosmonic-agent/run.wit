@@ -1,0 +1,82 @@
+package cosmonic:agent@0.4.0;
+
+/// An agent may be handed runs. Exported by an agent and called by whatever
+/// drives it: a host (Cosmonic Desktop's daemon; a Cosmonic Control trigger
+/// that starts a run from an HTTP request or a message), the implementer of
+/// `spawn` for a spawned child, or a component that adapts another protocol
+/// onto it. Named after `wasi:cli/run`. Unstable: a consumer enables the
+/// `agent-run` feature to see it.
+///
+/// The agent needs no ingress: nothing but its driver can reach it. The
+/// session it works in is not named here. It is the agent's
+/// `cosmonic:agent/session` import. The host chooses the session a run works
+/// in and binds it to the caller; a run never names one, so a driver cannot
+/// point a run at a session by naming it. A host may give each workload one
+/// session, or bind a session per conversation.
+///
+/// An agent must not rely on in-memory state surviving between runs: the
+/// next run may be served by another instance, or bound to another session.
+/// Everything it needs to continue is in its session.
+///
+/// One run at a time. The driver holds the lock: it serializes runs for the
+/// session and never calls `run` while one is in progress. The agent checks
+/// too, as a backstop against two drivers on one session, and returns
+/// `busy`.
+///
+/// People and approvals. An agent never receives, answers or enforces an
+/// approval. Approvals happen at the gates the host owns, tool dispatch and
+/// egress: a `tools.call` the host holds while it asks a person simply waits,
+/// then returns the tool's result, or `not-dispatched(denied)` when the person
+/// refuses. A question for the person is a tool the host may offer on the
+/// agent's `tools` import; when no one can answer during the run, the agent
+/// finishes `input-required`. Time spent waiting on a person counts toward
+/// `run-options.max-duration`, and a host caps each wait at what the run has
+/// left.
+///
+/// Journal. A run keeps the session conventions in `session`: the agent
+/// writes the person's message and every step as `agent.step.v1` entries, and
+/// each model or tool call between `agent.op.v1` and `agent.op-result.v1`.
+/// It also writes `agent.run.v1` (`run`: the run id) in the commit that opens
+/// the run, with the person's message, using `run:<run-id>` as that commit's
+/// `commit-id`, and `agent.run-result.v1` (`run`, and `outcome`: done, failed
+/// or cancelled, with `finish` or the error case) in the commit that ends it.
+/// Each `agent.step.v1` the run writes carries `run` too. The events a run
+/// streams are a live view of what it commits; the journal is the record,
+/// and a reopened conversation is drawn from it.
+@unstable(feature = agent-run)
+interface run {
+    @unstable(feature = agent-run)
+    use inference-types.{user-message};
+    @unstable(feature = agent-run)
+    use run-types.{run-options, started-run, start-error};
+
+    /// Start one run: take the message and work until the agent replies, a
+    /// limit in `options` ends it, it fails, or the driver cancels it.
+    ///
+    /// Resolves once the run is accepted, not when it ends: the agent has
+    /// committed the person's message and `agent.run.v1` to the session, so a
+    /// run that fails or is cancelled later still shows what was asked.
+    /// Returns `start-error` without starting and without writing: `busy`
+    /// while a run is in progress (and after a cancellation, until that run
+    /// has actually stopped, so two runs never overlap), `duplicate` for a
+    /// `run-id` already started, `invalid-input` for a message or options it
+    /// cannot take.
+    ///
+    /// Once started, the agent streams events as it works and resolves the
+    /// outcome after its last commit, so a driver that redraws from the
+    /// journal when the outcome arrives finds the run recorded. Dropping the
+    /// events stream requests cancellation: the agent stops its model and tool
+    /// calls, records each one as the session conventions say (cancelled, or
+    /// unresolved when its effects are unknown), and resolves the outcome to
+    /// `cancelled` only once nothing of the run is still running. The host,
+    /// when it cancels a run, completes every pending call it serves for that
+    /// run (a held tool call, a question waiting on a person) with
+    /// `cancelled` right away, so the agent is not left waiting on them.
+    /// Dropping the outcome future as well stops listening; the agent still
+    /// winds the run down and records it.
+    @unstable(feature = agent-run)
+    run: async func(
+        message: user-message,
+        options: run-options,
+    ) -> result<started-run, start-error>;
+}
