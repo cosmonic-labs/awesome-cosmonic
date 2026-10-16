@@ -67,7 +67,8 @@ package cosmonic:agent@0.5.0;
 /// interface an agent imports. Its `call` rejects a tool name it does not own
 /// with `not-dispatched(unknown-tool)` before doing any work. It egresses as
 /// itself: a call is host-internal, made with the toolset's own grants and
-/// workload identity; the calling agent and its session are audit context,
+/// component identity, even though the toolset is a component in the
+/// agent's own workload; the calling agent and its session are audit context,
 /// never delegated authority. The implementer may offer a tool under an alias
 /// that is not its own name (`<toolset>__<tool>` when another toolset already
 /// has the name) and passes the tool's own name to `call`, so a description
@@ -185,13 +186,14 @@ interface spawn-types {
         /// ending with a letter or digit, at most 32 characters. Unique among
         /// the toolsets of one agent. Display metadata and the prefix of a
         /// namespaced alias; never used for routing or authorization, which
-        /// follow the workload the implementer started for the toolset.
+        /// follow the toolset's component identity and digest.
         name: string,
         /// A component targeting `cosmonic:agent/tool-provider@0.4.0`: it
         /// exports `tools`. An implementer may also accept a component
         /// exporting `cosmonic:agent/tools@0.3.0`, whose `list` cannot fail.
-        /// The implementer lists and dispatches across toolset workloads, so an
-        /// agent never carries a router of its own.
+        /// The implementer lists and dispatches across the toolset components
+        /// in the agent's workload, so an agent never carries a router of its
+        /// own.
         component: component-ref,
         /// What this toolset component may touch.
         grants: grants,
@@ -330,7 +332,8 @@ interface spawn-types {
     /// looping agent cannot bury the person in prompts (it gets `over-limit`).
     /// The caller is bound by its workload incarnation, not its name: a
     /// workload recreated under the same name is a different caller and
-    /// needs its own approval. Only a person, or policy a person wrote,
+    /// needs its own approval. A rollout to a new revision (as `load` does)
+    /// keeps the incarnation. Only a person, or policy a person wrote,
     /// decides; never a spawned agent.
     @unstable(feature = agent-spawn)
     record approval {
@@ -379,7 +382,7 @@ interface spawn-types {
         /// Memory the implementer reserves for the child.
         memory,
         /// Toolsets loaded into one agent at once. May clear when one is
-        /// dropped.
+        /// unloaded.
         loaded-toolsets,
         /// A scope not captured above.
         other(option<string>),

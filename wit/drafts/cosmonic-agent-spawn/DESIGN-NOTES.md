@@ -35,6 +35,18 @@ run as their own workload.
 
 ## What changed in this revision
 
+**2026-10-16, after standup: tools are components, and loading is a rollout.**
+Bailey's principle is that nothing is special: a tool is a component with the
+same boundary as any other, so a toolset joins the agent's own workload as a
+component rather than running as a workload of its own. Adding one to a running
+agent rolls the workload out to a new revision attached to the same session,
+invisible to the person and visible in the audit log. `tool-loading` changes to
+match: `loaded-toolset` is now a record (name and aliases) instead of a
+resource, since a rollout replaces the caller's instance and a handle would die
+with it; `unload(name)` and `loaded()` are added; the new revision serves the
+caller's next run. Open question (s) no longer applies to loading. The spike
+below still implements the earlier handle shape and follows later.
+
 1. **Confined spawn is dropped.** The `spawn-confined` interface, the
    `confined-spawn-client` world, and its sink, outcome and run types are gone from
    the WIT, the worlds and the spike. Why, and when to reopen it, is in
@@ -382,16 +394,18 @@ declarative. The package keeps all three.
   toolsets spawns a new child. Admission matches `spawn` (ceiling, approval
   digest over the caller and the `toolset-spec`), and policy may ask for
   approval even within the ceiling, since new code is new risk even when its
-  reach is not. The implementer starts the toolset as its own component and
-  offers its tools through the caller's existing `cosmonic:agent/tools`
-  import, so it must serve that import too; `tool-loading-provider` exports
-  both. `loaded-toolset.get-aliases` returns the aliases it assigned (see
-  "Tool naming: identity, alias, display"); they are stable for the toolset's
-  lifetime in the session. Dropping the handle unloads the toolset.
-- **No guest router.** The implementer lists and dispatches across toolset
-  workloads, as the spike's dispatcher does: each toolset runs as its own
-  workload with its own grants, and the agent's `tools` import is served by
-  the host.
+  reach is not. Loading is a rollout: the implementer rolls the caller's
+  workload out to a new revision that adds the toolset's component, attached
+  to the same session, and offers its tools through the caller's existing
+  `cosmonic:agent/tools` import from the next run on, so it must serve that
+  import too; `tool-loading-provider` exports both. `loaded-toolset` is a
+  record (name and aliases), not a handle, because the rollout replaces the
+  caller's instance; `unload(name)` is another rollout. The aliases are
+  stable for the session (see "Tool naming: identity, alias, display").
+- **No guest router.** The implementer lists and dispatches across the
+  toolset components in the agent's workload: each toolset is a component
+  with its own grants, not linked to the agent, and the agent's `tools`
+  import is served by the host.
 
 Spike coverage: `discovery_lists_against_the_callers_ceiling` registers five
 catalog entries and checks fits for a caller that reads `workspace` and reaches
@@ -907,7 +921,7 @@ minimal-agent 0.2.0, and may keep accepting toolsets that export 0.3.0
 both. Where the host cannot answer `list` for a 0.3.0 agent it returns an
 empty list, as before; a 0.4.0 agent gets `list-error`.
 
-**(s) Store-scoped handles, and reattaching.** For Bailey. A handle dies with
+**(s) Store-scoped handles, and reattaching.** For Bailey. (No longer applies to `tool-loading`, which has no handle since 2026-10-16; still open for spawn's `agent`.) A handle dies with
 its caller's store, and most callers get a fresh store per request, so a
 child or loaded toolset cannot outlive one request (the spike keeps handles
 in a warm instance). *Recommendation from the reviews (medium confidence):*

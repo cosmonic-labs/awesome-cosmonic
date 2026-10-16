@@ -132,7 +132,7 @@ let reviewer = Agent::new(pinned("ghcr.io/acme/agents/reviewer:1.2.0", "sha256:9
 
 // run = agent.run(message), drain progress for display, await the outcome
 let review: Review = reviewer.run(user("Start with the auth changes.")).await?.structured()?;
-drop(reviewer);           // ends the child and stops its workloads
+drop(reviewer);           // ends the child and stops its workload
 ```
 
 What the coder sees: contentless progress (`working`, `blocked`, step counts),
@@ -206,23 +206,33 @@ running agent's own toolsets is a separate power in a separate world.
 
 ```wit
 interface tool-loading {
-    resource loaded-toolset {
-        get-aliases: async func() -> list<string>;
-    }
+    record loaded-toolset { name: string, aliases: list<string> }
     load: async func(spec: toolset-spec) -> result<loaded-toolset, admission-error>;
+    unload: async func(name: string) -> result<_, admission-error>;
+    loaded: async func() -> list<loaded-toolset>;
 }
 ```
 
+Nothing is special: a loaded toolset is one more component in the agent's own
+workload, with its own grants. Loading is a rollout. The implementer rolls the
+agent's workload out to a new revision that adds the toolset's component,
+attached to the same session, and retires the old revision once everything in
+the new one is healthy. The person doesn't see it; the audit log does. The new
+revision serves the agent's next run, which the implementer may start at once
+from the session's journal, so the turn reads as continuous. Because the
+instance is replaced, nothing about a loaded toolset lives in the agent's
+memory: `loaded-toolset` is a record, not a handle.
+
 `load` follows the same admission as `spawn`: within the ceiling it may load at
 once, beyond it goes to a grantor, and policy may ask for approval anyway. The
-implementer starts the toolset as its own component and offers its tools
+implementer adds the toolset as a component and offers its tools
 through the caller's existing `cosmonic:agent/tools` import, so the agent never
 carries a router; that is why `tool-loading-provider` exports both
 `tool-loading` and `tools`. `get-aliases` returns the aliases its tools are
 offered under: their own names unless another toolset in the session already
 has one, and stable for the toolset's lifetime in the session (DESIGN-NOTES.md,
 "Tool naming: identity, alias, display").
-Dropping the handle unloads the toolset: its workload stops and its aliases
+`unload` removes it with another rollout; its aliases then
 answer `unknown-tool`, but stay reserved for the session. A spawned child never receives
 `tool-loading` in this version, and a parent cannot load a toolset into a child
 it spawned; it spawns a new child with different toolsets instead.
@@ -237,7 +247,7 @@ fails instead of disappearing. Its records come from the function-less
 accept toolsets exporting `cosmonic:agent/tools@0.3.0`, whose `list` cannot
 fail; the spike does, for the published per-tool components.
 
-Calls reach a toolset by its workload identity, never by a name. The agent
+Calls reach a toolset by its component identity and digest, never by a name. The agent
 sees aliases: a tool's own name first, `<toolset>__<tool>` only for a later
 colliding tool, never renamed. `toolset-spec.alias-prefix` lets the operator set
 a prefix instead (the empty string means the own names). People see the
