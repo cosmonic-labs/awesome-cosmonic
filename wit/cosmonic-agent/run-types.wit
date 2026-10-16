@@ -22,8 +22,8 @@ interface run-types {
     use wasi:clocks/types@0.3.0.{duration};
     @unstable(feature = agent-run)
     use inference-types.{
-        json, attachment, opaque-block, assistant-message, tool-result, usage,
-        request-error, generation-error,
+        json, attachment, opaque-block, assistant-message, user-message,
+        tool-result, usage, request-error, generation-error,
     };
 
     /// How to do one run. Construction is lenient; `run` validates and
@@ -78,6 +78,15 @@ interface run-types {
         assistant(assistant-message),
         /// The results of the tool calls in the assistant step before it.
         tool(list<tool-result>),
+        /// Reserved: a message from the person that the agent took in during
+        /// the run, such as a steering message, in the place it entered the
+        /// conversation. Never the message that started the run, which the
+        /// driver already has. No interface delivers such messages yet (a
+        /// future opt-in import will), so an agent does not send this case
+        /// today. A driver renders it as the person's own message, in the
+        /// conversation where it appears, attributed to the person and never
+        /// to the agent.
+        user(user-message),
         /// An error the agent recorded in the conversation, for a person to
         /// read. Diagnostic text, not for branching on. A run may continue
         /// after one, for example when listing tools failed.
