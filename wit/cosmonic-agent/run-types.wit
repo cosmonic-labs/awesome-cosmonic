@@ -59,7 +59,8 @@ interface run-types {
         max-total-tokens: option<u64>,
         /// Wall-clock time for this run, counted from acceptance: from when
         /// `run` returns ok, so time spent reading the session before the run
-        /// is accepted does not count. The agent stops starting model and
+        /// is accepted does not count. Time spent waiting on a person (a held
+        /// tool call, a question) does count. The agent stops starting model and
         /// tool calls once it passes, and finishes with `max-duration` and
         /// what it has. A driver keeps its own deadline a little past this
         /// one and cancels at it.

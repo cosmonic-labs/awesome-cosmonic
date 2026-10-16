@@ -23,6 +23,16 @@ package cosmonic:agent@0.4.0;
 /// too, as a backstop against two drivers on one session, and returns
 /// `busy`.
 ///
+/// People and approvals. An agent never receives, answers or enforces an
+/// approval. Approvals happen at the gates the host owns, tool dispatch and
+/// egress: a `tools.call` the host holds while it asks a person simply waits,
+/// then returns the tool's result, or `not-dispatched(denied)` when the person
+/// refuses. A question for the person is a tool the host may offer on the
+/// agent's `tools` import; when no one can answer during the run, the agent
+/// finishes `input-required`. Time spent waiting on a person counts toward
+/// `run-options.max-duration`, and a host caps each wait at what the run has
+/// left.
+///
 /// Journal. A run keeps the session conventions in `session`: the agent
 /// writes the person's message and every step as `agent.step.v1` entries, and
 /// each model or tool call between `agent.op.v1` and `agent.op-result.v1`.
@@ -58,9 +68,12 @@ interface run {
     /// events stream requests cancellation: the agent stops its model and tool
     /// calls, records each one as the session conventions say (cancelled, or
     /// unresolved when its effects are unknown), and resolves the outcome to
-    /// `cancelled` only once nothing of the run is still running. Dropping
-    /// the outcome future as well stops listening; the agent still winds the
-    /// run down and records it.
+    /// `cancelled` only once nothing of the run is still running. The host,
+    /// when it cancels a run, completes every pending call it serves for that
+    /// run (a held tool call, a question waiting on a person) with
+    /// `cancelled` right away, so the agent is not left waiting on them.
+    /// Dropping the outcome future as well stops listening; the agent still
+    /// winds the run down and records it.
     @unstable(feature = agent-run)
     run: async func(
         message: user-message,
