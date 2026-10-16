@@ -46,7 +46,7 @@ pub(crate) async fn answer(
     // pending, then `messages-done` says the conversation is complete.
     let (mut msg_tx, msg_rx) = wit_stream::new();
     let (done_tx, done_rx) = wit_future::new(|| Err("the agent stopped writing".to_string()));
-    wit_bindgen::spawn(async move {
+    wit_bindgen::spawn_local(async move {
         let unwritten = msg_tx.write_all(messages).await;
         drop(msg_tx);
         let verdict = if unwritten.is_empty() {
