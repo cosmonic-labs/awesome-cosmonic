@@ -1,0 +1,22 @@
+/// A typed run export for sandboxed agents. Not published; for discussion.
+/// See README.md.
+package cosmonic:agent@0.4.1;
+
+/// An agent that can be handed runs: the `agent` world plus the `run`
+/// export. A host drives it through the export, so it needs no ingress and
+/// no protocol of its own. The world a spawned child targets, too.
+@unstable(feature = agent-run)
+world runnable-agent {
+    include cosmonic:agent/agent@0.4.0;
+
+    export run;
+}
+
+/// The power to drive an agent's runs. Holds only this import. For a
+/// component that adapts another protocol onto an agent (an adapter that
+/// imports `run` and exports `wasi:http/handler` to serve `POST /task`), or a
+/// test double that plays the host.
+@unstable(feature = agent-run)
+world run-client {
+    import run;
+}
