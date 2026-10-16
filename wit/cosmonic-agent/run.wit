@@ -1,29 +1,37 @@
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.0;
 
 /// An agent may be handed runs. Exported by an agent and called by whatever
 /// drives it: a host (Cosmonic Desktop's daemon; a Cosmonic Control trigger
 /// that starts a run from an HTTP request or a message), the implementer of
 /// `spawn` for a spawned child, or a component that adapts another protocol
-/// onto it. Named after `wasi:cli/run`. Not published; for discussion.
+/// onto it. Named after `wasi:cli/run`. Unstable: a consumer enables the
+/// `agent-run` feature to see it.
 ///
 /// The agent needs no ingress: nothing but its driver can reach it. The
 /// session it works in is not named here. It is the agent's
 /// `cosmonic:agent/session` import, which the host binds to the workload, so
-/// a driver cannot point a run at a session by naming one.
+/// a driver cannot point a run at a session by naming one. One workload is
+/// one session.
+///
+/// One run at a time. The driver holds the lock: it serializes runs for the
+/// session and never calls `run` while one is in progress. The agent checks
+/// too, as a backstop against two drivers on one workload, and returns
+/// `busy`.
 ///
 /// Journal. A run keeps the session conventions in `session`: the agent
 /// writes the person's message and every step as `agent.step.v1` entries, and
 /// each model or tool call between `agent.op.v1` and `agent.op-result.v1`.
 /// It also writes `agent.run.v1` (`run`: the run id) in the commit that opens
-/// the run, with the person's message, and `agent.run-result.v1` (`run`, and
-/// `outcome`: done, failed or cancelled, with `finish` or the error case) in
-/// the commit that ends it. The events a run streams are a live view of what
-/// it commits; the journal is the record, and a reopened conversation is
-/// drawn from it.
+/// the run, with the person's message, using `run:<run-id>` as that commit's
+/// `commit-id`, and `agent.run-result.v1` (`run`, and `outcome`: done, failed
+/// or cancelled, with `finish` or the error case) in the commit that ends it.
+/// Each `agent.step.v1` the run writes carries `run` too. The events a run
+/// streams are a live view of what it commits; the journal is the record,
+/// and a reopened conversation is drawn from it.
 @unstable(feature = agent-run)
 interface run {
     @unstable(feature = agent-run)
-    use cosmonic:agent/inference-types@0.4.0.{user-message};
+    use inference-types.{user-message};
     @unstable(feature = agent-run)
     use run-types.{run-options, started-run, start-error};
 

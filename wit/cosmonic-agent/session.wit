@@ -32,6 +32,12 @@ package cosmonic:agent@0.4.0;
 ///   cancelled means it was not dispatched or a model call will repeat;
 ///   unresolved means its effects are unknown.
 /// - agent.context-reset.v1: {} when unreadable saved state requires fresh context.
+/// - agent.run.v1: run, the run id, in the commit that opens a run of the
+///   `run` interface, with the person's message; that commit's commit-id is
+///   run:<run-id>. An agent.step.v1 written by a run may carry run as well.
+/// - agent.run-result.v1: run, and outcome (done, failed, or cancelled) with
+///   finish or error, in the commit that ends the run. A run with
+///   agent.run.v1 and no agent.run-result.v1 was cut off.
 /// All agent.* kinds are reserved. Writers may define other kinds; readers
 /// skip those they do not understand.
 ///

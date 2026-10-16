@@ -1,7 +1,8 @@
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.0;
 
 /// Types for handing an agent runs: how to do one, what it streams while it
-/// works, and how it ends. Not published; for discussion. See README.md.
+/// works, and how it ends. Unstable: a consumer enables the `agent-run`
+/// feature to see these items.
 ///
 /// Function-less: importing it grants nothing. The power to start a run
 /// lives in `run`, which an agent exports.
@@ -20,7 +21,7 @@ interface run-types {
     @unstable(feature = agent-run)
     use wasi:clocks/types@0.3.0.{duration};
     @unstable(feature = agent-run)
-    use cosmonic:agent/inference-types@0.4.0.{
+    use inference-types.{
         json, attachment, opaque-block, assistant-message, tool-result, usage,
         request-error, generation-error,
     };
@@ -55,10 +56,12 @@ interface run-types {
         /// `max-total-tokens` once it is spent, so the call that crosses it
         /// may overshoot. Advisory, like `max-steps`.
         max-total-tokens: option<u64>,
-        /// Wall-clock time for this run, from when `run` was called. The
-        /// agent stops starting model and tool calls once it passes, and
-        /// finishes with `max-duration` and what it has. A driver keeps its
-        /// own deadline a little past this one and cancels at it.
+        /// Wall-clock time for this run, counted from acceptance: from when
+        /// `run` returns ok, so time spent reading the session before the run
+        /// is accepted does not count. The agent stops starting model and
+        /// tool calls once it passes, and finishes with `max-duration` and
+        /// what it has. A driver keeps its own deadline a little past this
+        /// one and cancels at it.
         max-duration: option<duration>,
         /// W3C traceparent of the driver's trace, for the agent to pass on in
         /// `request-meta.trace-parent` so its model calls join that trace.
