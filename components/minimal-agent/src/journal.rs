@@ -297,31 +297,40 @@ impl Journal {
     }
 
     /// Record the run's last entries and move the stored conversation forward
-    /// in the same atomic commit. Returns a note for the client when the run
-    /// could not be saved as intended.
+    /// in the same atomic commit.
     pub(crate) async fn save(
         &mut self,
         entries: Vec<NewEntry>,
         next: &Conversation,
         before: &Snapshot,
-    ) -> Option<String> {
+    ) -> Saved {
+        if self.stale {
+            return Saved::Stale;
+        }
         let require = match &before.state {
             Some(s) => StateCondition::Version(s.version.clone()),
             None => StateCondition::Absent,
         };
-        if !self.stale {
-            let state = Some(to_json(next));
-            match commit(entries.clone(), state, Some(require), Some(self.end)).await {
-                Ok(CommitResult::Committed(_)) => return None,
-                Ok(CommitResult::Stale(_)) => {}
-                Err(e) => return Some(format!("not saved: {}", e.describe())),
+        let state = Some(to_json(next));
+        match commit(entries, state, Some(require), Some(self.end)).await {
+            Ok(CommitResult::Committed(_)) => Saved::Done,
+            Ok(CommitResult::Stale(_)) => {
+                self.stale = true;
+                Saved::Stale
             }
+            Err(e) => Saved::Failed(format!("not saved: {}", e.describe())),
         }
-        // Another writer committed in between. This agent cannot merge two
-        // conversations, so it keeps theirs and leaves this run in the journal.
-        self.record(entries).await;
-        Some("another request changed the session; this run is journaled only".into())
     }
+}
+
+/// How the last commit of a run went.
+pub(crate) enum Saved {
+    Done,
+    /// Another writer committed in between. This agent cannot merge two
+    /// conversations, so it keeps theirs and leaves this run in the journal.
+    Stale,
+    /// The session refused the write.
+    Failed(String),
 }
 
 async fn commit(

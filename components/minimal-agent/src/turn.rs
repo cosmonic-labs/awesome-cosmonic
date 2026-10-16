@@ -15,7 +15,7 @@ use crate::conversation::{Conversation, StoredCall, Turn, to_messages};
 use crate::describe::Describe;
 use crate::journal::{
     Journal, OP_KIND, OP_RESULT_KIND, Op, OpResult, OpenError, RUN_KIND, RUN_RESULT_KIND,
-    RunEntry, RunResult, STEP_KIND, Step, entry, random_id, recover, step,
+    RunEntry, RunResult, STEP_KIND, Saved, Step, entry, random_id, recover, step,
 };
 use crate::model::{Answer, MODEL_ALIAS, answer, describe_failed, describe_refused, options, text_of};
 use crate::sink::{Counts, Sink};
@@ -155,7 +155,11 @@ impl Failure {
             Self::NoModel(d) | Self::NotRecorded(d) => d.clone(),
             Self::Refused(e) => describe_refused(e),
             Self::Generation(e) => describe_failed(e),
-            Self::Superseded => "another request is writing this session; retry".into(),
+            Self::Superseded => {
+                "another request changed this session during the run; the run is in the \
+                 journal, but the stored conversation is the other request's"
+                    .into()
+            }
             Self::OutputRejected(d) => format!("the reply did not match the schema: {d}"),
         }
     }
@@ -479,8 +483,22 @@ async fn conclude(
         error: None,
     };
     let entries = vec![entry(STEP_KIND, &answer), entry(RUN_RESULT_KIND, &result)];
-    if let Some(note) = acc.journal.save(entries, &next, &acc.snapshot).await {
-        return Err(Failure::NotRecorded(note));
-    }
-    Ok(finished)
+    let failure = match acc.journal.save(entries, &next, &acc.snapshot).await {
+        Saved::Done => return Ok(finished),
+        // The reply is kept in the journal; the stored conversation is the
+        // other writer's.
+        Saved::Stale => Failure::Superseded,
+        Saved::Failed(note) => Failure::NotRecorded(note),
+    };
+    // The run did not end as `done`, so the journal must not say it did.
+    let result = RunResult {
+        run,
+        outcome: "failed",
+        finish: None,
+        error: Some(failure.case()),
+    };
+    acc.journal
+        .record(vec![entry(STEP_KIND, &answer), entry(RUN_RESULT_KIND, &result)])
+        .await;
+    Err(failure)
 }
