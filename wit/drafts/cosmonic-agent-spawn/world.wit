@@ -32,15 +32,6 @@ world harness {
     include tool-loading-client;
 }
 
-/// An agent that can be handed runs in process: the world a spawned child
-/// targets.
-@unstable(feature = agent-spawn)
-world runnable-agent {
-    include cosmonic:agent/agent@0.4.0;
-
-    export run;
-}
-
 /// An implementer of `spawn`, such as a native plugin or a test double.
 @unstable(feature = agent-spawn)
 world spawn-provider {

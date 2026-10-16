@@ -53,10 +53,14 @@ when the interfaces join the real package the dependency disappears.
 | `tool-discovery-client` | `tool-discovery` | none | The power to see the catalog |
 | `tool-loading-client` | `tool-loading` | none | The power to change one's own toolsets |
 | `harness` | `cosmonic:agent/agent@0.3.0`, `spawn-client`, `tool-discovery-client`, `tool-loading-client` | none | A top-level harness agent with every power |
-| `runnable-agent` | `cosmonic:agent/agent@0.3.0` | `run` | Any agent that can be spawned |
 | `spawn-provider` | none | `spawn` | The host plugin, or a test double |
 | `tool-discovery-provider` | none | `tool-discovery` | An implementer of discovery |
 | `tool-loading-provider` | none | `tool-loading`, `cosmonic:agent/tools@0.3.0` | An implementer of loading, which must also serve the caller's `tools` import |
+
+A spawned child targets `cosmonic:agent/runnable-agent@0.4.0`: the `agent`
+world plus an export of `cosmonic:agent/run@0.4.0`, the same typed export a
+host drives a top-level agent through. It lives in the 0.4.0 package (unstable,
+feature `agent-run`), not here; this package only depends on it.
 
 The three capability worlds (`spawn-client`, `tool-discovery-client`, `tool-loading-client`) hold
 only their own import; none includes the agent world or another capability. An
@@ -67,7 +71,7 @@ itself be spawned:
 package acme:coder@1.0.0;
 
 world coder {
-    include cosmonic:agent/runnable-agent@0.5.0;   // includes cosmonic:agent/agent
+    include cosmonic:agent/runnable-agent@0.4.0;   // includes cosmonic:agent/agent
     include cosmonic:agent/spawn-client@0.5.0;
 }
 ```
@@ -99,11 +103,14 @@ interface spawn {
 
 // in `spawn-types`
 type started-run = tuple<stream<progress>, future<result<run-outcome, run-error>>>;
+
+// shared, in `cosmonic:agent/run-types@0.4.0`
 record run-outcome {
     reply: list<reply-part>,
     structured: option<json>,
     counts: run-counts,
     finish: finish,
+    model: option<served-model>,
 }
 ```
 
@@ -242,7 +249,6 @@ tool's `title` and the toolset's name.
 | --- | --- |
 | [`spawn-types.wit`](spawn-types.wit) | `spawn-types`: the contract (caller, reach, ceiling, attenuation, authorship) and every shared record |
 | [`spawn.wit`](spawn.wit) | `spawn` and the `agent` resource |
-| [`run.wit`](run.wit) | `run`, the export a spawned child provides, named after `wasi:cli/run` |
 | [`tool-discovery.wit`](tool-discovery.wit) | `tool-discovery` |
 | [`tool-loading.wit`](tool-loading.wit) | `tool-loading` |
 | [`world.wit`](world.wit) | The worlds above |
@@ -252,8 +258,9 @@ package directory will once these interfaces move there.
 
 ## Build locally
 
-The draft depends on `cosmonic:agent@0.4.0` (#71 with the tools fold), which
-is not published yet, so `wkg.toml` resolves it from `wit/cosmonic-agent` in
+The draft depends on `cosmonic:agent@0.4.0` (#71 with the tools fold and the
+unstable `run` export, whose `run-types` this package uses), which is not
+published yet, so `wkg.toml` resolves it from `wit/cosmonic-agent` in
 this repository and `wkg.lock` pins only `wasi:clocks`:
 
 ```sh

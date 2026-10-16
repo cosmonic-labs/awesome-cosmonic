@@ -27,8 +27,8 @@ WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit fetch .
 WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit build -d . -o /tmp/agent-spawn.wasm
 ```
 
-A native wash-runtime plugin implements the interfaces in a local spike
-(`~/cosmonic/probes/spawn-spike`, not published): `spawn` and
+A native wash-runtime plugin implements the interfaces in a spike that is
+not published: `spawn` and
 `tool-discovery.list` and `tool-loading.load` work end to end, and a
 host-side dispatcher serves agents' `tools` imports from toolsets that each
 run as their own workload.
@@ -64,8 +64,9 @@ run as their own workload.
    `tool-discovery-client` and `tool-loading-client` each hold only their own
    import and include neither `cosmonic:agent/agent` nor each other, so each
    is exactly one grant; an agent writes `include agent; include spawn-client;`. `harness`
-   includes the agent world and all three. `runnable-agent` is the world a
-   spawned child targets. A toolset targets the package's own
+   includes the agent world and all three. A spawned child targets
+   `cosmonic:agent/runnable-agent@0.4.0`, which moved to the 0.4.0 package
+   with the `run` export. A toolset targets the package's own
    `tool-provider@0.4.0` world, which exports `tools`. The
    implementer worlds are `spawn-provider`, `tool-discovery-provider` and
    `tool-loading-provider`; the last also exports `cosmonic:agent/tools`,
@@ -164,13 +165,15 @@ Second pass, the should-fix items:
   `other`), from the fold. A read has no effects to be unsure of, so
   `call-error`, which #71 turns into `not-dispatched` and `outcome-unknown`,
   does not fit it.
-- **The child's export is `run`**, after `wasi:cli/run`. The world keeps the
-  name `runnable-agent`: "a runnable agent exports `run`" reads right, and
-  renaming the world to `run-agent` would read as a verb.
+- **The child's export is `run`**, after `wasi:cli/run`, now
+  `cosmonic:agent/run@0.4.0`. The world keeps the name `runnable-agent`: "a
+  runnable agent exports `run`" reads right, and renaming the world to
+  `run-agent` would read as a verb.
 - **The child's `run` returns `result<started-run, start-error>`**, symmetric
   with `agent.run`, so a child can refuse (`busy`, `invalid-input`) without
-  starting. `start-error` moved to `spawn-types` so both share it, and gained
-  `invalid-input(string)` for a message or options that cannot be taken.
+  starting. (Superseded: the export's `start-error` is now
+  `run-types.start-error`, and `spawn-types.start-error` is the parent's
+  own; see [Runs](#runs-the-childs-run-export).)
 - **`decision.denied`**, not `refused`, matching `access-denied` and 0.3.0's
   `denied`.
 - **The agent component gets full `grants`**, like a toolset (was hosts only).
@@ -250,21 +253,54 @@ definition. The WIT states them on `spawn-types`.
   caller and needs its own approval; namespace, name and component name are
   display metadata. Policy wrappers are host-installed.
 
-## Runs: the `runnable-agent` world
+## Runs: the child's `run` export
 
 `agent.run` needs a way to hand the child work. The 0.3.0 `agent` world only
 imports, so without an export an implementer has to speak each agent's own HTTP
 protocol through an ingress. The spike does exactly that with minimal-agent, and
 the bridge drops the instructions, attachments and output schema, leaves the
-child reachable on the ingress, and cannot pass `max-steps`. The package adds
-`run`, an export named after `wasi:cli/run`, with
-`run(message, options) -> result<started-run, start-error>`, and a
-`runnable-agent` world (`agent` plus `export run`) that spawned children
-target. The child can refuse a run without starting it, exactly as `agent.run`
-can refuse its caller. It is additive. Cancelling a run means the agent stops
-its calls before the outcome resolves to `cancelled`, which is what lets
-`agent.run` promise that two runs never overlap inside the child. The spike
-does not call the export yet, because minimal-agent does not have it.
+child reachable on the ingress, and cannot pass `max-steps`.
+
+An earlier revision of this draft added its own `run` export. It now depends
+on `cosmonic:agent/run@0.4.0` instead (unstable, feature `agent-run`): the
+typed export a host drives any agent through, with
+`run(message, options) -> result<started-run, start-error>`. A spawned child
+targets `cosmonic:agent/runnable-agent@0.4.0`. One export serves both kinds of
+driver, a host for a top-level session and this package's implementer for a
+child, so an agent implements it once.
+
+**The parent's view stays narrow.** The export streams rich events (text
+deltas, whole steps with tool arguments and results) so a person can watch a
+top-level agent work. The rule here is that nothing child-authored reaches
+the parent except the final reply, and the parent's types enforce it: the
+parent receives `spawn-types.progress` (`working`, `blocked`, `counts`), never
+the export's `run-event`. So:
+
+- **Shared where identical.** `run-outcome`, `run-counts`, `finish`,
+  `reply-part` and `served-model` come from `cosmonic:agent/run-types@0.4.0`.
+  The implementer authors `finish` from the budget and fills `model` from its
+  own metering.
+- **Spawn's own where it differs.** `progress` and `started-run` (contentless
+  stream); `start-error`, which adds `exhausted` and `failed` (only an
+  implementer holding a budget knows them) and never says `duplicate`;
+  `run-error`, which adds `withheld` and `unavailable` and folds the child's
+  typed cases (model errors, `not-recorded`, `superseded`) into an
+  implementer-authored `failed`.
+- **The implementer maps one to the other.** It mints the child's `run-id`,
+  turns the lifetime budget into per-run options (remaining tokens become
+  `max-total-tokens`, remaining time `max-duration`, `budget.max-steps`
+  becomes `max-steps`), reads the child's events to emit `working` and
+  `counts`, discards deltas and steps, replaces error details with its own,
+  and checks the outcome against `output.schema` and `max-bytes`.
+- **The implementer buffers.** The export follows `chat`'s backpressure: the
+  child may wait on a slow event reader. The implementer is that reader, and
+  it reads promptly and coalesces, so a parent that never drains `progress`
+  never blocks the child, and the child never blocks the parent.
+
+Cancelling a run means the agent stops its calls before the outcome resolves
+to `cancelled`, which is what lets `agent.run` promise that two runs never
+overlap inside the child. A person who wants to watch a child work does it in
+the host's own view of the child's session, never through the parent.
 
 ## Naming the unit of work: "run", not "turn" or "prompt"
 

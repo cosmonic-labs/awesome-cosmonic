@@ -3,8 +3,17 @@ package cosmonic:agent@0.5.0;
 /// Types shared by the spawn and tool interfaces added in this version of
 /// `cosmonic:agent`. Not published; for discussion. See README.md and
 /// DESIGN-NOTES.md. The version is the next one after 0.4.0 (PR #71, with the
-/// tools fold); this file depends on 0.4.0 for messages, usage and tool
-/// types.
+/// tools fold and the `run` export); this file depends on 0.4.0 for messages,
+/// tool types, and the records a run ends with (`run-types`).
+///
+/// A spawned child is driven through its `cosmonic:agent/run@0.4.0` export,
+/// the same interface a host drives a top-level agent through. The parent
+/// never sees that export's rich events. It sees the narrowed view here:
+/// contentless `progress`, its own `start-error` and `run-error`, and the
+/// shared `run-outcome`. The implementer calls the child's export, mints the
+/// child's run id, turns the budget into per-run options, discards deltas and
+/// steps, replaces the child's error details with its own, and buffers events
+/// so a parent is never blocked.
 ///
 /// Importing this interface grants nothing. The powers live in `spawn`,
 /// `tool-discovery` and `tool-loading`, each a separate import so a world
@@ -98,7 +107,9 @@ interface spawn-types {
     @unstable(feature = agent-spawn)
     use wasi:clocks/types@0.3.0.{duration};
     @unstable(feature = agent-spawn)
-    use cosmonic:agent/inference-types@0.4.0.{json, attachment, opaque-block, usage};
+    use cosmonic:agent/inference-types@0.4.0.{json};
+    @unstable(feature = agent-spawn)
+    use cosmonic:agent/run-types@0.4.0.{run-outcome, run-counts};
 
     /// A component image pinned by content digest, so a moving tag cannot
     /// change what was approved.
@@ -260,8 +271,8 @@ interface spawn-types {
     /// validates and returns `invalid-request`.
     @unstable(feature = agent-spawn)
     record spawn-request {
-        /// A component targeting the `runnable-agent` world, so the
-        /// implementer can hand it runs in process.
+        /// A component targeting `cosmonic:agent/runnable-agent@0.4.0` (it
+        /// exports `run`), so the implementer can hand it runs in process.
         agent: component-ref,
         /// A model alias, as `models.open` takes it. Resolved against the
         /// aliases the caller's spawn grant delegates, since a caller that
@@ -409,58 +420,13 @@ interface spawn-types {
         other(option<string>),
     }
 
-    /// A final reply part. No tool use, reasoning, or continuation data.
-    @unstable(feature = agent-spawn)
-    variant reply-part {
-        /// Reply text.
-        text(string),
-        /// An attachment the child produced.
-        attachment(attachment),
-        /// A provider-specific block passed through unchanged, as 0.4.0's
-        /// `opaque-block` carries it.
-        opaque(opaque-block),
-        /// A part kind not captured above. Treat as unknown.
-        other(option<string>),
-    }
-
-    /// Why a run ended. Implementer-authored.
-    @unstable(feature = agent-spawn)
-    variant finish {
-        /// The agent ended its reply.
-        done,
-        /// `budget.max-steps` was reached in this run.
-        max-steps,
-        /// `budget.max-total-tokens` was reached.
-        max-total-tokens,
-        /// `budget.max-duration` passed.
-        max-duration,
-        /// A reason not captured above.
-        other(option<string>),
-    }
-
-    /// Counters for one run.
-    @unstable(feature = agent-spawn)
-    record run-counts {
-        /// Model calls made.
-        steps: u32,
-        /// Tool calls made.
-        tool-calls: u32,
-        /// Token usage. None in a field means unreported.
-        usage: usage,
-    }
-
-    /// The result of one run: the final reply and what it cost.
-    @unstable(feature = agent-spawn)
-    record run-outcome {
-        /// Final reply parts, in order.
-        reply: list<reply-part>,
-        /// Satisfies `output.schema`; present only when one was set.
-        structured: option<json>,
-        /// What the run cost.
-        counts: run-counts,
-        /// Why the run ended.
-        finish: finish,
-    }
+    // The records a run ends with (`run-outcome`, `run-counts`, `finish`,
+    // `reply-part`, `served-model`) are the shared ones in
+    // `cosmonic:agent/run-types@0.4.0`. In a spawned child's outcome, the
+    // implementer authors `finish` from its budget (`max-steps` is
+    // `budget.max-steps`, `max-total-tokens` and `max-duration` the
+    // lifetime budget) and fills `model` from its own metering, and every
+    // count it does not meter is only as honest as the child.
 
     /// Why a run is paused. Implementer-authored.
     @unstable(feature = agent-spawn)
@@ -504,7 +470,10 @@ interface spawn-types {
     }
 
     /// Why a run did not start. In every case nothing reached the agent.
-    /// Returned by `agent.run` and by an agent's own `run` export.
+    /// Returned by `agent.run`. Not the `run` export's own `start-error`:
+    /// this one adds what only an implementer that holds a budget can know
+    /// (`exhausted`, `failed`), and never says `duplicate`, since the
+    /// implementer mints the child's run ids.
     @unstable(feature = agent-spawn)
     variant start-error {
         /// A run is already in progress. One run at a time.
@@ -525,7 +494,11 @@ interface spawn-types {
     }
 
     /// Why a run failed after it started. Detail strings are
-    /// implementer-authored, never the child's, and diagnostic only.
+    /// implementer-authored, never the child's, and diagnostic only. Not the
+    /// `run` export's own `run-error`: the child's typed cases (model errors,
+    /// `not-recorded`, `superseded`) are child-authored and reach the parent
+    /// only as `failed`, and `withheld` and `unavailable` are the
+    /// implementer's.
     @unstable(feature = agent-spawn)
     variant run-error {
         /// The caller dropped the progress stream or the agent. Cancellation
@@ -544,8 +517,9 @@ interface spawn-types {
         other(option<string>),
     }
 
-    /// A run that has started: progress frames, then the outcome. The stream closes before the
-    /// outcome resolves; a closed stream alone does not mean success. The
+    /// A run that has started: progress frames, then the outcome. Not the
+    /// `run` export's `started-run`, whose stream carries the child's text and
+    /// steps. The stream closes before the outcome resolves; a closed stream alone does not mean success. The
     /// outcome can be awaited without draining the stream. Dropping the
     /// stream requests cancellation; an outcome already recorded wins the
     /// race, so a cancelled run may still resolve to its outcome.
