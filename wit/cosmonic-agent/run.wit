@@ -9,13 +9,18 @@ package cosmonic:agent@0.4.0;
 ///
 /// The agent needs no ingress: nothing but its driver can reach it. The
 /// session it works in is not named here. It is the agent's
-/// `cosmonic:agent/session` import, which the host binds to the workload, so
-/// a driver cannot point a run at a session by naming one. One workload is
-/// one session.
+/// `cosmonic:agent/session` import. The host chooses the session a run works
+/// in and binds it to the caller; a run never names one, so a driver cannot
+/// point a run at a session by naming it. A host may give each workload one
+/// session, or bind a session per conversation.
+///
+/// An agent must not rely on in-memory state surviving between runs: the
+/// next run may be served by another instance, or bound to another session.
+/// Everything it needs to continue is in its session.
 ///
 /// One run at a time. The driver holds the lock: it serializes runs for the
 /// session and never calls `run` while one is in progress. The agent checks
-/// too, as a backstop against two drivers on one workload, and returns
+/// too, as a backstop against two drivers on one session, and returns
 /// `busy`.
 ///
 /// Journal. A run keeps the session conventions in `session`: the agent
