@@ -261,14 +261,6 @@ interface run-types {
         other(option<string>),
     }
 
-    /// What a run streams while it works. Named so bindings can name it.
-    @unstable(feature = agent-run)
-    type run-events = stream<run-event>;
-
-    /// How a run ends: its outcome, or why it failed after it started.
-    @unstable(feature = agent-run)
-    type run-result = future<result<run-outcome, run-error>>;
-
     /// A run that has started: events, then the outcome. The stream closes
     /// before the outcome resolves; a closed stream alone does not mean
     /// success. Drain events before awaiting the outcome: the agent may wait
@@ -277,5 +269,5 @@ interface run-types {
     /// and discards the events. An outcome already recorded wins the race,
     /// so a cancelled run may still resolve to its outcome.
     @unstable(feature = agent-run)
-    type started-run = tuple<run-events, run-result>;
+    type started-run = tuple<stream<run-event>, future<result<run-outcome, run-error>>>;
 }
