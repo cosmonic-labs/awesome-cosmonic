@@ -148,6 +148,18 @@ interface run-types {
     variant finish {
         /// The agent ended its reply.
         done,
+        /// The agent stopped because it needs something only a person can
+        /// give (an answer, a choice, a decision) and no one could answer
+        /// during the run: the host offered no way to ask, or the person did
+        /// not answer in time. `reply` says what is needed, in the agent's own
+        /// words; a driver shows it as the agent's text, never as host UI.
+        /// The answer starts the next run, as its message, and the journal
+        /// tells the agent where it left off. An agent uses it only when it
+        /// cannot go on without the answer; one that can go on with a stated
+        /// assumption does so and finishes `done`. Agent-reported, so a driver
+        /// uses it to route the outcome (to a person, a ticket, an A2A
+        /// `input-required` task) and never to grant anything.
+        input-required,
         /// `run-options.max-steps` was reached.
         max-steps,
         /// `run-options.max-total-tokens` was spent.

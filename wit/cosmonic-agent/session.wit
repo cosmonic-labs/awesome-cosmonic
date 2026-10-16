@@ -36,8 +36,9 @@ package cosmonic:agent@0.4.0;
 ///   `run` interface, with the person's message; that commit's commit-id is
 ///   run:<run-id>. An agent.step.v1 written by a run may carry run as well.
 /// - agent.run-result.v1: run, and outcome (done, failed, or cancelled) with
-///   finish or error, in the commit that ends the run. A run with
-///   agent.run.v1 and no agent.run-result.v1 was cut off.
+///   finish or error, in the commit that ends the run. finish input-required
+///   means the run stopped for a person's answer, which starts the next run.
+///   A run with agent.run.v1 and no agent.run-result.v1 was cut off.
 /// All agent.* kinds are reserved. Writers may define other kinds; readers
 /// skip those they do not understand.
 ///
