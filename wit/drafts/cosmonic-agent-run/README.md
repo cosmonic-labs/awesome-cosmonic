@@ -232,6 +232,12 @@ is still running. That last rule is what lets `busy` promise two runs never
 overlap. An outcome already recorded wins the race. Dropping the outcome future
 as well only stops listening; the agent still winds down and records the run.
 
+An agent learns the stream was dropped when its next write to it fails. While
+the model streams that is within milliseconds; while a tool call is pending it
+is when the call returns. A driver that cannot wait that long cancels the
+call itself after a grace period, as Desktop's spike does, at the cost of the
+instance (see [Spike results](#spike-results)).
+
 A driver that wants only the outcome still reads and discards events, because
 dropping the stream means "stop". Events follow `chat`'s backpressure rule:
 drain them before awaiting the outcome, and the agent may wait on a slow
@@ -241,12 +247,15 @@ reader.
 
 `busy` is enforced in two places. The **driver** is the authority
 (decision 7): Desktop already refuses a second turn per session in its relay,
-and the daemon takes that over. The **agent** checks too, as defence against two drivers on one
-workload (an HTTP adapter and a NATS trigger, say). Its check is in memory,
-which is exact while the workload keeps one warm instance (Desktop's
-`poolSize: 1`), and is backed by the session's conditional commits otherwise:
-a second run that slips past loses its next commit as `stale`, and the first
-run stops as `superseded`, which is today's behavior.
+and the daemon takes that over. The host's lock has to cover every path into
+a session, not only the typed one. The **agent** checks too, as defence
+against two drivers on one workload (an HTTP adapter and a NATS trigger, say).
+Its check is in memory, so it only sees runs on its own instance. A warm pool
+of one does not cap a workload at one instance: the spike found that while a
+run holds the warm instance, a request on the agent's ingress is served by a
+second one. The session's conditional commits are what catch that: a second
+run that slips past loses its next commit as `stale`, and both runs end
+`superseded`, with every step kept in the journal.
 
 ### Limits
 
@@ -530,20 +539,25 @@ older Desktops age out.
 
 ### Minimal agent (first, in awesome-cosmonic)
 
-- [ ] Port to `cosmonic:agent@0.4.0` and target `runnable-agent` plus the
-      `wasi:http/handler` export.
-- [ ] Factor the turn into `run(message, options)`: commit the person's
+The spike did the items marked done, on a branch that is not merged.
+
+- [x] Export `run@0.4.0` beside the `wasi:http/handler` export. Model, chat
+      and session stay at 0.3.0 until Desktop serves 0.4.0; tools are 0.4.0.
+- [x] Factor the turn into `run(message, options)`: commit the person's
       message and `agent.run.v1` (commit id `run:<run-id>`), then return the
       stream and future; refuse with `busy`, `duplicate` or `invalid-input`
       before writing anything.
-- [ ] Stream `text-delta`, `step` (with `seq` when committed first) and
+- [x] Stream `text-delta`, `step` (with `seq` when committed first) and
       `counts`; write `agent.run-result.v1` before resolving the outcome.
-- [ ] Honor `instructions`, `schema`, `max-steps`, `max-total-tokens`,
-      `max-duration`, `trace-parent`.
-- [ ] Cancellation: when a write to the events stream fails because the reader
+- [x] Honor `instructions`, `schema` (asked for, and checked to be JSON),
+      `max-steps`, `max-total-tokens`, `max-duration`, `trace-parent`.
+- [x] Cancellation: when a write to the events stream fails because the reader
       is gone, drop the chunk stream, record the op as cancelled, resolve
       `cancelled`.
-- [ ] Make `POST /task` the adapter over `run`, as the shared helper crate.
+- [x] Make `POST /task` the adapter over the same run, inside the agent (the
+      transition form; decision 8 moves it to the host).
+- [ ] Target `runnable-agent` once Desktop serves 0.4.0 inference and
+      session.
 - [ ] A test double that plays the host: a Wasmtime test calling the export,
       or a `run-client` component.
 
@@ -566,20 +580,84 @@ older Desktops age out.
 
 ### Desktop
 
-- [ ] Inspect detects the `cosmonic:agent/run` export; the allowlist accepts
+The spike did the items marked done, behind a flag.
+
+- [x] Inspect detects the `cosmonic:agent/run` export; the allowlist accepts
       it alone or with `wasi:http/handler`.
-- [ ] Daemon: the run plugin, the long-lived `GuestCall`, the per-session
+- [x] Daemon: the run plugin, the long-lived `GuestCall`, the per-session
       guard, and the `runs` route.
-- [ ] Main: `agents:task` uses the daemon route for agents with the export
-      and `agentRelay.js` otherwise.
-- [ ] Renderer: no change while the route emits today's lines; then accept
+- [x] Main: `agents:task` uses the daemon route for agents with the export
+      and the ingress otherwise.
+- [x] Renderer: no change while the route emits today's lines; then accept
       typed events (reasoning, tool arguments, typed errors) when wanted.
+- [ ] The host's lock also gates the ingress path, or the `POST /task`
+      adapter moves into the daemon.
+- [ ] Serve 0.4.0 inference and session, so agents can target
+      `runnable-agent` whole.
 - [ ] Readiness from workload state for agents with the export.
-- [ ] Manifest: the `run` host interface entry; the `wasi:http/handler` entry
-      only for agents without the export.
+- [ ] Manifest: the `run` host interface entry, and the 0.4.0 `tools` entry,
+      for agents that have them; the `wasi:http/handler` entry only for agents
+      without the export.
 - [ ] Docs: the agent protocol page gains the typed export and marks HTTP as
       the compatibility path.
 - [ ] After a release or two, drop the HTTP path for Desktop's own agents.
+
+## Spike results
+
+A spike on a branch of the minimal agent, and of Cosmonic Desktop behind a
+flag, exercised the contract end to end against a local model. Desktop's
+daemon gained a run plugin that drives the export through wash-runtime's
+plugin-initiated dispatch, holds the one-run lock, and serves a route on its
+control socket that streams today's NDJSON lines, so the app's renderer did
+not change. The app's relay uses that route when the agent exports `run` and
+the ingress otherwise.
+
+What worked as designed:
+
+- A run with a tool call streamed text deltas and whole steps (tool call with
+  its arguments, tool result) and resolved to an outcome with counts and the
+  served model. The journal held `agent.run.v1` in the opening commit, the
+  `run` field on every step, and `agent.run-result.v1` before the outcome.
+- A repeated run id was refused as `duplicate` from the session's commit-id
+  ledger: the returned journal end is not past the end the run read, which
+  tells a retained commit from a fresh one without reading the journal.
+- A second run while one was in progress was refused as `busy` by the host
+  without reaching the agent.
+- Stopping a run, by closing the route's response or by an explicit stop,
+  dropped the event stream; the agent recorded the model call as cancelled,
+  wrote its run result, and resolved `cancelled`. The next run was accepted
+  about 25 ms later.
+- Agents without the export (Goose, Pi) were refused as not runnable before
+  anything ran, and their ingress path kept working.
+- Importing `chat`, `models` and `session` at 0.3.0 while exporting `run` at
+  0.4.0 works: the component model treats the two versions as separate
+  interfaces, and the agent converts message types at the edges. The host
+  links the export's function-less type imports (`run-types`, the 0.4.0
+  `inference-types`, `wasi:clocks/types`) as empty instances.
+- Under backpressure the host reserves room before it takes an event, so the
+  agent waits on a slow reader instead of the host buffering without bound.
+
+What the spike changed or found:
+
+- **Cancellation is seen at the next write.** See
+  [Cancellation](#cancellation). The host's forced cancel after a grace period
+  covers a run stuck in a long tool call. A way for a writer to wait for its
+  reader to go away, without writing, would close the gap; nothing in this
+  WIT depends on it.
+- **The agent's lock does not span instances**, and the host's lock must
+  cover the ingress too. See [One run at a time](#one-run-at-a-time). Moving
+  the `POST /task` adapter into the host (decision 8) removes the second path.
+- **A run whose last commit lost the race must not record `done`.** The first
+  cut fell back to recording its last entries unconditionally, run result
+  included, while it resolved `superseded`. The fallback now writes a failed
+  run result naming the error.
+- **The commit-id ledger is bounded.** A run id older than what the session
+  retains is not recognized as a duplicate. A driver that redelivers very old
+  events needs its own dedupe, or the agent can scan the journal for
+  `agent.run.v1`.
+- **Unpublished packages are vendored.** `wkg` overrides name a package, not a
+  version, so a component that imports 0.3.0 from the registry and 0.4.0 from
+  a path vendors 0.4.0 until it publishes.
 
 ## Choices made, and the alternatives
 
