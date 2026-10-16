@@ -113,7 +113,7 @@ pub(crate) fn error_response(status: u16, error: &str) -> Response {
 
 pub(crate) fn respond(status: u16, content_type: &str, bytes: Vec<u8>) -> Response {
     let (response, mut body) = streaming(status, content_type);
-    wit_bindgen::spawn(async move {
+    wit_bindgen::spawn_local(async move {
         let _ = body.write_all(bytes).await;
     });
     response

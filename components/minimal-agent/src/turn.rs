@@ -60,7 +60,7 @@ pub(crate) async fn run_task(request: Request) -> Response {
 
     // Return the response now and write its lines as the turn happens.
     let (response, body) = streaming(200, "application/x-ndjson");
-    wit_bindgen::spawn(turn(body, task, conversation, snapshot, journal));
+    wit_bindgen::spawn_local(turn(body, task, conversation, snapshot, journal));
     response
 }
 
