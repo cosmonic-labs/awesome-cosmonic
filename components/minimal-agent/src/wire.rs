@@ -1,9 +1,14 @@
-//! The HTTP side: request parsing, response bodies, and the NDJSON lines a
-//! `/task` response streams.
+//! The HTTP side: `POST /task` as an adapter over a run, request parsing,
+//! response bodies, and the NDJSON lines a `/task` response streams. Kept for
+//! hosts that do not call the typed `run` export yet.
 
-use crate::bindings::cosmonic::agent::session;
+use crate::a3::inference_types::{UserMessage, UserPart};
+use crate::a3::session;
 use crate::describe::Describe;
-use crate::journal::Step;
+use crate::journal::{Step, random_id};
+use crate::model::MODEL_ALIAS;
+use crate::sink::Lines;
+use crate::turn::{self, DEFAULT_MAX_STEPS, Request as RunRequest, StartError};
 use serde::{Deserialize, Serialize};
 use wasip3::http::types::{ErrorCode, Fields, Request, Response};
 use wasip3::wit_bindgen::{StreamResult, StreamWriter};
@@ -53,6 +58,71 @@ struct ErrorBody<'a> {
 #[derive(Deserialize)]
 struct TaskRequest {
     task: String,
+}
+
+/// A `/task` turn's wall-clock bound, as the Desktop relay has it.
+const TASK_DURATION_NS: u64 = 10 * 60 * 1_000_000_000;
+
+/// `POST /task`: check the request, open a run, and stream its lines.
+pub(crate) async fn task(request: Request) -> Response {
+    if request.get_headers().get(SESSION_HEADER).is_empty() {
+        return error_response(403, &format!("missing {SESSION_HEADER} header"));
+    }
+    let task = match read_body(request).await.ok().and_then(|b| parse_task(&b)) {
+        Some(task) => task,
+        None => return error_response(400, USAGE),
+    };
+    let req = RunRequest {
+        run_id: random_id(),
+        message: UserMessage {
+            content: vec![UserPart::Text(task.clone())],
+            name: None,
+        },
+        text: task,
+        instructions: None,
+        schema: None,
+        max_steps: DEFAULT_MAX_STEPS,
+        max_total_tokens: None,
+        max_duration: Some(TASK_DURATION_NS),
+        trace_parent: None,
+    };
+    let accepted = match turn::accept(&req).await {
+        Ok(accepted) => accepted,
+        Err(StartError::Busy) => {
+            return error_response(409, "another request is writing this session; retry");
+        }
+        // A fresh id never repeats.
+        Err(StartError::Duplicate) => return error_response(409, "this run already started"),
+        Err(StartError::Unavailable(e)) => return error_response(500, &e),
+    };
+
+    // Return the response now and write its lines as the run happens.
+    let (response, body) = streaming(200, "application/x-ndjson");
+    wit_bindgen::spawn_local(async move {
+        let mut lines = Lines(body);
+        match turn::run(&mut lines, &req, accepted).await {
+            Ok(f) => {
+                let done = Line::Done {
+                    context_messages: f.context_messages,
+                    answer: &f.answer,
+                    turns: f.counts.steps,
+                    input_tokens: f.counts.usage.prompt.unwrap_or(0),
+                    output_tokens: f.counts.usage.completion.unwrap_or(0),
+                    model: ModelInfo {
+                        alias: MODEL_ALIAS,
+                        provider: "cosmonic",
+                        resolved: Some(f.resolved.as_str()).filter(|m| !m.is_empty()),
+                    },
+                };
+                send(&mut lines.0, &done).await;
+            }
+            Err(failure) => {
+                let error = failure.describe();
+                send(&mut lines.0, &Line::Failed { error: &error }).await;
+            }
+        }
+    });
+    response
 }
 
 /// Write one NDJSON line. False once the client has gone away.

@@ -1,7 +1,7 @@
 //! The session journal: the entries the session protocol defines, this
-//! turn's conditional commits, recovery after a restart, and `/history`.
+//! run's conditional commits, recovery after a restart, and `/history`.
 
-use crate::bindings::cosmonic::agent::session::{
+use crate::a3::session::{
     self, CommitOptions, CommitResult, Entry, JournalEnd, NewEntry, Snapshot, StateCondition,
 };
 use crate::conversation::Conversation;
@@ -18,6 +18,32 @@ pub(crate) const STEP_KIND: &str = "agent.step.v1";
 pub(crate) const OP_KIND: &str = "agent.op.v1";
 /// How that call ended, written after it returns.
 pub(crate) const OP_RESULT_KIND: &str = "agent.op-result.v1";
+/// A run opened: `{run}`, in the commit that records the person's message.
+/// That commit's id is `run:<run-id>`, so the same run id again is answered
+/// from the session's commit-id ledger instead of written twice.
+pub(crate) const RUN_KIND: &str = "agent.run.v1";
+/// A run ended: `{run, outcome, finish | error}`, before its outcome resolves.
+pub(crate) const RUN_RESULT_KIND: &str = "agent.run-result.v1";
+
+/// `agent.run.v1`.
+#[derive(Serialize)]
+pub(crate) struct RunEntry<'a> {
+    pub(crate) run: &'a str,
+}
+
+/// `agent.run-result.v1`.
+#[derive(Serialize)]
+pub(crate) struct RunResult<'a> {
+    pub(crate) run: &'a str,
+    /// `done`, `failed` or `cancelled`.
+    pub(crate) outcome: &'a str,
+    /// Why a run that ended with a reply ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) finish: Option<&'a str>,
+    /// The error case of a run that failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<&'a str>,
+}
 
 /// An `agent.step.v1` entry and the `step` line: the shape a UI draws.
 #[derive(Serialize)]
@@ -29,6 +55,27 @@ pub(crate) struct Step<'a> {
     pub(crate) blocks: &'a [&'a str],
     /// The tools an assistant step asks for, or a tool step answers.
     pub(crate) tools: &'a [&'a str],
+    /// The run that wrote it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) run: Option<&'a str>,
+}
+
+impl<'a> Step<'a> {
+    /// A model reply: its text and the tools it asks for.
+    pub(crate) fn assistant(text: &'a str, tools: &'a [&'a str], run: Option<&'a str>) -> Self {
+        let blocks: &'static [&'static str] = match (text.is_empty(), tools.is_empty()) {
+            (_, true) => &["text"],
+            (true, false) => &["toolRequest"],
+            (false, false) => &["text", "toolRequest"],
+        };
+        Self {
+            role: "assistant",
+            text,
+            blocks,
+            tools,
+            run,
+        }
+    }
 }
 
 /// `agent.op.v1`: a model or tool call is about to be made. A tool call's op
@@ -104,9 +151,9 @@ async fn read_journal(mut start: u64) -> Result<Vec<Entry>, session::Error> {
 /// it is closed as unresolved, with an error step for the person; it is never
 /// made again, under its own id or a new one.
 ///
-/// Desktop sends one task at a time. If two turns do overlap, the later one
-/// closes the earlier one's open calls here, and the earlier one stops at its
-/// next conditional write.
+/// The driver sends one run at a time, and the agent checks too (`run`). If
+/// two runs do overlap, the later one closes the earlier one's open calls
+/// here, and the earlier one stops at its next conditional write.
 pub(crate) async fn recover(snapshot: &Snapshot) -> Result<Vec<NewEntry>, session::Error> {
     // The stored state covers everything up to `through`.
     let start = match snapshot.state.as_ref().map(|s| s.through) {
@@ -141,13 +188,39 @@ pub(crate) async fn recover(snapshot: &Snapshot) -> Result<Vec<NewEntry>, sessio
                  unknown, and it was not made again.",
                 call.name, call.op
             );
-            entries.push(entry(STEP_KIND, &step("error", &text)));
+            entries.push(entry(STEP_KIND, &step("error", &text, None)));
         }
     }
     Ok(entries)
 }
 
-/// This turn's writes to the session journal. Each is conditioned on the
+/// Why a run could not open.
+pub(crate) enum OpenError {
+    /// This run id already opened a run in this session.
+    Duplicate,
+    /// Another writer moved the session on since it was read.
+    Stale,
+    /// The session refused the write.
+    Store(session::Error),
+}
+
+/// Whether `after` is a later journal end than `before`.
+fn later(after: JournalEnd, before: JournalEnd) -> bool {
+    match (after, before) {
+        (JournalEnd::At(a), JournalEnd::At(b)) => a > b,
+        (JournalEnd::At(_), JournalEnd::Empty) => true,
+        (JournalEnd::Empty, _) => false,
+    }
+}
+
+fn seq_of(end: JournalEnd) -> Option<u64> {
+    match end {
+        JournalEnd::At(seq) => Some(seq),
+        JournalEnd::Empty => None,
+    }
+}
+
+/// This run's writes to the session journal. Each is conditioned on the
 /// journal end the last one left, so nothing is dispatched over another
 /// writer's entries.
 pub(crate) struct Journal {
@@ -162,37 +235,69 @@ impl Journal {
         Self { end, stale: false }
     }
 
+    /// The commit that opens a run, under the commit id `run:<run-id>`. The
+    /// session answers a repeated id with the original result instead of
+    /// writing, and that result's journal end is not past the end this run
+    /// read, which is how a duplicate is told from a fresh commit.
+    pub(crate) async fn open(
+        &mut self,
+        entries: Vec<NewEntry>,
+        run_id: &str,
+    ) -> Result<(), OpenError> {
+        let options = CommitOptions {
+            require_state: None,
+            require_end: Some(self.end),
+            commit_id: Some(format!("run:{run_id}")),
+        };
+        match session::commit(entries, None, options).await {
+            Ok(CommitResult::Committed(c)) if later(c.end, self.end) => {
+                self.end = c.end;
+                Ok(())
+            }
+            Ok(CommitResult::Committed(_)) => Err(OpenError::Duplicate),
+            Ok(CommitResult::Stale(_)) => Err(OpenError::Stale),
+            Err(e) => Err(OpenError::Store(e)),
+        }
+    }
+
     /// Append entries that must come before a call: only if nothing else has
-    /// written the session since this turn's last write.
-    pub(crate) async fn append(&mut self, entries: Vec<NewEntry>) -> Result<(), String> {
+    /// written the session since this run's last write. Returns the seq of
+    /// the last entry.
+    pub(crate) async fn append(&mut self, entries: Vec<NewEntry>) -> Result<Option<u64>, ()> {
         if !self.stale
             && let Ok(CommitResult::Committed(c)) =
                 commit(entries, None, None, Some(self.end)).await
         {
             self.end = c.end;
-            return Ok(());
+            return Ok(seq_of(c.end));
         }
         self.stale = true;
-        Err("another request is writing this session; retry".into())
+        Err(())
     }
 
     /// Record what already happened. A call that was made must be recorded
     /// even if another writer moved the journal on, without conditions if
-    /// need be.
-    pub(crate) async fn record(&mut self, entries: Vec<NewEntry>) {
+    /// need be. Returns the seq of the last entry when it was written.
+    pub(crate) async fn record(&mut self, entries: Vec<NewEntry>) -> Option<u64> {
         let require = (!self.stale).then_some(self.end);
         match commit(entries.clone(), None, None, require).await {
-            Ok(CommitResult::Committed(c)) => self.end = c.end,
+            Ok(CommitResult::Committed(c)) => {
+                self.end = c.end;
+                seq_of(c.end)
+            }
             Ok(CommitResult::Stale(_)) => {
                 self.stale = true;
-                let _ = commit(entries, None, None, None).await;
+                match commit(entries, None, None, None).await {
+                    Ok(CommitResult::Committed(c)) => seq_of(c.end),
+                    _ => None,
+                }
             }
-            Err(_) => {}
+            Err(_) => None,
         }
     }
 
-    /// Record the turn's last entries and move the stored conversation forward
-    /// in the same atomic commit. Returns a note for the client when the turn
+    /// Record the run's last entries and move the stored conversation forward
+    /// in the same atomic commit. Returns a note for the client when the run
     /// could not be saved as intended.
     pub(crate) async fn save(
         &mut self,
@@ -213,9 +318,9 @@ impl Journal {
             }
         }
         // Another writer committed in between. This agent cannot merge two
-        // conversations, so it keeps theirs and leaves this turn in the journal.
+        // conversations, so it keeps theirs and leaves this run in the journal.
         self.record(entries).await;
-        Some("another request changed the session; this turn is journaled only".into())
+        Some("another request changed the session; this run is journaled only".into())
     }
 }
 
@@ -242,7 +347,7 @@ pub(crate) fn entry(kind: &str, data: &impl Serialize) -> NewEntry {
 }
 
 /// A plain `user`, `assistant` or `error` step.
-pub(crate) fn step<'a>(role: &'a str, text: &'a str) -> Step<'a> {
+pub(crate) fn step<'a>(role: &'a str, text: &'a str, run: Option<&'a str>) -> Step<'a> {
     Step {
         role,
         text,
@@ -252,6 +357,7 @@ pub(crate) fn step<'a>(role: &'a str, text: &'a str) -> Step<'a> {
             &["text"]
         },
         tools: &[],
+        run,
     }
 }
 

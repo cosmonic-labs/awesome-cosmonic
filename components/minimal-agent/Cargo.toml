@@ -5,7 +5,7 @@ version = "0.2.0"
 # The p3 component-type section needs the wasm-component-ld bundled with Rust
 # 1.94 or newer.
 rust-version = "1.94"
-description = "A minimal sandboxed agent on cosmonic:agent@0.3.0: a tool-calling loop per request, streamed back and remembered in the workload's session. WebAssembly component: wasi:http@0.3.0, wasm32-wasip2."
+description = "A minimal sandboxed agent on cosmonic:agent: a tool-calling loop per run, streamed back and remembered in the workload's session, driven through the typed run export or POST /task. WebAssembly component: cosmonic:agent/run@0.4.0, wasi:http@0.3.0, wasm32-wasip2."
 license = "Apache-2.0"
 repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
 

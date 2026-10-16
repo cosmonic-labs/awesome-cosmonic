@@ -1,17 +1,26 @@
 package cosmonic:minimal-agent;
 
-// Every cosmonic:agent@0.3.0 interface this agent calls: the model by alias
-// (inference-types, models, chat), the tools the workload grants (tools), and
-// the conversation (session). That is the same set as the published
-// `cosmonic:agent/agent` world, named one by one so the list of capabilities an
-// operator reviews reads here at a glance.
+// The interfaces this agent calls, and the one it serves.
+//
+// Imports: the model by alias (inference-types, models, chat) and the
+// conversation (session) at cosmonic:agent@0.3.0, which is what Cosmonic
+// Desktop serves today, and the tools the workload grants at 0.4.0, the
+// folded `tools` Desktop's toolset dispatcher serves. A component may import
+// two versions of one package; they are separate interfaces.
+//
+// Export: `cosmonic:agent/run@0.4.0` (unstable, feature `agent-run`), the
+// typed run a host drives the agent through. It uses the 0.4.0 message types,
+// so the agent converts between the two versions at the edges (`compat`).
 //
 // wasi:http/handler@0.3.0 is exported through the `wasip3` crate, which
-// carries its own WIT, so it is not named here.
+// carries its own WIT, so it is not named here. It serves `POST /task` for
+// hosts that do not call `run` yet.
 world minimal-agent {
   import cosmonic:agent/inference-types@0.3.0;
   import cosmonic:agent/models@0.3.0;
   import cosmonic:agent/chat@0.3.0;
   import cosmonic:agent/session@0.3.0;
-  import cosmonic:agent/tools@0.3.0;
+  import cosmonic:agent/tools@0.4.0;
+
+  export cosmonic:agent/run@0.4.0;
 }

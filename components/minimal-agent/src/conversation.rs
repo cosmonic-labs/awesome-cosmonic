@@ -1,7 +1,7 @@
 //! The conversation as stored in the session's state, its caps, and the
 //! messages the model is given from it.
 
-use crate::bindings::cosmonic::agent::inference_types::{
+use crate::a3::inference_types::{
     AssistantContent, AssistantMessage, AssistantPart, Message, ToolCall, ToolOutput, ToolResult,
     UserMessage, UserPart,
 };
@@ -95,9 +95,15 @@ impl Conversation {
     }
 }
 
-/// The system prompt and the stored conversation, as model messages.
-pub(crate) fn to_messages(conversation: &Conversation) -> Vec<Message> {
-    let mut messages = vec![Message::System(SYSTEM_PROMPT.into())];
+/// The run's instructions, the system prompt and the stored conversation, as
+/// model messages. A driver's instructions come first, ahead of the agent's
+/// own.
+pub(crate) fn to_messages(conversation: &Conversation, instructions: Option<&str>) -> Vec<Message> {
+    let mut messages: Vec<Message> = instructions
+        .map(|i| Message::System(i.to_string()))
+        .into_iter()
+        .collect();
+    messages.push(Message::System(SYSTEM_PROMPT.into()));
     for turn in &conversation.turns {
         messages.push(match turn.role.as_str() {
             "assistant" => {

@@ -1,11 +1,11 @@
 //! Error messages a person can read, for every error the agent reports.
 
-use crate::bindings::cosmonic::agent::inference_types::{
+use crate::a3::inference_types::{
     ContextOverflow, GenerationError, Quota, RateLimit, RequestError, SizeLimit,
 };
-use crate::bindings::cosmonic::agent::models::OpenError;
-use crate::bindings::cosmonic::agent::session;
-use crate::bindings::cosmonic::agent::tools::CallError;
+use crate::a3::models::OpenError;
+use crate::a3::session;
+use crate::a4::tool_types::{CallError, DispatchError, ListError, OutcomeError};
 
 /// Error messages a person can read. The generated types implement `Display`
 /// and `Debug` too, but both print Rust syntax, and the formatting code behind
@@ -113,12 +113,42 @@ impl Describe for session::Error {
 impl Describe for CallError {
     fn describe(&self) -> String {
         match self {
+            Self::NotDispatched(e) => e.describe(),
+            Self::OutcomeUnknown(e) => format!("{}; whether it took effect is unknown", e.describe()),
+        }
+    }
+}
+
+impl Describe for DispatchError {
+    fn describe(&self) -> String {
+        match self {
             Self::UnknownTool(name) => format!("there is no tool named {name}"),
             Self::InvalidArguments(d) => format!("invalid arguments: {d}"),
             Self::Upstream(d) => format!("the tool could not run: {d}"),
             Self::Denied(d) => format!("the call was declined: {d}"),
             Self::Cancelled => "the call was cancelled".into(),
             Self::TimedOut => "the call timed out".into(),
+            Self::Other(d) => d.clone(),
+        }
+    }
+}
+
+impl Describe for OutcomeError {
+    fn describe(&self) -> String {
+        match self {
+            Self::Upstream(d) => format!("the tool failed: {d}"),
+            Self::Cancelled => "the call was cancelled".into(),
+            Self::TimedOut => "the call timed out".into(),
+            Self::Other(d) => d.clone(),
+        }
+    }
+}
+
+impl Describe for ListError {
+    fn describe(&self) -> String {
+        match self {
+            Self::Unavailable(d) => format!("the tools are unavailable ({d})"),
+            Self::Denied(d) => format!("listing the tools was denied ({d})"),
             Self::Other(d) => d.clone(),
         }
     }

@@ -6,6 +6,36 @@ The point is what the component does not hold. It names no model endpoint, carri
 
 About 1,200 lines of Rust in [`src/`](src/), starting from the tool loop in [`src/turn.rs`](src/turn.rs), building to a 281 KB component (102 KB gzipped), with three dependencies besides serde: `wasip3` for the HTTP export, `wit-bindgen` for the agent interfaces, and `serde_json`.
 
+## The typed run export (unstable)
+
+This branch is a spike of the typed `cosmonic:agent/run@0.4.0` export, which
+is marked `@unstable(feature = agent-run)` in the unpublished 0.4.0 package.
+A host calls `run(message, options)` instead of sending `POST /task`: the
+agent commits the person's message with `agent.run.v1` (commit id
+`run:<run-id>`, so a repeated run id is refused as `duplicate`), returns a
+stream of events (text deltas, whole steps with tool calls and results,
+counters) and a future of the outcome, and writes `agent.run-result.v1` before
+the outcome resolves. Dropping the event stream cancels the run at the agent's
+next write. `busy` is refused while a run is in progress.
+
+`POST /task` runs the same loop through the same journal entries and streams
+today's NDJSON lines, so hosts that do not call `run` keep working.
+
+What it imports changed with it:
+
+- `inference-types`, `models`, `chat` and `session` stay at 0.3.0, which is
+  what Cosmonic Desktop serves today.
+- `tools` is the folded 0.4.0 interface, served by Desktop's toolset
+  dispatcher. A tool component in the same workload that exports
+  `tools@0.3.0`, such as the ISS tools in the example manifest, no longer
+  links to it: run the tools as a toolset instead.
+- `run` uses the 0.4.0 message types, so `src/compat.rs` converts between
+  the two versions at the edges.
+
+`cosmonic:agent@0.4.0` is not published, so `wit/deps` vendors it and the
+`wasi:clocks` package it uses; `wash wit fetch` still fetches 0.3.0. Build
+with `cargo build --target wasm32-wasip2 --release` after the fetch.
+
 ## What it shows
 
 - `POST /task` with `{"task": "..."}` streams the model's reply as NDJSON lines while it is generated.
