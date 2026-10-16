@@ -79,9 +79,7 @@ interface run {
 }
 
 // in run-types
-type run-events = stream<run-event>;
-type run-result = future<result<run-outcome, run-error>>;
-type started-run = tuple<run-events, run-result>;
+type started-run = tuple<stream<run-event>, future<result<run-outcome, run-error>>>;
 ```
 
 The shape is `chat`'s: a call that is accepted or refused, then a stream and a
@@ -787,13 +785,17 @@ Two findings for hosts and agents: a JS agent imports all of
 `inference-types`, including the `model` resource, so Desktop defines that
 resource when it links the 0.4.0 types for a run-only agent; and a JS
 exception from `run` that is not a WIT value traps the instance, so an agent
-maps unknown failures to `other` or `unavailable`. Naming the stream and
-future types (`run-events`, `run-result`) gives JS bindings readable names and
-changes nothing for Rust or Go.
+maps unknown failures to `other` or `unavailable`. The review suggested
+naming the stream and future types (`type run-events = stream<run-event>`) for
+readable JS constants. That was tried and reverted: Wasmtime 48's bindgen,
+which Desktop's host uses, does not compile a type alias of a stream or a
+future, so the names would break Rust hosts for a cosmetic gain.
 
 **Added now, before publishing:** `finish.input-required`, the reserved
-`step-content.user`, the named types, and the wording on sessions, approvals,
-waits and cancellation.
+`step-content.user`, and the wording on sessions, approvals, waits and
+cancellation. Desktop's spike defines the 0.4.0 `model` resource when it links
+a run agent's type imports, and a JS agent built with componentize-qjs
+against this WIT now instantiates and runs there.
 
 **Additive later:**
 
@@ -807,6 +809,9 @@ waits and cancellation.
 
 **Question for Bailey.** Does adding a case to a variant after publishing
 break consumers already compiled against it? We believe it does, because the
-component model checks types structurally at link time and has no variant
-subtyping, but we have not tested it. That is why both new cases are added
-now rather than later.
+component model checks types structurally and has no variant subtyping. One
+direction is now tested: Desktop's host, built with the new `step-content`
+(five cases), refused to call the `run` export of a JS agent built before the
+`user` case was added, with "expected variant of 5 cases, found 4 cases". The
+other direction (an old host, a new agent) is untested. That is why both new
+cases are added now rather than later.
