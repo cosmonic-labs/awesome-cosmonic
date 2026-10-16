@@ -22,15 +22,16 @@ interface run-types {
     use wasi:clocks/types@0.3.0.{duration};
     @unstable(feature = agent-run)
     use inference-types.{
-        json, attachment, opaque-block, assistant-message, tool-result, usage,
-        request-error, generation-error,
+        json, attachment, opaque-block, assistant-message, user-message,
+        tool-result, usage, request-error, generation-error,
     };
 
     /// How to do one run. Construction is lenient; `run` validates and
     /// returns `invalid-input`.
     @unstable(feature = agent-run)
     record run-options {
-        /// Names this run, unique within the session, chosen by the driver:
+        /// Names this run, chosen by the driver. Unique per session, not per
+        /// workload: two sessions may use the same id space. A driver uses
         /// a UUID, or the id of the event that started it (a message id, a
         /// ticket event id), so a redelivered event is recognized. The agent
         /// records it on the run's journal entries and uses it in the commit id
@@ -58,7 +59,8 @@ interface run-types {
         max-total-tokens: option<u64>,
         /// Wall-clock time for this run, counted from acceptance: from when
         /// `run` returns ok, so time spent reading the session before the run
-        /// is accepted does not count. The agent stops starting model and
+        /// is accepted does not count. Time spent waiting on a person (a held
+        /// tool call, a question) does count. The agent stops starting model and
         /// tool calls once it passes, and finishes with `max-duration` and
         /// what it has. A driver keeps its own deadline a little past this
         /// one and cancels at it.
@@ -78,6 +80,15 @@ interface run-types {
         assistant(assistant-message),
         /// The results of the tool calls in the assistant step before it.
         tool(list<tool-result>),
+        /// Reserved: a message from the person that the agent took in during
+        /// the run, such as a steering message, in the place it entered the
+        /// conversation. Never the message that started the run, which the
+        /// driver already has. No interface delivers such messages yet (a
+        /// future opt-in import will), so an agent does not send this case
+        /// today. A driver renders it as the person's own message, in the
+        /// conversation where it appears, attributed to the person and never
+        /// to the agent.
+        user(user-message),
         /// An error the agent recorded in the conversation, for a person to
         /// read. Diagnostic text, not for branching on. A run may continue
         /// after one, for example when listing tools failed.
@@ -148,6 +159,18 @@ interface run-types {
     variant finish {
         /// The agent ended its reply.
         done,
+        /// The agent stopped because it needs something only a person can
+        /// give (an answer, a choice, a decision) and no one could answer
+        /// during the run: the host offered no way to ask, or the person did
+        /// not answer in time. `reply` says what is needed, in the agent's own
+        /// words; a driver shows it as the agent's text, never as host UI.
+        /// The answer starts the next run, as its message, and the journal
+        /// tells the agent where it left off. An agent uses it only when it
+        /// cannot go on without the answer; one that can go on with a stated
+        /// assumption does so and finishes `done`. Agent-reported, so a driver
+        /// uses it to route the outcome (to a person, a ticket, an A2A
+        /// `input-required` task) and never to grant anything.
+        input-required,
         /// `run-options.max-steps` was reached.
         max-steps,
         /// `run-options.max-total-tokens` was spent.
