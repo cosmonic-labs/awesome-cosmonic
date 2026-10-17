@@ -132,7 +132,16 @@ variant run-event {
     reasoning-delta(string),
     step(step),
     counts(run-counts),
+    compacted(compaction-info),
     other(option<string>),
+}
+
+record compaction-info {
+    through: seq-range,      // {start, end}: the inclusive seq range summarized
+    kept: u32,
+    tokens-before: option<u64>,
+    tokens-after: option<u64>,
+    seq: option<u64>,        // the agent.compaction.v1 entry, when committed first
 }
 
 record step {
@@ -163,6 +172,10 @@ variant step-content {
   person's message.
 - **`counts`** is cumulative after each model call: steps, tool calls, token
   usage. It doubles as a heartbeat.
+- **`compacted`** says the agent replaced older context with a summary. It
+  carries the same fields as the `agent.compaction.v1` journal entry except
+  the summary and the model: the summary is model output, untrusted, and lives
+  only in the journal, where a driver reads it if it shows it at all.
 
 There is no separate status event. "Working" is implied by an open stream.
 "Blocked" (a tool call waiting on a person's approval, a held outcome) is
