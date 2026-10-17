@@ -172,6 +172,22 @@ interface run-types {
         seq: option<u64>,
     }
 
+    /// Where a plan entry stands.
+    @unstable(feature = agent-run)
+    enum plan-status {
+        pending,
+        in-progress,
+        completed,
+    }
+
+    /// One item of the agent's working plan.
+    @unstable(feature = agent-run)
+    record plan-entry {
+        /// What the item is, in the agent's words.
+        content: string,
+        status: plan-status,
+    }
+
     /// What a run streams while it works. The person's own message is never
     /// sent back: the driver already has it.
     @unstable(feature = agent-run)
@@ -192,6 +208,11 @@ interface run-types {
         /// `agent.compaction.v1`, so a driver can mark the point in the
         /// conversation; the summary itself is read from the journal.
         compacted(compaction-info),
+        /// The agent's whole current plan, replacing any earlier one, as
+        /// Claude Code's todo list or Codex's update_plan show it. Agent text
+        /// for display: a driver never treats it as progress it can verify or
+        /// as a commitment. An agent that keeps no plan never sends it.
+        plan(list<plan-entry>),
         /// An event not captured above, described by the string. Safe to ignore.
         other(string),
     }
