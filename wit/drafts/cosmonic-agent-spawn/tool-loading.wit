@@ -30,9 +30,11 @@ package cosmonic:agent@0.5.0;
 /// `toolset-spec`. A grant is single use, as for `spawn`: it admits one
 /// load in total, even when several identical loads shared the pending
 /// approval (see `approval`), and is bound to the admission snapshot of
-/// what the spec resolved to when it was reviewed: rebinding a volume,
-/// credential or secret it names voids the approval, and the resend needs a
-/// new one. Policy may ask for approval even within the
+/// what the spec resolved to when it was reviewed: the storage, credential
+/// bindings, secrets and interface resources its names resolve to, its
+/// executable digests, and the defaults it left open (see `approval`).
+/// Rebinding any of them voids the approval, and the resend needs a new
+/// one. Policy may ask for approval even within the
 /// ceiling, since new code is new risk even when its reach is not. A
 /// `toolset-spec` from a `tool-discovery` offer loads unchanged, and its
 /// digest matches what the caller was shown: the digest is computed over the

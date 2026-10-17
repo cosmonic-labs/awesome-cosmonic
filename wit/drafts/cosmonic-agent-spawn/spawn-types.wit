@@ -388,7 +388,9 @@ interface spawn-types {
     /// as the one the person just granted, and a person approving a
     /// seemingly duplicate prompt by reflex would start a second child. So
     /// an approval for a digest that was admitted within the repeat window
-    /// is marked as a repeat (`repeat-of`), and its summary says so first.
+    /// is marked as a repeat (`repeat-of`), and its summary says so first,
+    /// and says too when the earlier admission's reach differed (see
+    /// `summary`).
     /// A load needs no marker: an identical toolset already loaded is
     /// returned as is (see `tool-loading`).
     ///
@@ -408,8 +410,8 @@ interface spawn-types {
     ///
     /// Admission snapshot. The digest binds names; an approval also binds
     /// what those names reached when the person reviewed them. Before it
-    /// raises an approval, and before building `summary`, the implementer
-    /// resolves the normalized request into an immutable admission snapshot:
+    /// raises an approval, the implementer resolves the normalized request
+    /// into an immutable admission snapshot:
     /// - for each volume, the identity of the storage behind it;
     /// - for each credential reference, the identity of the credential
     ///   binding it resolves through: the binding itself and what it
@@ -425,15 +427,23 @@ interface spawn-types {
     ///   component digest (already pinned by the request), and the digest of
     ///   any component the implementer adds to run them;
     /// - every default the request left to the implementer, materialized:
-    ///   each `budget` field that is none, and the operator limits that will
-    ///   apply to the child or toolset. Aliases carry no authority and are
-    ///   not part of it.
-    /// `summary` shows the snapshot: each resolved identity by the name the
-    /// operator gave it with a stable short id, and each materialized default
-    /// as its value, so the person reviews concrete reach, not names whose
-    /// meaning could change. The implementer keeps the snapshot with the
-    /// approval and in the audit log; it is not a WIT field, since the caller
-    /// cannot act on it.
+    ///   each `budget` field that is none, and the configured values of the
+    ///   operator limits that apply to the child or toolset (the caps as
+    ///   configured, never live counters such as how many agents are running
+    ///   now, so ordinary activity never voids an approval). Aliases carry no
+    ///   authority and are not part of it.
+    /// The person-facing approval UI shows the snapshot beside `summary`:
+    /// each resolved identity by the name the operator gave it with a stable
+    /// short id, and each materialized default as its value, so the person
+    /// reviews concrete reach, not names whose meaning could change. The
+    /// implementer keeps the snapshot with the approval and records it in the
+    /// audit log. It never reaches the caller: it is not a WIT field, and
+    /// `summary`, which the caller receives in `needs-approval`, carries no
+    /// resolved infrastructure detail (no storage identity, nothing about
+    /// what a credential authenticates as or to, no model provider or
+    /// endpoint). The caller gets at most an opaque snapshot fingerprint in
+    /// `summary`: keyed with a host secret, so it reveals nothing and cannot
+    /// confirm a guess, and compared for equality only.
     ///
     /// The approval is bound to its digest and its snapshot together.
     /// Consuming the grant resolves the request again and compares it with
@@ -461,7 +471,10 @@ interface spawn-types {
     /// outright for a cooldown: every identical request answers
     /// `access-denied`, with an implementer-authored reason, and raises no
     /// prompt, so a looping agent cannot re-ask the person who just said no.
-    /// The cooldown is the host's; the recommended default is one hour. A
+    /// The cooldown is the host's; the recommended default is one hour. It
+    /// is keyed by digest and caller, not by snapshot, so a rebinding neither
+    /// lifts nor restarts it: an identical request after a rebinding is still
+    /// refused until the cooldown that the denial started runs out. A
     /// `decision` of `other` counts as a denial. After an approval expires
     /// undecided, an identical request raises a new approval; coalescing
     /// keeps that to one pending prompt per digest, and the cap below
@@ -543,13 +556,20 @@ interface spawn-types {
         /// labels, never appears in it. For a repeat (`repeat-of` is
         /// some), it begins by saying so, for example "An identical request
         /// from <caller> was admitted 2 minutes ago and is still running.
-        /// Approving starts a second, separate agent." It shows every input of
-        /// `request-digest`, in normalized form, so two approvals whose
-        /// digests differ never read the same; a caller-authored value with
-        /// no safe rendering (`output.schema`) is shown by the `sha256:` of
-        /// its canonical JSON. It also shows the admission snapshot (see
-        /// above), so two approvals with one digest but different snapshots
-        /// never read the same either.
+        /// Approving starts a second, separate agent." When the earlier
+        /// admission's snapshot differed from this one, it says that too,
+        /// for example "That request reached different resources.", without
+        /// naming what differs; the approval UI shows the difference. It
+        /// shows every input of `request-digest`, in normalized form, so two
+        /// approvals whose digests differ never read the same; a
+        /// caller-authored value with no safe rendering (`output.schema`) is
+        /// shown by the `sha256:` of its canonical JSON.
+        ///
+        /// The caller receives it, so it never carries the admission
+        /// snapshot's resolved infrastructure details (see above): those
+        /// appear only in the person-facing approval UI and the audit log.
+        /// It may end with the opaque snapshot fingerprint, so two approvals
+        /// with one digest but different snapshots never read the same.
         summary: string,
         /// Some when the same caller had a request with this digest admitted
         /// within the repeat window: the most recent such admission. The

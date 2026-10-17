@@ -280,8 +280,11 @@ definition. The WIT states them on `spawn-types`.
   resolves to, the model alias's provider, model and endpoint, the resource
   and classification of each interface grant, every executable digest, and
   every default the request left open (budget fields that are none, the
-  operator limits that apply). The summary shows it; the audit log records
-  it. Consuming the grant re-resolves and compares inside the same atomic
+  configured values of the operator limits that apply, not live counters).
+  The person-facing approval UI shows it and the audit log records it; the
+  `summary` the caller receives carries no resolved infrastructure detail,
+  at most an opaque, keyed snapshot fingerprint. A rebinding neither lifts nor
+  restarts a denial cooldown, which is keyed by digest and caller. Consuming the grant re-resolves and compares inside the same atomic
   step as the expiry check, and the admission runs with the snapshot's
   identities. Any difference makes the approval unusable: the grant is
   spent and the resend gets a new approval to review. While pending,
@@ -639,20 +642,24 @@ schema) and expect a new approval whose summary differs from the first.
 volume `reports`, a credential reference and a model alias (the alias only
 for `spawn`).
 
-1. Raise the approval with `reports` backed by storage A. Expect its summary
-   to name storage A (the operator's name and a stable id), the credential
-   binding, the model the alias resolves to, and the value of every budget
-   field the request left as none, and expect the audit log to record that
-   snapshot.
+1. Raise the approval with `reports` backed by storage A. Expect the
+   person-facing approval UI to name storage A (the operator's name and a
+   stable id), the credential binding, the model the alias resolves to, and
+   the value of every budget field the request left as none, and expect the
+   audit log to record that snapshot. Expect the `summary` returned to the
+   caller to name none of storage A, the credential binding's identity, or
+   the model endpoint.
 2. Rebind `reports` to storage B while the approval is pending, then resend
    the identical request. Expect the first approval withdrawn (each waiter's
    `decision` resolves to `expired`), a new approval with a new `id` and the
-   same `request-digest` whose summary names storage B, one pending approval
-   for the digest in the cap, and no denial cooldown.
+   same `request-digest` whose approval UI names storage B, one pending
+   approval for the digest in the cap, and no denial cooldown.
 3. Grant an approval, then rebind `reports` before the resend. Expect the
    resend to admit nothing (no child, no rollout) and to return
    `needs-approval` with a new approval for storage B. Bind `reports` back to
-   storage A and resend: still a new approval, never the spent grant.
+   storage A and resend: expect the pending storage B approval withdrawn
+   (each waiter's `decision` resolves to `expired`) and a new approval for
+   storage A, never the spent grant.
 4. Repeat steps 2 and 3 with each of: the credential reference moved to a
    different binding, the model alias pointed at another model, and an
    operator default (a budget default) changed. Each must void the approval.
@@ -662,6 +669,9 @@ for `spawn`).
 5. Race a rebinding against concurrent resends of a granted approval. Expect
    either one admission running with storage A, or none and a new approval;
    never an admission that runs with storage B on the old grant.
+6. Deny an approval, rebind `reports`, and resend the identical request.
+   Expect `access-denied` with no prompt until the original cooldown ends:
+   the rebinding neither lifts nor restarts it.
 
 ## Tool naming: identity, alias, display
 
@@ -1354,8 +1364,10 @@ An internal review of the approval contract, after the single-use grant fix:
   storage B admitted) was admitted by the same digest. `approval` now
   specifies an immutable admission snapshot (resolved storage, credential
   binding, secret, model and interface resource identities, executable
-  digests, materialized defaults) taken before asking, shown in the summary,
-  bound to the approval, and revalidated in the atomic consume step. A
+  digests, materialized defaults) taken before asking, shown in the
+  person-facing approval UI and audit log (never in the caller's `summary`,
+  which gets at most an opaque fingerprint), bound to the approval, and
+  revalidated in the atomic consume step. A
   mismatch voids the approval and needs a new one; while pending, the stale
   approval is withdrawn as `expired`. No WIT field was added: the snapshot is
   implementer state, and `expired` already means "ask again". A new
