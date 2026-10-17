@@ -1,14 +1,14 @@
 package cosmonic:agent@0.4.0;
 
 /// Tool definitions, responses, and errors shared by tool callers and tool
-/// providers. Function-less: importing it grants nothing, so a provider that
+/// providers. Function-less: importing it gives no permission, so a provider that
 /// exports `tools` imports only these types, not the power to call tools.
 /// Introduced in 0.4.0, when the records moved here from `tools`.
 @since(version = 0.4.0)
 interface tool-types {
     use inference-types.{json, tool-output};
 
-    /// Provider claims for display. Host grants enforce access; these hints
+    /// Provider claims for display. Host permissions enforce access; these hints
     /// cannot authorize calls or retries.
     record tool-annotations {
         read-only: option<bool>,
