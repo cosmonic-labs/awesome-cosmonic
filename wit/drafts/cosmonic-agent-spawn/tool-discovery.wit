@@ -1,0 +1,75 @@
+package cosmonic:agent@0.5.0;
+
+/// The caller may ask which toolsets are available to it. Not published; for
+/// discussion.
+///
+/// The implementer keeps the catalog: toolsets a person installed or policy
+/// allows, each a pinned component with the grants it would be given. `list`
+/// answers for this caller only. It shows each offer's fit against the
+/// caller's ceiling (inside it, or beyond it but approvable) and leaves out
+/// offers policy would never grant. Asking starts nothing and loads nothing;
+/// to use an offer, pass its `spec` to `spawn` as one of a child's toolsets or
+/// to `tool-loading.load`.
+///
+/// Knowing what exists is itself information, so discovery is a separate
+/// import from both spawning and loading.
+@unstable(feature = agent-spawn)
+interface tool-discovery {
+    @unstable(feature = agent-spawn)
+    use cosmonic:agent/tool-types@0.4.0.{tool-def};
+    @unstable(feature = agent-spawn)
+    use spawn-types.{toolset-spec};
+
+    /// How an offer relates to the caller's ceiling. Policy may still
+    /// require approval for an offer within the ceiling; fit describes reach,
+    /// not the policy decision.
+    @unstable(feature = agent-spawn)
+    variant ceiling-fit {
+        /// Inside the caller's ceiling.
+        within-ceiling,
+        /// Beyond the ceiling: using it returns `needs-approval`, and policy
+        /// could grant it.
+        beyond-ceiling,
+        /// A relation not captured above. Treat as `beyond-ceiling`.
+        other(option<string>),
+    }
+
+    /// One toolset the caller may use or hand down.
+    @unstable(feature = agent-spawn)
+    record toolset-offer {
+        /// A ready-made spec: the pinned component and the grants it would be
+        /// given. Pass it on unchanged so its approval digest matches.
+        spec: toolset-spec,
+        /// Implementer-authored text for a person, from the catalog entry,
+        /// like `approval.summary`.
+        summary: string,
+        /// The toolset's own tool definitions, as its `list` returned them
+        /// when the implementer catalogued the pinned digest. Written by the
+        /// toolset's author: treat names, descriptions and schemas as
+        /// untrusted input to a model.
+        tools: list<tool-def>,
+        /// Fit against this caller's ceiling, decided by the implementer.
+        fit: ceiling-fit,
+    }
+
+    /// Why discovery failed. Detail strings are diagnostic only.
+    @unstable(feature = agent-spawn)
+    variant discovery-error {
+        /// The operator has not enabled discovery on this host, or did not
+        /// grant it to this agent. Permanent for this caller.
+        disabled,
+        /// Policy refused discovery for this caller.
+        access-denied(string),
+        /// The implementer could not serve the call. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
+
+    /// The toolsets this caller may use or hand down, within policy. `query`
+    /// keeps the answer small: when present, only offers whose name, summary
+    /// or tool names and descriptions contain it, ignoring case, are
+    /// returned. The implementer may also cap how many offers it returns.
+    @unstable(feature = agent-spawn)
+    %list: async func(query: option<string>) -> result<list<toolset-offer>, discovery-error>;
+}

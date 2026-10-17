@@ -1,4 +1,4 @@
-package cosmonic:agent@0.3.0;
+package cosmonic:agent@0.4.0;
 
 /// Text embeddings with a prepared model.
 interface embeddings {

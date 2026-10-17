@@ -1,0 +1,767 @@
+package cosmonic:agent@0.5.0;
+
+/// Types shared by the spawn and tool interfaces added in this version of
+/// `cosmonic:agent`. Not published; for discussion. See README.md and
+/// DESIGN-NOTES.md. The version is the next one after 0.4.0 (PR #71, with the
+/// tools fold and the `run` export); this file depends on 0.4.0 for messages,
+/// tool types, and the records a run ends with (`run-types`).
+///
+/// A spawned child is driven through its `cosmonic:agent/run@0.4.0` export,
+/// the same interface a host drives a top-level agent through. The parent
+/// never sees that export's rich events. It sees the narrowed view here:
+/// contentless `progress`, its own `start-error` and `run-error`, and the
+/// shared `run-outcome`. The implementer calls the child's export, mints the
+/// child's run id, turns the budget into per-run options, discards deltas and
+/// steps, replaces the child's error details with its own, and buffers events
+/// so a parent is never blocked.
+///
+/// Importing this interface grants nothing. The powers live in `spawn`,
+/// `tool-discovery` and `tool-loading`, each a separate import so a world
+/// grants exactly the ones it names.
+///
+/// The contract below binds the implementer of those interfaces, whatever it
+/// is: a native host plugin, a host-installed policy layer in front of it, or
+/// a test double. "The caller" is the component the import is bound to.
+///
+/// Caller identity. One identity is used everywhere these interfaces bind a
+/// caller: in the approval digest, in coalescing, in the pending-approval
+/// cap and denial cooldown, and in scoping loaded toolsets. It is the pair
+/// of two host-assigned values:
+///
+/// - the workload incarnation: an id the host mints when the workload is
+///   created and keeps for that workload's whole life, across rollouts to
+///   new revisions (as `tool-loading.load` does) and instance restarts. A
+///   workload deleted and recreated under the same name gets a new
+///   incarnation, so it is a different caller.
+/// - the component name: the caller's name within its workload, as the
+///   workload definition gives it. It is stable across revisions and
+///   restarts, and it tells sibling components of one workload apart.
+///
+/// Never an instance id: a rollout replaces every instance, so an instance
+/// id would make a caller a stranger to its own pending approvals and loaded
+/// toolsets. Workload namespace and name are display and audit metadata, not
+/// identity. A policy wrapper must be installed by the host and pass the
+/// original caller through: a guest component in front of the implementer
+/// would become the caller, and its own grants would become the ceiling.
+///
+/// Reach. A request's read reach is the union, over the agent and every
+/// toolset, of its read grants: volumes, secrets, interfaces the implementer
+/// classifies as reading, and the model alias. Its egress reach is the
+/// union of allowed hosts and interfaces the implementer classifies as
+/// writing. A read-write volume counts both ways.
+///
+/// Ceiling. By default a child's read reach and egress reach, or a loaded
+/// toolset's, must each fit inside the caller's. Within that ceiling, results
+/// flowing up are not a leak: the caller could have read the same data
+/// itself. Containment is decided on what a grant reaches, not on its name:
+/// a volume fits only if it is backed by the same storage as one of the
+/// caller's, and an allowed host fits only if one of the caller's entries
+/// contains it (`*.github.com` contains `api.github.com`, not `github.com`).
+/// A grant whose reach the implementer cannot see or compare is beyond the
+/// ceiling. Volume names are never compared: two workloads may use one name
+/// for different storage, so an implementer that cannot see the storage
+/// behind a caller's mount treats every volume grant from that caller as
+/// beyond the ceiling.
+///
+/// Attenuation. A caller may request more than the ceiling but cannot grant
+/// it. The implementer is the sole grantor, by policy or auditor agent or
+/// human in the loop, and returns `needs-approval`. An approval is an
+/// explicit declassification (a decision that data may cross a boundary it
+/// otherwise could not), bound to a digest over the caller's identity and the
+/// whole request, and to the admission snapshot of what that request's names
+/// resolved to when the person reviewed it (see `approval`). Volume, secret,
+/// credential and model alias names are no more an approval's identity than
+/// they are a containment identity. Content the caller sends down can reach
+/// the child's egress; an approval of egress beyond the ceiling says so too.
+///
+/// Authorship. A model can paraphrase anything it read, so redaction is not
+/// a security boundary and a child's final reply is a declassification
+/// channel by nature. Nothing else the caller sees carries child-authored
+/// text: progress, errors, and reasons are implementer-authored, and every
+/// detail string is diagnostic only, not stable, and not for branching on.
+/// The child's journal is never observable through these interfaces.
+///
+/// Toolsets. A toolset is one component, with its own grants, that exports
+/// `cosmonic:agent/tools@0.4.0` (the `tool-provider` world): the same
+/// interface an agent imports. Its `call` rejects a tool name it does not own
+/// with `not-dispatched(unknown-tool)` before doing any work. It egresses as
+/// itself: a call is host-internal, made with the toolset's own grants and
+/// component identity, even though the toolset is a component in the
+/// agent's own workload; the calling agent and its session are audit context,
+/// never delegated authority. The implementer may offer a tool under an alias
+/// that is not its own name (`<toolset>__<tool>` when another toolset already
+/// has the name) and passes the tool's own name to `call`, so a description
+/// should not name sibling tools. The implementer may bound what a call
+/// returns before the agent sees it: text beyond its cap is cut at a UTF-8
+/// boundary and followed by a text part of the form `[output truncated:
+/// showing N of M bytes; narrow the request]`; a structured result beyond the
+/// cap becomes `is-error` with a text part saying it was too large; an inline
+/// attachment beyond its own cap is replaced by a text note.
+///
+/// Steerable channels. The child cannot author text the caller sees outside
+/// its reply, but it does choose its counts, its finish code, which error
+/// kind a run ends in, whether an outcome exceeds `output.max-bytes`, and
+/// its timing. Each of these is a narrow channel to the caller, minor next
+/// to the reply itself. No interface here closes covert or timing channels.
+///
+/// Credentials never pass through these interfaces. Models, secrets and
+/// credential references are named; the implementer resolves them and keeps
+/// values out of every agent's memory. A spawned agent's own component never
+/// receives secrets.
+///
+/// Powers. A child never inherits its caller's powers. It gets `spawn` only
+/// when its request asks for it (`spawn-request.powers`) and the implementer
+/// has spawn enabled; discovery and loading are never granted to a spawned
+/// child in this version.
+///
+/// Authority to decide. A spawned agent never holds approval or release
+/// authority: the grantor is a person, or policy a person wrote. An auditor
+/// in the policy stack is installed by host policy, never spawned, so the
+/// agent it reviews cannot choose its grants, budget or lifetime.
+///
+/// # References
+/// - OCI image digests: https://github.com/opencontainers/image-spec/blob/main/descriptor.md#digests
+/// - JSON Schema: https://json-schema.org/specification
+@unstable(feature = agent-spawn)
+interface spawn-types {
+    @unstable(feature = agent-spawn)
+    use wasi:clocks/types@0.3.0.{duration};
+    @unstable(feature = agent-spawn)
+    use cosmonic:agent/inference-types@0.4.0.{json};
+    @unstable(feature = agent-spawn)
+    use cosmonic:agent/run-types@0.4.0.{run-outcome, run-counts};
+
+    /// A component image pinned by content digest, so a moving tag cannot
+    /// change what was approved.
+    @unstable(feature = agent-spawn)
+    record component-ref {
+        /// An OCI reference such as `ghcr.io/acme/agents/coder:1.2.0`. For
+        /// display; `digest` is authoritative.
+        image: string,
+        /// An OCI digest, `sha256:<hex>`.
+        digest: string,
+    }
+
+    /// A named volume mounted into one component. Read-write counts toward
+    /// both read and egress reach.
+    @unstable(feature = agent-spawn)
+    record volume-mount {
+        /// The name of a volume the implementer knows, resolved in the
+        /// caller's scope. Never a host path. The implementer compares the
+        /// storage behind the name with the storage behind the caller's
+        /// mounts; two workloads may use the same name for different storage.
+        /// An approval binds the storage the name resolved to, not the name
+        /// (see `approval`), so rebinding the name voids a pending approval.
+        volume: string,
+        /// Where the component sees the volume.
+        mount-path: string,
+        /// True mounts the volume read-only.
+        read-only: bool,
+    }
+
+    /// An interface granted to one component. The implementer, not the
+    /// request, classifies it as reading, writing, or both.
+    @unstable(feature = agent-spawn)
+    record interface-grant {
+        /// Fully qualified interface name with version, such as
+        /// `wasi:keyvalue/store@0.2.0`.
+        name: string,
+        /// Interface-specific configuration, such as a bucket or topic.
+        config: list<tuple<string, string>>,
+    }
+
+    /// What one component may touch. Empty grants nothing; nothing is
+    /// inherited from the caller.
+    @unstable(feature = agent-spawn)
+    record grants {
+        /// Hosts this component may reach.
+        allowed-hosts: list<string>,
+        /// Volumes mounted into this component.
+        volumes: list<volume-mount>,
+        /// Interfaces this component may import.
+        interfaces: list<interface-grant>,
+        /// Secret names the implementer delivers into this component's
+        /// memory. Names only, never values. Refused on a spawned agent's own
+        /// component (`spawn-request.grants`), whose memory credentials never
+        /// enter; use `credentials` for authenticated egress.
+        secrets: list<string>,
+        /// Credential references: stable logical names, not secret data. The
+        /// implementer resolves each through a credential binding the
+        /// operator scoped to this component's workload deployment, applies
+        /// it to the component's outbound requests (an injected Authorization
+        /// header, an mTLS client identity, or a signed request) and owns
+        /// those authentication headers, so a value the component supplies for
+        /// one is rejected. The value never enters the component. An
+        /// implementer without a credential broker treats every reference as
+        /// beyond the ceiling.
+        credentials: list<string>,
+    }
+
+    /// A toolset: one component, with its own grants, that offers one or more
+    /// tool definitions. Used by `spawn` for a child's toolsets and by
+    /// `tool-loading` for a toolset the caller loads. "Tool" means a single
+    /// definition or call, as in `cosmonic:agent/tools`.
+    @unstable(feature = agent-spawn)
+    record toolset-spec {
+        /// A DNS label: lowercase letters, digits and `-`, starting and
+        /// ending with a letter or digit, at most 32 characters. Unique among
+        /// the toolsets of one agent. Display metadata and the prefix of a
+        /// namespaced alias; never used for routing or authorization, which
+        /// follow the toolset's component identity and digest.
+        name: string,
+        /// A component targeting `cosmonic:agent/tool-provider@0.4.0`: it
+        /// exports `tools`. An implementer may also accept a component
+        /// exporting `cosmonic:agent/tools@0.3.0`, whose `list` cannot fail.
+        /// The implementer lists and dispatches across the toolset components
+        /// in the agent's workload, so an agent never carries a router of its
+        /// own.
+        component: component-ref,
+        /// What this toolset component may touch.
+        grants: grants,
+        /// The operator's override of how this toolset's tools are offered.
+        /// None takes the default: each tool keeps its own name if no alias in
+        /// the session has it yet, and otherwise is offered as
+        /// `<name>__<tool>`. Some(prefix) offers every tool as the prefix
+        /// followed by the tool's own name, so the empty string means the
+        /// tools' own names and `"gh__"` means `gh__search`. An alias that is
+        /// already taken, or that breaks model tool-name rules (only
+        /// `[A-Za-z0-9_-]`, at most 64 characters), refuses the spawn or load
+        /// with `invalid-request`; the implementer never renames it.
+        /// Operator-owned: an operator sets it in a toolset declaration. In a
+        /// caller's spawn or load request an implementer may refuse it, and
+        /// does unless its operator lets callers choose prefixes.
+        alias-prefix: option<string>,
+    }
+
+    /// What may come back to the caller.
+    /// Covered by the approval digest.
+    @unstable(feature = agent-spawn)
+    record output-spec {
+        /// JSON Schema that `structured` must satisfy. None means reply
+        /// parts only.
+        schema: option<json>,
+        /// Ceiling on the encoded outcome of one run, in bytes.
+        max-bytes: u32,
+    }
+
+    /// What the child may spend. Covered by the approval digest. None takes
+    /// the implementer's default, which policy may cap. ("Limit" is kept for
+    /// the implementer's own caps: `limit-scope` and `over-limit`.)
+    ///
+    /// The implementer enforces the budget, not the child: it refuses a run
+    /// past `max-runs`, ends a run at `max-duration`, and stops accepting runs
+    /// once `max-total-tokens` is spent. Counts the child reports about
+    /// itself (steps, token usage when the implementer does not meter model
+    /// calls) are steerable by the child, so enforcement that relies on them
+    /// is only as good as the child's honesty.
+    @unstable(feature = agent-spawn)
+    record budget {
+        /// Runs the child may take: the number of `agent.run` calls
+        /// accepted.
+        max-runs: option<u32>,
+        /// Model calls the child may make in one run. This is the bound
+        /// that stops a runaway run. The OpenAI Agents SDK, the Claude Agent
+        /// SDK and Goose call this bound `max_turns`. The implementer passes
+        /// it to the agent in `run-options`, where it is advisory: the agent
+        /// counts its own steps. The implementer enforces it only where it
+        /// meters the child's model calls itself.
+        max-steps: option<u32>,
+        /// Tokens the child may spend across all runs and all model calls:
+        /// the sum of `usage.prompt-tokens` and `usage.completion-tokens`.
+        /// `cached-prompt-tokens`, `cache-write-tokens` and
+        /// `reasoning-tokens` are parts of those two and are not added
+        /// again. Not `chat-options.max-tokens`, which bounds the
+        /// tokens one call generates. An implementer that does not meter the
+        /// child's model calls as they happen enforces this when a run ends,
+        /// so the run that crosses it may overshoot.
+        max-total-tokens: option<u64>,
+        /// Wall-clock budget, measured from spawn. Passing it mid-run ends
+        /// the run with an outcome whose finish is `max-duration`, not an
+        /// error.
+        max-duration: option<duration>,
+    }
+
+    /// Powers a spawned agent may receive. Discovery and loading are never
+    /// granted to a spawned child in this version.
+    @unstable(feature = agent-spawn)
+    flags agent-powers {
+        /// The child may call `spawn`.
+        spawn,
+    }
+
+    /// Everything needed to start a sub-agent. Declarative: its toolsets are
+    /// fixed for the agent's lifetime. Construction is lenient; `spawn`
+    /// validates and returns `invalid-request`.
+    @unstable(feature = agent-spawn)
+    record spawn-request {
+        /// A component targeting `cosmonic:agent/runnable-agent@0.4.0` (it
+        /// exports `run`), so the implementer can hand it runs in process.
+        agent: component-ref,
+        /// A model alias, as `models.open` takes it. Resolved against the
+        /// aliases the caller's spawn grant delegates, since a caller that
+        /// never chats has no aliases of its own. Counts toward read reach
+        /// like any other grant.
+        model-alias: string,
+        /// The child's instructions. Caller free text: not covered by the
+        /// approval digest and never shown in its summary (see
+        /// `approval.request-digest`).
+        instructions: string,
+        /// What the agent component itself may touch, in the same shape as a
+        /// toolset's grants. Toolsets carry their own.
+        grants: grants,
+        /// The child's toolsets. Names must be unique.
+        toolsets: list<toolset-spec>,
+        /// What may come back, and how much.
+        output: output-spec,
+        /// What the child may spend over its lifetime.
+        budget: budget,
+        /// Powers the child receives. Empty grants none: a child never
+        /// inherits its caller's powers. `spawn` is admitted only when the
+        /// implementer has spawn enabled for the caller; it lets the child
+        /// spawn in turn, within any operator limits.
+        powers: agent-powers,
+        /// For logs, audit, and display. Never policy input, and not
+        /// covered by the approval digest.
+        labels: list<tuple<string, string>>,
+    }
+
+    /// A grantor's decision on a request that needed approval.
+    @unstable(feature = agent-spawn)
+    variant decision {
+        /// Granted. Resend the identical request; the grant admits one
+        /// request in total, however many waiters shared the approval.
+        granted,
+        /// Denied, with an implementer-authored reason. Identical requests
+        /// from the same caller answer `access-denied` for the host's denial
+        /// cooldown and raise no new prompt (see `approval`).
+        denied(string),
+        /// No decision before the approval expired, or the implementer
+        /// withdrew it because its admission snapshot no longer matches (see
+        /// `approval`). Not a denial: an identical request raises a new
+        /// approval.
+        expired,
+        /// A decision not captured above. Treat as denied.
+        other(option<string>),
+    }
+
+    /// An earlier admission of the same digest from the same caller, which
+    /// makes a new approval a repeat.
+    @unstable(feature = agent-spawn)
+    record prior-admission {
+        /// The `id` of the approval whose grant admitted it.
+        approval-id: string,
+        /// How long before this approval was issued it was admitted.
+        admitted-ago: duration,
+        /// True while the child that admission started is still running.
+        still-running: bool,
+    }
+
+    /// A request beyond the caller's ceiling, sent to a grantor. The
+    /// approval outlives the call that produced it: it stays pending until
+    /// the grantor decides or it expires, whether or not anyone is waiting.
+    /// It is bound to the request digest. A changed request, or the same
+    /// request from another caller, is a new request. Standing permission
+    /// belongs in policy a person wrote, not in a reusable approval.
+    ///
+    /// One logical request, one admission. Every identical request from the
+    /// same caller made while an approval is pending is the same logical
+    /// request: it returns that same pending approval (the same `id`, one
+    /// prompt, not many), and every waiter's `decision` resolves to the same
+    /// value. A grant is single use and is consumed atomically, exactly
+    /// once, across all of those waiters and every resend: the implementer
+    /// admits one request on it (one child started, or one rollout) and no
+    /// more, and serializes concurrent resends so exactly one is admitted.
+    /// The implementer cannot tell waiters with the same digest apart, so
+    /// they share that one admission, and the caller hands the one `agent`
+    /// handle or `loaded-toolset` to whichever of its waiters need it.
+    /// Waiters sharing one `agent` handle share one child: its budget, its
+    /// conversation, and its output channel. `busy` only keeps their runs
+    /// from overlapping; it gives no waiter a child of its own.
+    /// Coalescing saves the person prompts; it never multiplies what one
+    /// decision admits.
+    ///
+    /// Handing the one `agent` handle to other waiters works only within one
+    /// store: the handle is scoped to the store that spawned it (see
+    /// `spawn.agent`), and most callers get a fresh store per request. A
+    /// waiter in another store cannot receive it, so its resend is a new
+    /// request and raises a new approval. That approval would read the same
+    /// as the one the person just granted, and a person approving a
+    /// seemingly duplicate prompt by reflex would start a second child. So
+    /// an approval for a digest that was admitted within the repeat window
+    /// is marked as a repeat (`repeat-of`), and its summary says so first,
+    /// and says too when the earlier admission's reach differed (see
+    /// `summary`).
+    /// A load needs no marker: an identical toolset already loaded is
+    /// returned as is (see `tool-loading`).
+    ///
+    /// A grant expires too: it admits the identical request only within the
+    /// implementer's grant lifetime, set by the operator. The expiry check
+    /// is part of the same atomic step that consumes the grant, so a grant
+    /// that expires while a resend waits its turn admits nothing. Once a
+    /// grant is consumed, or expires unused, an identical request is a new,
+    /// independent request and needs its own approval: it returns
+    /// `needs-approval` with a new approval, never the consumed one, and
+    /// identical requests coalesce onto that new approval while it is
+    /// pending. For a spawn, this includes a resend that lost the race for
+    /// the grant. A load is different: an identical toolset already loaded,
+    /// or being loaded, is returned as is and admits nothing (see
+    /// `tool-loading`), so a load's race losers get the winner's
+    /// `loaded-toolset`, not a new approval.
+    ///
+    /// Admission snapshot. The digest binds names; an approval also binds
+    /// what those names reached when the person reviewed them. Before it
+    /// raises an approval, the implementer resolves the normalized request
+    /// into an immutable admission snapshot:
+    /// - for each volume, the identity of the storage behind it;
+    /// - for each credential reference, the identity of the credential
+    ///   binding it resolves through: the binding itself and what it
+    ///   authenticates as and to. Not the secret value, so rotating a value
+    ///   within one binding changes nothing;
+    /// - for each secret name, the identity of the secret it resolves to;
+    /// - for the model alias, the provider, model and endpoint it resolves
+    ///   to;
+    /// - for each interface grant, the resource its config resolves to (a
+    ///   bucket, a topic) where the implementer resolves one, and whether it
+    ///   classified the grant as reading, writing, or both;
+    /// - the executable identities: the agent's and every toolset's
+    ///   component digest (already pinned by the request), and the digest of
+    ///   any component the implementer adds to run them;
+    /// - every default the request left to the implementer, materialized:
+    ///   each `budget` field that is none, and the configured values of the
+    ///   operator limits that apply to the child or toolset (the caps as
+    ///   configured, never live counters such as how many agents are running
+    ///   now, so ordinary activity never voids an approval). Aliases carry no
+    ///   authority and are not part of it.
+    /// The person-facing approval UI shows the snapshot beside `summary`:
+    /// each resolved identity by the name the operator gave it with a stable
+    /// short id, and each materialized default as its value, so the person
+    /// reviews concrete reach, not names whose meaning could change. The
+    /// implementer keeps the snapshot with the approval and records it in the
+    /// audit log. It never reaches the caller: it is not a WIT field, and
+    /// `summary`, which the caller receives in `needs-approval`, carries no
+    /// resolved infrastructure detail (no storage identity, nothing about
+    /// what a credential authenticates as or to, no model provider or
+    /// endpoint). The caller gets at most an opaque snapshot fingerprint in
+    /// `summary`: keyed with a host secret, so it reveals nothing and cannot
+    /// confirm a guess, and compared for equality only.
+    ///
+    /// The approval is bound to its digest and its snapshot together.
+    /// Consuming the grant resolves the request again and compares it with
+    /// the snapshot inside the same atomic step that checks expiry and
+    /// consumes the grant, and the admitted child or rollout runs with
+    /// exactly the snapshot's identities, never a later lookup. If anything
+    /// differs (a volume rebound to other storage, a credential binding
+    /// replaced or rescoped, a model alias pointed elsewhere, a secret
+    /// repointed, a default changed), the approval is unusable: the resend
+    /// admits nothing, the grant is spent even if the binding later changes
+    /// back, and the resend returns `needs-approval` with a new approval
+    /// bound to a new snapshot, for the person to review afresh.
+    ///
+    /// The same holds while an approval is pending. Coalescing compares the
+    /// digest and a fresh snapshot, so a request whose names now resolve
+    /// differently never joins the stale approval: the implementer withdraws
+    /// it (every waiter's `decision` resolves to `expired`, and it leaves the
+    /// pending cap) and raises one new approval for the new snapshot. An
+    /// implementer that watches bindings may withdraw at the moment of the
+    /// change. A withdrawal is not a denial and starts no cooldown. An
+    /// approval never authorizes a name for whatever it is later bound to:
+    /// that is standing authority and belongs in policy a person wrote.
+    ///
+    /// After a denial, the same digest from the same caller is refused
+    /// outright for a cooldown: every identical request answers
+    /// `access-denied`, with an implementer-authored reason, and raises no
+    /// prompt, so a looping agent cannot re-ask the person who just said no.
+    /// The cooldown is the host's; the recommended default is one hour. It
+    /// is keyed by digest and caller, not by snapshot, so a rebinding neither
+    /// lifts nor restarts it: an identical request after a rebinding is still
+    /// refused until the cooldown that the denial started runs out. A
+    /// `decision` of `other` counts as a denial. After an approval expires
+    /// undecided, an identical request raises a new approval; coalescing
+    /// keeps that to one pending prompt per digest, and the cap below
+    /// bounds the rest.
+    ///
+    /// The implementer must cap how many approvals one caller has pending at
+    /// once (distinct digests; coalesced waiters count once). A request that
+    /// would raise one past the cap answers `over-limit` with scope
+    /// `pending-approvals` and raises no prompt. The cap is the operator's
+    /// and at least one; the recommended default is three.
+    ///
+    /// "The same caller" means the same caller identity (see the contract on
+    /// this interface): the same workload incarnation and the same component
+    /// name. A workload recreated under the same name is a
+    /// different caller and needs its own approval; a rollout to a new
+    /// revision (as `load` does) keeps the caller. A sibling component in the
+    /// same workload is a different caller: its identical request neither
+    /// coalesces onto this approval nor consumes its grant. Only a person, or
+    /// policy a person wrote, decides; never a spawned agent.
+    @unstable(feature = agent-spawn)
+    record approval {
+        /// Implementer-issued id, to correlate with the approval UI and audit log.
+        id: string,
+        /// `sha256:<hex>` over a domain tag naming the operation and its
+        /// version (`cosmonic:agent/spawn-request@2` or
+        /// `cosmonic:agent/toolset-spec@2`), a zero byte, the caller's
+        /// workload incarnation, a zero byte, the caller's component name, a
+        /// zero byte, and the digest input in canonical JSON. Compare for
+        /// equality only.
+        ///
+        /// What it covers: exactly the fields `summary` shows, and all of
+        /// them. For a load, the whole `toolset-spec`. For a spawn, every
+        /// `spawn-request` field except `instructions` and `labels`: those
+        /// are caller free text, which the summary never shows, so the person
+        /// never decides on them, and a digest over them would let a caller
+        /// raise prompts that differ in nothing the person can see.
+        /// Instructions are content sent down, like `agent.run` messages.
+        ///
+        /// Normalization, before digesting and before the ceiling check:
+        /// - `allowed-hosts` entries are parsed; the scheme and host are
+        ///   lowercased, an internationalized host becomes its A-label form,
+        ///   one trailing dot is stripped, and a port equal to the scheme's
+        ///   default (80 for `http` and `ws`, 443 for `https` and `wss`) is
+        ///   dropped. A port with no scheme is kept. An entry that does not
+        ///   parse is `invalid-request`.
+        /// - Lists that are sets (`allowed-hosts`, `secrets`, `credentials`,
+        ///   `volumes`, `interfaces`) drop exact duplicates and are sorted
+        ///   by the UTF-8 bytes of each element's canonical JSON. Two
+        ///   different elements with one key (two volumes at one
+        ///   `mount-path`, two interface grants with one `name`) are
+        ///   `invalid-request`. `toolsets` is ordered and keeps its order,
+        ///   which assigns aliases.
+        /// - Names, digests, paths and secret and credential names are
+        ///   compared as given; no case folding or Unicode normalization.
+        ///
+        /// Encoding of each WIT value as JSON, then serialized by RFC 8785
+        /// (JCS: sorted member names, no insignificant whitespace):
+        /// - record: an object with every field, named as in this WIT
+        ///   (kebab-case).
+        /// - string: a JSON string. bool: `true` or `false`. u32: a number.
+        /// - u64 and `duration`: a string of decimal digits with no leading
+        ///   zeros, since RFC 8785 numbers are IEEE 754 doubles.
+        /// - option: `null` for none, the value's encoding for some.
+        /// - list: an array. list<tuple<string, string>> (interface
+        ///   `config`): an object; a repeated key is `invalid-request`.
+        /// - flags: an array of the names of the set flags, sorted.
+        /// - variant: the case name as a string for a case with no payload,
+        ///   otherwise an object with one member, the case name, whose value
+        ///   is the payload's encoding.
+        /// - `json` (`output.schema`): parsed and embedded as a JSON value;
+        ///   invalid JSON or a repeated member name is `invalid-request`.
+        request-digest: string,
+        /// Implementer-authored text for the person who decides, like
+        /// `toolset-offer.summary`, and unlike diagnostic detail strings.
+        /// States what is declassified, for example "results of this agent
+        /// (schema S, at most N bytes) return to <caller>". Built only from
+        /// values the implementer has validated (parsed hosts, checked names
+        /// and digests); free text the caller wrote, such as instructions or
+        /// labels, never appears in it. For a repeat (`repeat-of` is
+        /// some), it begins by saying so, for example "An identical request
+        /// from <caller> was admitted 2 minutes ago and is still running.
+        /// Approving starts a second, separate agent." When the earlier
+        /// admission's snapshot differed from this one, it says that too,
+        /// for example "That request reached different resources.", without
+        /// naming what differs; the approval UI shows the difference. It
+        /// shows every input of `request-digest`, in normalized form, so two
+        /// approvals whose digests differ never read the same; a
+        /// caller-authored value with no safe rendering (`output.schema`) is
+        /// shown by the `sha256:` of its canonical JSON.
+        ///
+        /// The caller receives it, so it never carries the admission
+        /// snapshot's resolved infrastructure details (see above): those
+        /// appear only in the person-facing approval UI and the audit log.
+        /// It may end with the opaque snapshot fingerprint, so two approvals
+        /// with one digest but different snapshots never read the same.
+        summary: string,
+        /// Some when the same caller had a request with this digest admitted
+        /// within the repeat window: the most recent such admission. The
+        /// host renders a repeat distinctly from a first request, so a
+        /// person does not approve what looks like a duplicate prompt by
+        /// reflex. The repeat window is the operator's; the recommended
+        /// default is one hour, extended for as long as a child admitted on
+        /// this digest is still running. Only `spawn` sets it; a load that
+        /// is already admitted returns its `loaded-toolset` instead.
+        ///
+        /// A marker rather than an error: a second identical child is
+        /// sometimes wanted (parallel workers), the caller cannot fetch the
+        /// first handle from another store anyway, and an error would add a
+        /// case every caller handles without giving the person the choice.
+        /// The marker keeps one shape, `needs-approval`, and moves the
+        /// decision to the person with what they need to make it.
+        repeat-of: option<prior-admission>,
+        /// Resolves when the grantor decides. Dropping it stops waiting; it
+        /// does not withdraw the request, so a person who decides after the
+        /// caller's own request has ended is not too late.
+        decision: future<decision>,
+    }
+
+    /// Which implementer limit a request would exceed. The tree limits
+    /// (`concurrent-agents`, `depth`, `total-agents`) are operator limits:
+    /// optional, set in host or policy configuration, and unset by default,
+    /// so nothing caps them unless an operator chooses to.
+    /// `pending-approvals` is always set. A child's budget
+    /// is chosen by its caller and is not carved from the caller's own.
+    @unstable(feature = agent-spawn)
+    variant limit-scope {
+        /// Agents running at once for this caller. May clear when one ends.
+        concurrent-agents,
+        /// Nesting depth of spawned agents, where a child of a workload the
+        /// person started is at depth 1. Does not clear.
+        depth,
+        /// Agents spawned in total by one caller tree: the root caller and
+        /// every descendant. Ended agents still count. Does not clear.
+        total-agents,
+        /// Memory the implementer reserves for the child.
+        memory,
+        /// Toolsets loaded into one agent at once. May clear when one is
+        /// unloaded.
+        loaded-toolsets,
+        /// Approvals one caller has pending at once. Mandatory, unlike the
+        /// tree limits. Clears when one is decided or expires.
+        pending-approvals,
+        /// A scope not captured above.
+        other(option<string>),
+    }
+
+    /// An implementer limit a request would exceed.
+    @unstable(feature = agent-spawn)
+    record over-limit {
+        /// Which limit.
+        scope: limit-scope,
+        /// The limit's value, where the implementer reports it.
+        limit: option<u64>,
+    }
+
+    /// Why a spawn did not start an agent, or a load did not load a toolset.
+    /// Either way nothing ran: no child started and no toolset was attached.
+    /// Detail strings are implementer-authored and diagnostic only.
+    @unstable(feature = agent-spawn)
+    variant admission-error {
+        /// The operator has not enabled this power on this host, or did not
+        /// grant it to this agent. Permanent for this caller: do not retry,
+        /// adapt instead (for example, hide a delegate action).
+        disabled,
+        /// A policy or a person refused. The capability is partially granted:
+        /// a different request may succeed. Also the answer, with no new
+        /// prompt, to an identical request during the cooldown after a
+        /// person denied it.
+        access-denied(string),
+        /// Beyond the ceiling and sent to a grantor. Await `decision`, then
+        /// resend the identical request. A grant admits one request in
+        /// total; see `approval`.
+        needs-approval(approval),
+        /// An implementer limit would be exceeded.
+        over-limit(over-limit),
+        /// Malformed: a malformed digest, a duplicate toolset name, an unknown
+        /// model alias, a component that does not target the right world.
+        invalid-request(string),
+        /// The implementer could not serve the call. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
+
+    // The records a run ends with (`run-outcome`, `run-counts`, `finish`,
+    // `reply-part`, `served-model`) are the shared ones in
+    // `cosmonic:agent/run-types@0.4.0`. In a spawned child's outcome, the
+    // implementer authors `finish` from its budget (`max-steps` is
+    // `budget.max-steps`, `max-total-tokens` and `max-duration` the
+    // lifetime budget) and fills `model` from its own metering, and every
+    // count it does not meter is only as honest as the child.
+
+    /// Why a run is paused. Implementer-authored.
+    @unstable(feature = agent-spawn)
+    variant blocked-reason {
+        /// A tool call waits on a person or the auditor.
+        tool-approval,
+        /// Policy holds the outcome until a person or the auditor releases it.
+        outcome-release,
+        /// A reason not captured above.
+        other(option<string>),
+    }
+
+    /// Contentless progress. The implementer coalesces frames and never
+    /// blocks on an unread stream. `counts` frames are cumulative but may lag:
+    /// model calls an implementer does not meter appear only when the run
+    /// ends.
+    @unstable(feature = agent-spawn)
+    variant progress {
+        /// The child is working.
+        working,
+        /// The run is paused.
+        blocked(blocked-reason),
+        /// Cumulative counters for this run so far.
+        counts(run-counts),
+        /// A frame not captured above. Safe to ignore.
+        other(option<string>),
+    }
+
+    /// A budget item that can leave an agent unable to take another run.
+    /// Per-run bounds such as `max-steps` end a run instead; see `finish`.
+    @unstable(feature = agent-spawn)
+    variant budget-item {
+        /// `budget.max-runs` runs were accepted.
+        max-runs,
+        /// `budget.max-total-tokens` were spent across all runs.
+        max-total-tokens,
+        /// `budget.max-duration` passed.
+        max-duration,
+        /// An item not captured above.
+        other(option<string>),
+    }
+
+    /// Why a run did not start. In every case nothing reached the agent.
+    /// Returned by `agent.run`. Not the `run` export's own `start-error`:
+    /// this one adds what only an implementer that holds a budget can know
+    /// (`exhausted`, `failed`), and never says `duplicate`, since the
+    /// implementer mints the child's run ids.
+    @unstable(feature = agent-spawn)
+    variant start-error {
+        /// A run is already in progress. One run at a time.
+        busy,
+        /// A budget item is spent; the agent takes no more runs.
+        exhausted(budget-item),
+        /// The message or options cannot be taken, for example an attachment
+        /// the agent does not accept. A different message may succeed.
+        invalid-input(string),
+        /// The agent has ended for good (it failed to start, or stopped and
+        /// cannot be restarted) and will never accept another run. Details
+        /// are on the observation path, not here.
+        failed(string),
+        /// The run could not be accepted now. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
+
+    /// Why a run failed after it started. Detail strings are
+    /// implementer-authored, never the child's, and diagnostic only. Not the
+    /// `run` export's own `run-error`: the child's typed cases (model errors,
+    /// `not-recorded`, `superseded`) are child-authored and reach the parent
+    /// only as `failed`, and `withheld` and `unavailable` are the
+    /// implementer's.
+    @unstable(feature = agent-spawn)
+    variant run-error {
+        /// The caller dropped the progress stream or the agent. Cancellation
+        /// is cooperative: effects the child or its toolsets caused before they
+        /// stopped are not rolled back.
+        cancelled,
+        /// The outcome failed `output.schema` or exceeded `output.max-bytes`.
+        output-rejected(string),
+        /// A person or the auditor declined to release the outcome.
+        withheld,
+        /// The child failed. Details are on the observation path, not here.
+        failed(string),
+        /// The implementer could not finish serving the run.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent.
+        other(option<string>),
+    }
+
+    /// A run that has started: progress frames, then the outcome. Not the
+    /// `run` export's `started-run`, whose stream carries the child's text and
+    /// steps. The stream closes before the outcome resolves; a closed stream alone does not mean success. The
+    /// outcome can be awaited without draining the stream. Dropping the
+    /// stream requests cancellation; an outcome already recorded wins the
+    /// race, so a cancelled run may still resolve to its outcome.
+    @unstable(feature = agent-spawn)
+    type started-run = tuple<stream<progress>, future<result<run-outcome, run-error>>>;
+}

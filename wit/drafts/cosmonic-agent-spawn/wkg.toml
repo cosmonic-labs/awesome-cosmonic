@@ -1,0 +1,4 @@
+# cosmonic:agent@0.4.0 (PR #71 with the tools fold) is not published yet, so
+# this draft resolves it from the package directory in this repository.
+[overrides]
+"cosmonic:agent" = { path = "../../cosmonic-agent" }

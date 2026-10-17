@@ -1,0 +1,1427 @@
+# Spawn and tools for `cosmonic:agent`: design notes
+
+**Status: not published, for discussion.** Started as the scaffold for the
+design jam on 2026-10-13. The WIT is split by interface (see
+[README.md](README.md) for the file and world layout and worked scenarios). It
+declares `cosmonic:agent@0.5.0`, the next version after 0.4.0 (PR #71 with the
+tools fold), and uses that 0.4.0 and `wasi:clocks@0.3.0`. The published
+packages are unchanged, and CI neither builds nor publishes
+`wit/drafts/`, so this directory cannot collide with the real `cosmonic:agent`
+package. Every interface, type, function and world is marked
+`@unstable(feature = agent-spawn)`, the WIT-native way to say "not published"
+without putting "draft" in an identifier.
+
+**Version tracking.** These files depend on `cosmonic:agent@0.4.0`: #71's
+breaking release with the tools fold (branch `draft/tools-fold`, see open
+question (r)). This branch is stacked on that one, so 0.4.0 is the package
+directory in this repository. 0.4.0 is not published yet, so `wkg.toml`
+resolves `cosmonic:agent` from that directory and `wkg.lock` pins only
+`wasi:clocks`. Harness bindings share one `user-message` and one set of tool
+types, because a harness imports 0.4.0 anyway. Merge these interfaces into the
+real package before anyone builds on them; the self-dependency goes away then.
+To check it locally:
+
+```sh
+cd wit/drafts/cosmonic-agent-spawn
+WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit fetch .
+WKG_CONFIG_FILE=../../wkg-registries.toml wkg wit build -d . -o /tmp/agent-spawn.wasm
+```
+
+A native wash-runtime plugin implements the interfaces in a spike that is
+not published: `spawn` and
+`tool-discovery.list` and `tool-loading.load` work end to end, and a
+host-side dispatcher serves agents' `tools` imports from toolsets that each
+run as their own workload.
+
+## What changed in this revision
+
+**2026-10-16, after standup: tools are components, and loading is a rollout.**
+Bailey's principle is that nothing is special: a tool is a component with the
+same boundary as any other, so a toolset joins the agent's own workload as a
+component rather than running as a workload of its own. Adding one to a running
+agent rolls the workload out to a new revision attached to the same session,
+invisible to the person and visible in the audit log. `tool-loading` changes to
+match: `loaded-toolset` is now a record (name and aliases) instead of a
+resource, since a rollout replaces the caller's instance and a handle would die
+with it; `unload(name)` and `loaded()` are added; the new revision serves the
+caller's next run. Open question (s) no longer applies to loading. The spike
+below still implements the earlier handle shape and follows later.
+
+1. **Confined spawn is dropped.** The `spawn-confined` interface, the
+   `confined-spawn-client` world, and its sink, outcome and run types are gone from
+   the WIT, the worlds and the spike. Why, and when to reopen it, is in
+   "Considered and dropped: confined spawn".
+2. **No "draft" in any identifier; the interfaces are `cosmonic:agent@0.5.0`.**
+   Eric asked for them in `cosmonic:agent` itself (`cosmonic:agent/spawn`,
+   `cosmonic:agent/tool-discovery`, `cosmonic:agent/tool-loading` and so on)
+   at the next unpublished version after #71 takes the package to 0.4.0. The
+   shared types interface is `spawn-types`, not a bare `types`, so it reads
+   clearly beside `inference-types`. The files stay in
+   `wit/drafts/cosmonic-agent-spawn/`, outside the `wit.yml` matrix, so CI
+   never builds or publishes a second `cosmonic:agent` directory. The
+   "not published" status lives in the prose.
+   **Build approach: depend on 0.4.0, vendor nothing.** A WIT package may use
+   another version of itself: each `package@version` is a distinct package to
+   the resolver. These files `use cosmonic:agent/inference-types@0.4.0` and
+   `cosmonic:agent/tool-types@0.4.0`, and the worlds `include
+   cosmonic:agent/agent@0.4.0`. First drafted against the published 0.3.0;
+   moved to 0.4.0 with the tools fold, so a harness carries one `user-message`
+   and one set of tool types. Until 0.4.0 publishes, `wkg.toml` resolves it from
+   the package directory (this branch is stacked on #71 and the fold). The spike
+   generates Rust modules `agent0_4_0` and `agent0_5_0` (and `agent0_3_0` for
+   the published agents it still serves). The self-dependency disappears when
+   the interfaces join the real package.
+3. **Worlds organize the package.** One file per interface, and worlds per role
+   composed with `include`. The capability worlds `spawn-client`,
+   `tool-discovery-client` and `tool-loading-client` each hold only their own
+   import and include neither `cosmonic:agent/agent` nor each other, so each
+   is exactly one grant; an agent writes `include agent; include spawn-client;`. `harness`
+   includes the agent world and all three. A spawned child targets
+   `cosmonic:agent/runnable-agent@0.4.0`, which moved to the 0.4.0 package
+   with the `run` export. A toolset targets the package's own
+   `tool-provider@0.4.0` world, which exports `tools`. The
+   implementer worlds are `spawn-provider`, `tool-discovery-provider` and
+   `tool-loading-provider`; the last also exports `cosmonic:agent/tools`,
+   because loading only works when the same implementer serves the caller's
+   `tools` import. (They replace `tool-provider-host`, formerly
+   `tool-broker`: world names carry neither "host" nor "broker", which is
+   reserved for host-wide services.) Import-side worlds end in `-client`
+   because it pairs with `-provider` and matches the published
+   `inference-client`. An earlier revision had a `toolset` world exporting
+   `tool-workload`, named so that `tool-provider` would not mean two
+   contracts; with the fold (open question (r)) both are gone and
+   `tool-provider` is the toolset world again.
+   The old `spawn-middleware` world is gone: a guest component in front of the
+   implementer would become the caller, and its own grants the ceiling, which
+   contradicts "policy wrappers are host-installed".
+4. **Tool discovery and loading**, each its own interface and world (below).
+5. **"Turn" is now "run"**: `agent.run`, `started-run`, `run-outcome`,
+   `run-error`, `run-options`, `budget.max-runs`, and the child's export
+   `run` (was `turn`, then `runnable`). `send` is `agent.run`, `send-error` is
+   `start-error`. The survey is below.
+6. **The reverse case and research grounding** are new sections. The interface
+   did not change for them.
+7. **Tool naming is three layers: identity, alias, display.** Calls are routed
+   and authorized by the toolset's workload identity; the model sees an
+   alias that carries no authority, its own name first, namespaced only on a
+   later collision, and never renamed; people see display metadata.
+   `toolset-spec` gains `alias-prefix` (first drafted as `expose-as`), the
+   operator's override, and `name` is a
+   DNS label of at most 32 characters. See "Tool naming: identity, alias,
+   display".
+8. **Review fixes.** Three independent reviews (security, runtime, API
+   design) produced the changes in "Review fixes" below: a typed `disabled`
+   case, explicit child powers, `grants.credentials`, `get-aliases`, an
+   approval digest with a domain tag, the caller's
+   incarnation and canonical JSON, expiring and shared grants, and fail-closed
+   volumes.
+9. **The tools fold.** `tool-workload` folds into `tools` in #71's 0.4.0
+   (fallible `list`, function-less `tool-types`), this draft depends on that
+   0.4.0, and toolsets target `tool-provider`. See open question (r).
+
+Smaller changes: `spawn-error` is `admission-error`, shared by `spawn`
+and `tool-loading.load`; `limit-scope` gained `loaded-toolsets`;
+the spike now detaches instead of withdrawing when the caller drops an
+approval's `decision`, as the WIT already said; `tool-discovery.list` takes an
+optional query. The former open questions are now stated defaults (see
+"Defaults, open to review").
+
+### Design-skill review fixes
+
+From a review against the WIT interface design skill:
+
+- **One word for a component that offers tools: toolset.** `tool-request` is
+  `toolset-spec`, `loaded-tool` is `loaded-toolset`, `tool-offer` is
+  `toolset-offer`, and `spawn-request.tools` is `toolsets`. "Tool" stays for a
+  single definition or call, as in 0.3.0 (`tool-def`, `tool-call`).
+- **Accessors use `get-`.** `loaded-toolset.names` is `get-aliases` (first
+  `get-names`; renamed to match the alias it returns).
+- **Aliases, not bindings, for models.** `spawn-request.model` is
+  `model-alias`, matching 0.3.0's `models.open(alias)` and `unknown-alias`.
+  "Binding" is kept only for credential bindings, a different idea (see
+  "Follow-ups").
+- **No unreachable finish code.** `finish.max-runs` is gone: an agent out of
+  runs is refused on its next `agent.run`, never mid-run.
+- **A dedicated exhaustion type.** `start-error.exhausted` carries `budget`
+  (`runs`, `tokens`, `duration`, `other`), only what can leave an agent unable
+  to take another run, instead of the whole `finish`.
+- **A permanent failure case.** `start-error.failed(string)`: the child has
+  ended for good and will never accept another run. The spike returns it for
+  every run after a child fails to start.
+- **`approval.summary`**, not `detail`: it is shown to a person, like
+  `toolset-offer.summary`, unlike diagnostic detail strings.
+- **Worlds**: capability worlds hold only their own import, `tool-loading-client` no
+  longer includes discovery, and `tool-provider-host` is split in two (item 3
+  above).
+
+Second pass, the should-fix items:
+
+- **`budget`, not `limits`.** The record is `budget`, with `max-runs`,
+  `max-steps`, `max-total-tokens` and `max-duration` (was `deadline`);
+  `finish.max-duration` and `finish.max-total-tokens` match. "Limit" is kept
+  for the implementer's own caps (`limit-scope`, `over-limit`). The exhaustion
+  variant is `budget-item`.
+- **`max-total-tokens`** counts `usage.prompt-tokens` plus
+  `usage.completion-tokens` over every model call of every run; cached,
+  cache-write and reasoning tokens are parts of those and are not added again.
+  0.3.0's `chat-options.max-tokens` bounds what one call generates, a
+  different thing.
+- **The resource stays `agent`**, not `subagent`. A spawned child is a full
+  agent: the same world, the same run model, and it can spawn in turn within
+  any operator limits, so "sub" names a relationship, not a distinct abstraction.
+  Prior art agrees: Claude subagents and Google ADK `sub_agents` are plain
+  agents in a hierarchy, and the OpenAI Agents SDK has only `Agent`. The
+  resource is scoped to the `spawn` interface, so it does not collide with the
+  `agent` world. Prose says "the caller" and "the child".
+- **`tools.list` has its own `list-error`** (`unavailable`, `denied`,
+  `other`), from the fold. A read has no effects to be unsure of, so
+  `call-error`, which #71 turns into `not-dispatched` and `outcome-unknown`,
+  does not fit it.
+- **The child's export is `run`**, after `wasi:cli/run`, now
+  `cosmonic:agent/run@0.4.0`. The world keeps the name `runnable-agent`: "a
+  runnable agent exports `run`" reads right, and renaming the world to
+  `run-agent` would read as a verb.
+- **The child's `run` returns `result<started-run, start-error>`**, symmetric
+  with `agent.run`, so a child can refuse (`busy`, `invalid-input`) without
+  starting. (Superseded: the export's `start-error` is now
+  `run-types.start-error`, and `spawn-types.start-error` is the parent's
+  own; see [Runs](#runs-the-childs-run-export).)
+- **`decision.denied`**, not `refused`, matching `access-denied` and 0.3.0's
+  `denied`.
+- **The agent component gets full `grants`**, like a toolset (was hosts only).
+  The spike enforces it to the same degree as toolset grants: hosts and
+  volumes are checked against the ceiling and wired into the agent's
+  workload; secrets and interfaces always count as beyond the ceiling.
+- **`run-counts`**, not `step-counts`, and the progress case is `counts`.
+- **`ceiling-fit`** with `within-ceiling` and `beyond-ceiling`. Fit describes
+  reach; policy may still require approval within the ceiling.
+- **`@unstable(feature = agent-spawn)`** on every interface and world, and on
+  every item inside them: wasm-tools refuses an ungated type or `use` inside a
+  gated interface when the feature is off, which is also how WASI writes its
+  own unstable interfaces (wasi:clocks `timezone`). `@unstable` replaces
+  `@since` on these items, since an item carries one gate; `@since` returns
+  when the interfaces are stabilized. Consumers opt in: wasmtime's `bindgen!`
+  enables all features but its generated `add_to_linker` takes a
+  `LinkOptions` the host must set `agent_spawn(true)` on, and wit-bindgen
+  takes `features: ["agent-spawn"]`.
+
+### Alignment with open PRs
+
+- **#71** (agent interruption and dispatch outcomes, 0.4.0) touches only
+  `wit/cosmonic-agent`. This package borrows its vocabulary where the same
+  situation arises: cancellation is cooperative and is a request, not a
+  guarantee; an outcome already recorded wins the race against a cancel;
+  cancellation does not roll back effects; `admission-error` and `start-error`
+  both mean "nothing ran", the same promise as #71's `not-dispatched`.
+  Toolsets now export 0.4.0 `tools`, so their `call` answers
+  `not-dispatched` or `outcome-unknown`, and the fold adds `list-error`.
+- **#70** (notifications 0.3.0): Victor asked for worlds and example scenarios
+  in package READMEs. README.md follows that, with WIT excerpts beside each
+  scenario.
+- **cosmonic-labs/sandboxed-agents#24** (merged): each tool exports a
+  per-tool interface (`cosmonic:<crate>/tool@0.3.0`, with `list` failing with
+  `call-error`), ships as its own image with its own grants, and the `toolbox`
+  guest router is kept only for compatibility. With the fold, the shared shape
+  is plain `cosmonic:agent/tools@0.4.0`; adopting it is a rename for those
+  components. The host, not a guest, lists and dispatches across tools.
+
+## Information-flow rules
+
+The implementer enforces these; the native plugin sees the caller's workload
+definition. The WIT states them on `spawn-types`.
+
+- **Reach.** Read reach is the union, over the agent and all its toolsets, of
+  read grants: volumes, secrets, interfaces classified as reading, and the
+  model alias. Egress reach is the union of allowed hosts and writing interfaces. A
+  read-write volume counts both ways.
+- **Default ceiling.** The child's read reach and egress reach (or a loaded
+  toolset's) must each fit inside the caller's. Within the ceiling, results flowing
+  up are not a leak. Containment compares what a grant reaches, not its name:
+  two workloads can call different storage `workspace`, so a volume fits only
+  if the same storage backs one of the caller's mounts. A grant the implementer
+  cannot see or compare (today: secrets and interface grants) is beyond the
+  ceiling.
+- **Beyond the ceiling: `needs-approval`.** Approval is explicit
+  declassification (deciding that data may cross a boundary it otherwise could
+  not). The digest covers the caller's identity and exactly the fields the
+  approval's summary shows: for a spawn, every `spawn-request` field except
+  the caller free text (`instructions`, `labels`), so `output { schema,
+  max-bytes }`, `budget` and `powers` are in; for a load, the whole
+  `toolset-spec`. Inputs are normalized first (see "The approval digest").
+  The `approval` carries a
+  `decision` future: await it, then resend the identical request. Dropping it
+  only stops waiting; the approval stays pending until it is decided or
+  expires, and a grant admits one identical request from the same caller.
+- **One approval, one admission.** Identical requests from one caller while
+  an approval is pending coalesce onto it (same `id`, one prompt), and every
+  waiter's `decision` resolves to the same value. Coalescing is one logical
+  request, not N: the grant is consumed atomically, exactly once, across all
+  waiters and every resend, so it starts one child or one rollout. Concurrent
+  resends are serialized and exactly one wins; the implementer cannot tell
+  same-digest waiters apart, so the caller routes the one `agent` handle or
+  `loaded-toolset` to the waiters that need it. After the grant is consumed
+  or expires, an identical spawn (a race loser included) is independent
+  and gets `needs-approval` with a new approval (shared, as above, by
+  identical requests while it is pending). An identical load is not: once
+  the winner's rollout has added the toolset, or while it is adding it,
+  `load` returns that `loaded-toolset` and admits nothing, so the losers
+  never see a prompt whose grant would only fail on the duplicate name. A
+  name already held by a different toolset is refused with
+  `invalid-request` before any grantor sees it.
+- **Expiry is checked where the grant is consumed.** Checking whether a grant
+  is still live and consuming it are one atomic step, so a grant that expires
+  while a resend waits its turn behind another admits nothing.
+- **An approval binds resolved reach, not names.** The digest covers names
+  (volume, secret, credential and model alias names), and names can be
+  rebound. Before asking, the implementer resolves an immutable admission
+  snapshot: the storage behind each volume, the credential binding behind
+  each reference (the binding and what it authenticates as and to, not the
+  secret value, so rotation is not a rebinding), the secret each name
+  resolves to, the model alias's provider, model and endpoint, the resource
+  and classification of each interface grant, every executable digest, and
+  every default the request left open (budget fields that are none, the
+  configured values of the operator limits that apply, not live counters).
+  The person-facing approval UI shows it and the audit log records it; the
+  `summary` the caller receives carries no resolved infrastructure detail,
+  at most an opaque, keyed snapshot fingerprint. A rebinding neither lifts nor
+  restarts a denial cooldown, which is keyed by digest and caller. Consuming the grant re-resolves and compares inside the same atomic
+  step as the expiry check, and the admission runs with the snapshot's
+  identities. Any difference makes the approval unusable: the grant is
+  spent and the resend gets a new approval to review. While pending,
+  coalescing compares a fresh snapshot too, so a rebinding withdraws the
+  stale approval (`decision` resolves to `expired`, no cooldown) and raises
+  one new approval. Without this, a person who reviewed `reports` backed by
+  storage A could have their grant admit `reports` rebound to storage B,
+  since the request bytes and digest are the same. Approving a name for
+  whatever it is later bound to is standing authority, which belongs in
+  policy a person wrote.
+- **Sharing a handle shares the child.** Waiters handed one `agent` handle
+  drive one child: one budget (runs, tokens and time spent by any waiter
+  count for all), one conversation (each run sees what earlier runs, from
+  any waiter, put in the child's session), and one output channel. `busy`
+  only stops runs from overlapping; it does not give a waiter a child of its
+  own or isolate one waiter's runs from another's.
+- **A repeat looks like a repeat.** Routing the one `agent` handle to other
+  waiters works only within one store, since the handle is store-scoped and
+  most callers get a fresh store per request (see (s)). Waiters in other
+  stores resend, and their new approval would read exactly like the one just
+  granted: a person approving it by reflex starts a second child. So a new
+  approval for a digest the same caller had admitted within the repeat window
+  (the operator's; recommended one hour, and always while that child still
+  runs) carries `repeat-of` (the earlier approval's id, how long ago, whether
+  the child still runs), and its summary opens with that fact. A marker, not
+  a new error: a second identical child is sometimes wanted (parallel
+  workers), the waiter could not fetch the first handle from another store
+  anyway, and an error would add a case every caller must handle while taking
+  the choice away from the person. The marker keeps the one
+  `needs-approval` shape.
+- **No after a no.** After a denial (or a `decision` of `other`), every
+  identical request from the same caller answers `access-denied` for the
+  host's denial cooldown (recommended one hour) and raises no prompt, so a
+  looping agent cannot re-ask the person who just refused. After an approval
+  expires undecided, an identical request raises a new one: the person may
+  simply have been away. The pending-approval cap is mandatory, not optional:
+  at most N distinct digests pending per caller (operator-set, at least one,
+  recommended three), and a request past it answers `over-limit` with scope
+  `pending-approvals` and raises no prompt. An earlier draft said the
+  grant admitted "each request that shared it, once", which let N coalesced
+  beyond-ceiling requests ride one human decision; that wording is gone.
+  Policy may hold an outcome until a person or the auditor releases it; the
+  parent sees `blocked(outcome-release)`.
+- **Downward flow.** Messages from `agent.run` are caller-controlled content
+  that can reach the child's egress. An approval for egress beyond the ceiling
+  says so.
+- **Plainly:** redaction is not a security boundary, because the model
+  paraphrases. The final reply is a declassification channel by nature.
+- **Steerable channels.** Counts, the finish code, the error kind, an
+  `output-rejected` over `max-bytes`, and timing are all chosen by the child.
+  Each is a narrow channel, minor next to the reply itself.
+- **Caller identity** is one pair, used in the approval digest, in
+  coalescing, in the pending-approval cap and denial cooldown, and in scoping
+  loaded toolsets: the **workload incarnation** (an id the host mints when the
+  workload is created and keeps across rollouts and restarts) and the
+  **component name** within that workload (from the workload definition,
+  stable across revisions). A workload recreated under the same name gets a
+  new incarnation, so it is a different caller and needs its own approval. A
+  rollout keeps both values, so `load` does not orphan the caller's pending
+  approvals or loaded toolsets. The component name keeps sibling components
+  apart: without it, a sibling's identical load would coalesce onto another
+  component's approval and consume its grant, gaining reach that was approved
+  against the other component's ceiling, although loaded toolsets are scoped
+  per component. Instance ids are never identity, since a rollout replaces
+  every instance; namespace and workload name are display and audit metadata.
+  The spike still binds workload id and component instance id, which does not
+  survive a rollout; it moves to this pair with the record model. Policy
+  wrappers are host-installed.
+
+## Runs: the child's `run` export
+
+`agent.run` needs a way to hand the child work. The 0.3.0 `agent` world only
+imports, so without an export an implementer has to speak each agent's own HTTP
+protocol through an ingress. The spike does exactly that with minimal-agent, and
+the bridge drops the instructions, attachments and output schema, leaves the
+child reachable on the ingress, and cannot pass `max-steps`.
+
+An earlier revision of this draft added its own `run` export. It now depends
+on `cosmonic:agent/run@0.4.0` instead (unstable, feature `agent-run`): the
+typed export a host drives any agent through, with
+`run(message, options) -> result<started-run, start-error>`. A spawned child
+targets `cosmonic:agent/runnable-agent@0.4.0`. One export serves both kinds of
+driver, a host for a top-level session and this package's implementer for a
+child, so an agent implements it once.
+
+**The parent's view stays narrow.** The export streams rich events (text
+deltas, whole steps with tool arguments and results) so a person can watch a
+top-level agent work. The rule here is that nothing child-authored reaches
+the parent except the final reply, and the parent's types enforce it: the
+parent receives `spawn-types.progress` (`working`, `blocked`, `counts`), never
+the export's `run-event`. So:
+
+- **Shared where identical.** `run-outcome`, `run-counts`, `finish`,
+  `reply-part` and `served-model` come from `cosmonic:agent/run-types@0.4.0`.
+  The implementer authors `finish` from the budget and fills `model` from its
+  own metering.
+- **Spawn's own where it differs.** `progress` and `started-run` (contentless
+  stream); `start-error`, which adds `exhausted` and `failed` (only an
+  implementer holding a budget knows them) and never says `duplicate`;
+  `run-error`, which adds `withheld` and `unavailable` and folds the child's
+  typed cases (model errors, `not-recorded`, `superseded`) into an
+  implementer-authored `failed`.
+- **The implementer maps one to the other.** It mints the child's `run-id`,
+  turns the lifetime budget into per-run options (remaining tokens become
+  `max-total-tokens`, remaining time `max-duration`, `budget.max-steps`
+  becomes `max-steps`), reads the child's events to emit `working` and
+  `counts`, discards deltas and steps, replaces error details with its own,
+  and checks the outcome against `output.schema` and `max-bytes`.
+- **The implementer buffers.** The export follows `chat`'s backpressure: the
+  child may wait on a slow event reader. The implementer is that reader, and
+  it reads promptly and coalesces, so a parent that never drains `progress`
+  never blocks the child, and the child never blocks the parent.
+
+Cancelling a run means the agent stops its calls before the outcome resolves
+to `cancelled`, which is what lets `agent.run` promise that two runs never
+overlap inside the child. A person who wants to watch a child work does it in
+the host's own view of the child's session, never through the parent.
+
+## Naming the unit of work: "run", not "turn" or "prompt"
+
+The question was whether the unit `agent.run` starts (a message in, the agent's
+loop, a final reply out) should be called a turn or a prompt. The survey, from
+primary docs:
+
+| System | One request and the work it causes | One model call in the loop | Bound on the loop | Source |
+| --- | --- | --- | --- | --- |
+| OpenAI Assistants API (deprecated in favor of Responses) | run: "an execution run on a thread"; threads hold messages | run step: "a step in execution of a run" | none | [`run.py`](https://github.com/openai/openai-python/blob/main/src/openai/types/beta/threads/run.py), [`run_step.py`](https://github.com/openai/openai-python/blob/main/src/openai/types/beta/threads/runs/run_step.py), [migration guide](https://developers.openai.com/api/docs/assistants/migration) |
+| LangGraph Platform (LangSmith Deployment) | run: "an invocation of an assistant"; a thread is "a persistent conversation container that maintains state across multiple runs" | super-step (in the graph) | `recursion_limit` | [runs](https://docs.langchain.com/langsmith/runs), [threads](https://docs.langchain.com/langsmith/use-threads) |
+| OpenAI Agents SDK | run (`Runner.run`), "a single logical turn in a chat conversation" | turn ("agent-loop turns (LLM calls)") | `max_turns`, default 10, `MaxTurnsExceeded` | [running agents](https://openai.github.io/openai-agents-python/running_agents/) |
+| Claude Agent SDK | `query()` | turn: "one round trip inside the loop" (output with tool calls, tools run, results fed back) | `max_turns`, counts tool-use turns, `error_max_turns` | [agent loop](https://code.claude.com/docs/en/agent-sdk/agent-loop) |
+| Codex app-server | turn: "a single user request and the agent work that follows"; turns hold items, threads hold turns | item | none found | [app-server](https://learn.chatgpt.com/docs/app-server.md) |
+| LangGraph | `invoke` | super-step, "a single iteration over the graph nodes" | `recursion_limit` (super-steps) | [graph API](https://docs.langchain.com/oss/python/langgraph/graph-api) |
+| AutoGen AgentChat | `run(task)` returning `TaskResult` | turn (one agent speaks) | `max_turns`, termination conditions | [teams](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.teams.html) |
+| Google ADK | invocation: "everything that happens in response to a single user query" | event | (not confirmed) | [event loop](https://adk.dev/runtime/event-loop/) |
+| Vercel AI SDK | `generateText` | step: "one model generation and the execution of any local tools" | `stopWhen`, `isStepCount` (was `maxSteps`) | [tools](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling) |
+| MCP | `sampling/createMessage` is one model call; prompts are templates (`prompts/get`) | not defined | none | [sampling](https://modelcontextprotocol.io/specification/2025-06-18/client/sampling), [prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts) |
+| A2A | task ("the core unit of action"), message, `contextId` | not defined | none | [specification](https://a2a-protocol.org/latest/specification/) |
+| Goose | `Agent::reply` | turn | `GOOSE_MAX_TURNS`, "consecutive turns … without user input", default 1000 | `aaif-goose/goose`, `crates/goose/src/agents/agent.rs` |
+| Pi | `agent.prompt()` (`agent_start` … `agent_end`) | turn: "one LLM call + tool executions" | none in the README | [pi-mono agent README](https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/agent/README.md) |
+
+"Turn" names three different things: one model round trip (OpenAI internally,
+Claude, Goose, Pi), one user request (Codex), and one agent's speaking slot
+(AutoGen). Worse for us, the old `max-turns` counted `send` calls, while
+`max_turns` in the OpenAI Agents SDK, the Claude Agent SDK and Goose bounds
+model calls, which is our `max-steps`. Anyone porting a harness would set the
+wrong bound. "Prompt" is worse still: an MCP prompt is a template, the system
+prompt is the instructions, and only Pi uses `prompt()` for the unit.
+
+**Decision: "run" for the unit, "step" for one model call.** Both words keep
+meanings people already know:
+
+- **Run.** The OpenAI Assistants API organized work as threads, then runs, then
+  run steps: a run is "an execution run on a thread" and a run step is "a step
+  in execution of a run", the same run and step pair used here. LangGraph
+  Platform has the same shape: a thread "maintains state across multiple
+  runs", and a run is "an invocation of an assistant". The OpenAI Agents SDK
+  (`Runner.run`, "a single logical turn in a chat conversation") and AutoGen
+  (`run(task)`) call the same unit a run, and ADK's "invocation" means the same.
+- **Step.** One model call and the tools it asks for: Vercel AI SDK steps
+  ("one model generation and the execution of any local tools"), Assistants
+  run steps, and LangGraph super-steps (one iteration over the graph). It
+  already named the bound, `max-steps`.
+
+"Turn", by contrast, is inconsistent across SDKs, as the table shows, and the
+one bound most harness authors know by that name, `max_turns`, means our
+`max-steps`. `budget.max-steps` says so in its doc comment. The Assistants API
+is deprecated in favor of the Responses API (its runs become responses and its
+run steps become items), but the run and step vocabulary it popularized is
+still what LangGraph Platform and the Agents SDK use.
+
+## Tool discovery and loading
+
+Bailey's direction is dynamic tools: host-mediated discovery and loading,
+approval-gated. Eric does not want a guest-side router. Spawning starts
+declarative. The package keeps all three.
+
+- **`tool-discovery.list`** returns the offers this caller may use or hand
+  down. The implementer keeps the catalog (toolsets a person installed or
+  policy allows, each a pinned component with the grants it would be given).
+  Each `toolset-offer` carries a ready-made `toolset-spec`, an
+  implementer-authored summary, the toolset's own tool definitions as
+  catalogued, and its `ceiling-fit` (`within-ceiling` or `beyond-ceiling`).
+  Offers policy would never grant are absent. An optional `query` keeps the
+  answer small: it matches offer names, summaries, and tool names and
+  descriptions, ignoring case. Asking starts nothing. Discovery is its own
+  import because knowing what exists is information.
+- **Tool descriptions are untrusted text.** A toolset's author writes its tool
+  names, descriptions and schemas, and a model reads them. Discovery puts more
+  of that text in front of models, so the implementer should show provenance
+  (the pinned digest) and may curate what it catalogues.
+- **`tool-loading.load`** loads a toolset into the caller while it runs. It is
+  a separate interface and world (`tool-loading-client`) so no world gets it by
+  accident, and `tool-loading-client` does not include discovery: a caller may be
+  allowed to load toolsets it is given without browsing the catalog. It is not
+  a method on the spawn `agent` handle: a parent that wants a child with more
+  toolsets spawns a new child. Admission matches `spawn` (ceiling, approval
+  digest over the caller and the `toolset-spec`), and policy may ask for
+  approval even within the ceiling, since new code is new risk even when its
+  reach is not. Loading is a rollout: the implementer rolls the caller's
+  workload out to a new revision that adds the toolset's component, attached
+  to the same session, and offers its tools through the caller's existing
+  `cosmonic:agent/tools` import from the next run on, so it must serve that
+  import too; `tool-loading-provider` exports both. `loaded-toolset` is a
+  record (name and aliases), not a handle, because the rollout replaces the
+  caller's instance; `unload(name)` is another rollout. The aliases are
+  stable for the session (see "Tool naming: identity, alias, display").
+- **No guest router.** The implementer lists and dispatches across the
+  toolset components in the agent's workload: each toolset is a component
+  with its own grants, not linked to the agent, and the agent's `tools`
+  import is served by the host.
+
+Spike coverage: `discovery_lists_against_the_callers_ceiling` registers five
+catalog entries and checks fits for a caller that reads `workspace` and reaches
+`allowed.test` (a reader and a network toolset inside, a writer and an unknown
+host beyond, a never-grant entry absent), checks that a caller with no reach
+sees every offer as beyond, filters by query (a match never reveals a
+never-grant entry), spawns an offer unchanged without approval, and checks
+that `load` from a caller with no `tools` import answers `unavailable`.
+
+Loading runs end to end against the published minimal-agent 0.2.0, unchanged,
+with a small loader composed in front of it (`wac plug`), so one component
+imports both `tools` and `tool-loading`, the shape of a harness that can load.
+`load_mid_session_then_drop` loads `distance-km` mid-session, and the agent's
+next run lists and calls it; dropping the handle stops its workload, the alias
+answers `unknown-tool`, and another toolset with the same tool is namespaced
+because the alias stays reserved. `load_beyond_the_ceiling_needs_approval_once`
+loads `iss-position` with a host the caller cannot reach: it goes to a
+grantor, the grant admits the identical load once, and the next identical load
+needs approval again. That test is sequential; the concurrent case below is
+not in the spike yet. `load_from_a_discovery_offer` loads an offer's spec
+unchanged. `load_is_denied_when_loading_is_off` checks the provider switch.
+These tests predate the record model: the spike still returns a handle,
+unloads a caller's toolsets when its store ends, and so keeps the loader's
+handles in a warm instance. Under the record model that is gone. A loaded
+toolset lives in the workload's revision and the session, the caller's store
+ending unloads nothing, and only `unload` (another rollout) or the session's
+end removes it.
+
+**Conformance case: concurrent waiters on one approval.** Not yet executable
+(the spike lives outside this repository); any implementer of `spawn` or
+`tool-loading` must pass it, once for each operation.
+
+1. From one caller, send N (at least 3) identical beyond-ceiling
+   requests concurrently, before any decision. Expect N `needs-approval`
+   results that carry the same `id` and `request-digest`, and one pending
+   prompt in the approval UI and audit log.
+2. Grant it once. Expect every waiter's `decision` to resolve to `granted`.
+3. Resend the identical request from all N waiters concurrently, and expect
+   the audit log to record one admission against the approval.
+   - `spawn`: exactly one `ok` (one `agent` handle) and N - 1
+     `needs-approval` results that share one new approval `id` (they coalesce
+     again, so the person sees one new prompt). Exactly one child started.
+   - `load`: N `ok` results carrying the same `loaded-toolset` (same name,
+     same aliases), no new approval, and exactly one revision rolled out
+     that adds the toolset. The losers join the winner's rollout or find it
+     done.
+4. Resend once more after the winner is admitted.
+   - `spawn`: expect `needs-approval` carrying the new pending approval from
+     step 3, never the consumed `id`, and never a second child. That new
+     approval (here and in step 3) carries `repeat-of` naming the consumed
+     approval's `id`, with `still-running` true, and its summary opens by
+     saying an identical request was admitted; a first approval for a digest
+     never carries `repeat-of`. Repeat from a fresh store per resend (as a
+     per-request caller would) and expect the same.
+   - `load`: expect `ok` with the same `loaded-toolset`, no approval, and no
+     rollout. Then send a different spec under the same `name` and expect
+     `invalid-request` with no approval raised. Then `unload` the toolset and
+     load the original spec again: expect `needs-approval` with a new
+     approval, since a load after `unload` is a new request.
+5. Repeat with the grant decided while some waiters have dropped their
+   `decision` future and others still hold it, and with a resend racing the
+   decision itself. The totals in step 3 must not change. Repeat once more
+   with a grant lifetime short enough that it ends while resends wait behind
+   one another: a resend that reaches the grant after expiry admits nothing.
+6. Repeat step 1 from a second caller with the same request, once as a new
+   incarnation of the same workload and once as a sibling component in the
+   same workload incarnation. Each time expect a separate approval with a
+   different `request-digest`; granting the first approval admits nothing for
+   the second caller, and the sibling's load is never offered to the first
+   component or vice versa.
+7. Roll the caller's workload out to a new revision (for example with an
+   unrelated `load`) while an approval is pending, then resend the identical
+   request from the new instance. Expect it to coalesce onto the same pending
+   approval (same `id`, same `request-digest`): a rollout keeps the caller.
+8. Deny an approval. Resend the identical request at once and again inside
+   the cooldown: expect `access-denied` each time and no new prompt or audit
+   entry for a new approval. After the cooldown, expect `needs-approval` with
+   a new approval. Let another approval expire undecided and resend: expect
+   a new approval at once.
+9. With the pending cap at K, raise K approvals for distinct digests from
+   one caller, then a (K + 1)th: expect `over-limit` with scope
+   `pending-approvals` and no prompt. An identical resend of one of the K
+   still coalesces onto it. Decide one, and expect the next distinct request
+   to raise an approval.
+
+## The approval digest
+
+The digest is what coalescing and single use compare, and what a discovery
+offer's spec must reproduce when loaded unchanged, so two implementers must
+compute the same bytes. `approval.request-digest` in `spawn-types` is the
+normative text; this section explains the choices and gives a test vector.
+
+- **Only what the person sees.** The digest covers exactly the fields the
+  summary shows, and the summary shows all of them. The alternative, a digest
+  over the whole request, let a caller vary a label (or the instructions) and
+  raise prompts that differ in nothing the person can see, so a person
+  approving one would reasonably approve its twin. Instructions are caller
+  free text, which the summary may never show, so they leave the digest:
+  they are content sent down, like `agent.run` messages, which no approval
+  ever bound. `output.schema` stays in and is shown by its `sha256:` because
+  it bounds the declassification channel.
+- **Normalized before digesting.** Set lists are deduplicated and sorted, and
+  allowed hosts are lowercased, stripped of one trailing dot, converted to
+  A-labels, and lose a default port. Without this, `API.example.com.` and
+  `api.example.com` (or a list with a duplicate entry) were two digests for
+  one reach, which dodges coalescing. The same normal form feeds the ceiling
+  check, so a request is judged on what it digests to.
+- **Every WIT value has one JSON form.** RFC 8785 fixes object member order,
+  whitespace and number formatting, but not how WIT options, variants, flags,
+  tuples or 64-bit integers map onto JSON. The mapping is: record as an object
+  with every field; option as `null` or the value; variant as the bare case
+  name, or a one-member object `{"case": payload}`; flags as a sorted array of
+  set names; `config` as an object; u64 and `duration` as decimal strings,
+  since RFC 8785 numbers are IEEE 754 doubles; `json` embedded as parsed JSON.
+
+**Test vector (load).** Caller workload incarnation
+`0b6f1f9e-3c5d-4e2a-9a71-5d2c8e4f6a10`, component name `agent`, and a
+`toolset-spec` named `repo-fs` for `ghcr.io/cosmonic/tools/fs:0.2.0` at
+`sha256:1c1c…1c` (the byte `1c` 32 times), with no `alias-prefix`, a read-only
+`workspace` volume at `/src`, credential `github`, and allowed hosts given as
+`API.GitHub.com.`, `api.github.com` and `https://Uploads.GitHub.com:443`. The
+hosts normalize to `api.github.com` (twice, so once) and
+`https://uploads.github.com`. The canonical JSON is:
+
+```json
+{"alias-prefix":null,"component":{"digest":"sha256:1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c","image":"ghcr.io/cosmonic/tools/fs:0.2.0"},"grants":{"allowed-hosts":["api.github.com","https://uploads.github.com"],"credentials":["github"],"interfaces":[],"secrets":[],"volumes":[{"mount-path":"/src","read-only":true,"volume":"workspace"}]},"name":"repo-fs"}
+```
+
+The preimage is `cosmonic:agent/toolset-spec@2`, a zero byte, the
+incarnation, a zero byte, `agent`, a zero byte, then those JSON bytes, and the
+digest is
+`sha256:0ff43f9bb36586a3b4393e291a66ce44fcfc83d2526c64840a80162f397d5f01`.
+Any reordering of the hosts, volumes or credentials, any of the three host
+spellings, or a duplicated entry must produce the same digest.
+
+**Conformance case: normalization.** From one caller, send identical
+beyond-ceiling requests that differ only in set order, duplicate set entries,
+host case, a trailing dot, or a default port, and for a spawn, in `labels` or
+`instructions`. Expect one approval (same `id` and `request-digest`). Then
+change one digest-covered field (a non-default port, a budget value, the
+schema) and expect a new approval whose summary differs from the first.
+
+**Conformance case: admission snapshot.** Run once for `spawn` and once for
+`load`, from one caller, with a request beyond the ceiling that names a
+volume `reports`, a credential reference and a model alias (the alias only
+for `spawn`).
+
+1. Raise the approval with `reports` backed by storage A. Expect the
+   person-facing approval UI to name storage A (the operator's name and a
+   stable id), the credential binding, the model the alias resolves to, and
+   the value of every budget field the request left as none, and expect the
+   audit log to record that snapshot. Expect the `summary` returned to the
+   caller to name none of storage A, the credential binding's identity, or
+   the model endpoint.
+2. Rebind `reports` to storage B while the approval is pending, then resend
+   the identical request. Expect the first approval withdrawn (each waiter's
+   `decision` resolves to `expired`), a new approval with a new `id` and the
+   same `request-digest` whose approval UI names storage B, one pending
+   approval for the digest in the cap, and no denial cooldown.
+3. Grant an approval, then rebind `reports` before the resend. Expect the
+   resend to admit nothing (no child, no rollout) and to return
+   `needs-approval` with a new approval for storage B. Bind `reports` back to
+   storage A and resend: expect the pending storage B approval withdrawn
+   (each waiter's `decision` resolves to `expired`) and a new approval for
+   storage A, never the spent grant.
+4. Repeat steps 2 and 3 with each of: the credential reference moved to a
+   different binding, the model alias pointed at another model, and an
+   operator default (a budget default) changed. Each must void the approval.
+   Then rotate the secret value inside the same credential binding between
+   grant and resend: expect the resend admitted, since a rotation is not a
+   rebinding.
+5. Race a rebinding against concurrent resends of a granted approval. Expect
+   either one admission running with storage A, or none and a new approval;
+   never an admission that runs with storage B on the old grant.
+6. Deny an approval, rebind `reports`, and resend the identical request.
+   Expect `access-denied` with no prompt until the original cooldown ends:
+   the rebinding neither lifts nor restarts it.
+
+## Tool naming: identity, alias, display
+
+An agent with several toolsets sees one flat list of tools, and two toolsets
+can define the same tool name. Naming has to settle three questions that look
+like one: which component a call reaches and with what authority, what string
+the model selects a tool by, and what a person is shown. They are kept apart.
+
+**Identity carries authority, and only the host sees it.** Each toolset runs
+as its own workload, and that workload is the toolset's service principal:
+its workload identity, as the implementer started it, with its deployment
+incarnation and pinned digest. Every tool call is routed, authorized,
+attributed and audited by that identity. The implementer's routing table maps
+each alias to a toolset workload and the tool's own name, and a call is
+checked against that table and nothing else. Audit records name the toolset
+workload, the tool's own name, and the calling agent's workload and session.
+Because each toolset is its own workload, each can also present its own egress
+identity: workload identity built on mTLS (wasmCloud/wasmCloud#5653) and client
+identity for outbound HTTPS, per host or per workload (wasmCloud/wasmCloud#5588),
+apply to a toolset workload as to any other.
+
+**Aliases are the model's selection key and carry no authority.** A guest
+sees only authorized opaque aliases: strings in its own `tools` list that the
+implementer resolves through the routing table. Neither an alias nor a
+toolset's declared name ever feeds a routing or grant decision. Deriving
+authority from a name would turn a naming bug into a security bug: a toolset
+that managed to claim another's name, or a rename that reused one, would
+inherit calls and grants meant for something else. The rules:
+
+- A tool is offered under its own name if no alias in the agent's session has
+  it yet.
+- Only a later toolset whose tool collides is namespaced, as
+  `<toolset>__<tool>`, and only that tool.
+- An alias, once assigned, is fixed for the session. Adding a toolset never
+  changes it, and an alias stays reserved for its tool even after its toolset
+  is gone, so the conversation never sees one alias mean two tools. The table
+  is persisted with the session state, so a restart or restore gives the same
+  aliases.
+- Toolsets declared up front are assigned in declaration order, which is
+  deterministic and visible in configuration.
+- An alias must be a valid model tool name: only `[A-Za-z0-9_-]`, at most 64
+  characters. A tool with no valid free alias refuses the spawn or load.
+- `toolset-spec.alias-prefix` is the operator's override: a prefix placed before
+  every tool's own name, where the empty string means the own names. It wins
+  over bare first. An alias it asks for that is already taken refuses the
+  spawn or load with `invalid-request`; the implementer never renames it.
+
+A prefix was chosen over a per-tool alias map because it is one string, it
+needs no knowledge of a toolset's tool names before the toolset lists them,
+and it covers the cases that matter: keep the own names (`""`), or claim a
+namespace (`"gh__"`). Renaming single tools would also leave descriptions that
+mention the old names.
+
+**Display is metadata for people.** `tool-def.title` passes through
+unchanged; a toolset that gives none gets the tool's own name as its title. A
+human surface (the agent UI, an approval prompt, a log meant for people)
+looks the alias up in the host and renders "title · toolset", never the wire
+alias. Display names are metadata, never used for authorization: two tools may
+share a title and still reach different workloads. Descriptions stay the
+toolset author's words; the implementer does not prefix them.
+
+**Trade-off.** Which toolset keeps a bare name depends on attach order: the
+first one to claim it. That is deterministic and visible, but it is a choice
+the order makes for the operator. `alias-prefix` lets the operator make it
+explicitly. Tool descriptions should not name sibling tools, because the
+model may know a sibling by an alias that is not its own name (the
+`distance_km` tool in sandboxed-agents#24 tells the model to call
+`iss_position` first).
+
+Spike coverage: `bare_first_aliases_and_routing_by_identity`,
+`a_later_attach_never_renames`, `aliases_survive_an_agent_restart`,
+`expose_as_overrides_and_refuses_conflicts` and `alias_rules` in
+`plugin/tests/toolsets.rs`, against the published minimal-agent 0.2.0 and the
+unchanged sandboxed-agents#24 tools.
+
+## Bounding tool results
+
+A tool result goes into the agent's context and stays there: the agent sends
+the whole conversation on every later model call. One grep call returning
+361 KB in demo preparation was resent on each step after it and took a
+session past a million tokens. The host sees every call, so the implementer
+bounds results there, whatever the toolset does.
+
+- **Text** parts share one cap per result (the spike's default is 32 KiB, set
+  by the operator, with an optional per-toolset override in the operator's
+  declaration; a caller does not set it). The part that crosses the cap is cut
+  at a UTF-8 boundary, later text parts are dropped, and a final text part
+  tells the model what happened: `[output truncated: showing N of M bytes;
+  narrow the request]`.
+- **Structured** output over the cap cannot be cut into valid JSON. The
+  response becomes `is-error` with a text part saying the result was too large,
+  rather than handing the model broken JSON.
+- **Inline attachments** have their own byte cap; one over it is replaced by a
+  text note naming its media type and size.
+- **Audit** records each cut by identity: the toolset workload, the tool's own
+  name, and the original and delivered sizes.
+
+The toolset paragraph of the `spawn-types` contract says the implementer may
+do this and how truncation is signalled, so toolset authors know to offer
+arguments that narrow a result.
+
+Spike coverage: `tool_results_are_bounded` and
+`bounding_never_splits_a_character`.
+
+## The reverse case: quarantining untrusted content
+
+Most of the agent-security literature addresses this case: a privileged agent
+delegates the handling of untrusted content to a quarantined child with no
+grants, and accepts only constrained output. Willison's Dual LLM pattern,
+CaMeL, FIDES and the design-patterns paper all build on it (see "Research
+grounding").
+
+**What we support.** A `spawn` with no toolsets and empty `grants` is a
+quarantined LLM in Willison's sense: it reaches nothing but its model, it
+cannot act, and the host checks its answer against `output.schema` and
+`max-bytes`. With a schema of enums, numbers and booleans, and harness code
+that reads only `structured`, what returns to the privileged side is a few bits
+of typed data, which is the low-capacity output FIDES and the map-reduce
+pattern recommend.
+
+**What we do not support.**
+- *Free text still flows.* A string field in the schema, or the `reply` parts
+  that every `run-outcome` carries, can hold injected instructions. The host
+  does not check that a schema is closed, and it always returns `reply`. Only
+  the harness code keeps them out of the privileged model's context.
+- *No opaque references.* CaMeL and FIDES let the privileged side hold a
+  variable it can pass to a tool but never read, and track where each value
+  came from. Nothing here does that: a parent reads every outcome it
+  receives, and there is no value it can hand to a second child without
+  reading it.
+- *No data-flow tracking.* CaMeL's guarantee comes from extracting control flow
+  from the trusted query and tagging every value with its sources. This
+  package checks reach at spawn time; it does not follow data through a run.
+- *Steerable channels remain.* Even a boolean answer comes with a finish code,
+  an error kind and timing the quarantined child chooses.
+
+**Interface changes considered, not made.** A schema mode restricted to enums,
+numbers, booleans and references, with `reply` withheld, would let the host
+enforce the pattern instead of trusting harness code. Its clearest benefit is
+for a grantor: a request whose output channel is a few bits is a much smaller
+declassification to approve. An opaque handle (a host-held value the parent can
+pass into another request but not read) would cover the CaMeL and FIDES case.
+Neither clearly strengthens the model enough today. The first only helps when
+the harness code is not trusted, and then the harness's own grants are the
+larger problem; the second needs host-side value storage and provenance that
+nothing else here has yet. Both stay open as question (n). The pattern is
+supported by convention, and Scenario 2 in README.md shows how.
+
+**What we never claim.** This does not block prompt injection. A quarantined
+child can still be manipulated into a wrong answer within its schema; the
+design limits what a manipulated child can do and say, not whether it is
+manipulated. Side channels are not solved.
+
+## Considered and dropped: confined spawn
+
+**What it was.** `spawn-confined` started a one-run child whose results never
+reached its caller and went to a sink instead (a person, an approval queue, or a
+volume the caller could not read). That is Lampson's confinement property, with
+the roles turned around: the caller is the party kept out.
+
+**Why it was dropped.** The proposed use cases did not hold up.
+
+- *The deploy worker and the ticket filer* wanted privilege separation, not
+  confinement. Open `spawn` already gives that: the child's grants are checked
+  against the ceiling, anything beyond it needs an approval bound to a digest,
+  and secrets are named, never handed over. Those callers also want the result
+  back.
+- *The worker that handles a secret* is better served by keeping the secret
+  away from every model and every component. In order of preference:
+  1. Host-brokered credentials: the component names a credential binding and
+     the host attaches the credential to outbound requests, the way model keys
+     already work.
+  2. A deterministic tool component with its own grants and a narrow WIT
+     return type that carries no secret material, writing generated material
+     straight into the secret store. The component model's typed interface is
+     the confinement.
+  3. Only when a model must read secret data: open `spawn` with
+     structured-only, reply-withheld output and a closed schema (question (n)).
+     This narrows the channel; it does not close it.
+- *An auditor reviewing an agent* is started by host-side policy, not by the
+  agent under review, so it needs no agent-facing spawn power.
+- What confined would still add on top of open spawn (sink routing, checks that
+  a child's writes never overlap its caller's reads, a guarantee that nothing
+  ever comes back) does not justify its own interface, world and
+  implementation.
+
+**Reopen it** if a concrete use case appears that none of the above covers.
+
+## Research grounding
+
+### Classic
+
+- **Confinement.** Lampson, "A Note on the Confinement Problem", CACM 16(10),
+  1973 ([text](https://www.bwlampson.site/11-Confinement/WebPage.html)): the
+  problem of "confining a program during its execution so that it cannot
+  transmit information to any other program except its caller". He sorts the
+  ways out into storage channels, legitimate channels (his example is the
+  bill), and covert channels "not intended for information transfer at all",
+  such as a service "varying its ratio of computing to input/output or its
+  paging rate". His rules include transitivity (an untrusted program a confined
+  one calls must be confined too) and masking (the caller must be able to
+  determine the inputs to every channel). A quarantined child (the reverse
+  case) is his confined service: its output schema is the legitimate channel,
+  and its finish code, error kind and timing are his covert channels. The
+  confined spawn this package once proposed reversed his roles and was
+  dropped (see "Considered and dropped: confined spawn").
+- **Information-flow control and declassification.** Myers and Liskov,
+  "Protecting Privacy using the Decentralized Label Model", ACM TOSEM 9(4),
+  2000 ([PDF](https://cs.brown.edu/courses/csci2390/2023/readings/jif.pdf)),
+  following their SOSP 1997 paper
+  ([page](https://www.cs.cornell.edu/andru/papers/iflow-sosp97/paper.html)).
+  Labels are policies "of the form owner: readers", and the model "permits
+  principals to declassify their own data, rather than requiring a trusted
+  subject": "a principal may weaken only the policies that it has itself
+  provided". Our approval is a declassification decided by the host, the one
+  principal that owns every grant; there are no per-datum labels. They also say
+  Jif "does not control certain covert channels that are more difficult to
+  identify".
+- **Capability confinement.** Shapiro and Weber, "Verifying the EROS
+  Confinement Mechanism", IEEE S&P 2000
+  ([PDF](https://www.cs.yale.edu/flint/cs428/doc/eros-verify.pdf)). The EROS
+  constructor certifies that what it builds holds only capabilities that convey
+  no mutate authority, plus a declared set of "known holes", so the product is
+  confined except through the holes its requester approved. The KeyKOS factory
+  did the same ([KeyKOS nanokernel
+  paper](https://pdos.csail.mit.edu/6.828/2009/readings/keykos.pdf): "It is
+  possible for a client to determine whether an object created by a factory is
+  secure."). A `spawn-request` is our constructor: the child gets exactly the
+  grants listed, nothing inherited, and anything beyond the caller's ceiling is
+  a hole a grantor approves by digest. Shapiro and Weber state plainly: "This
+  paper does not address the issue of covert channel suppression."
+- **Sealers.** Miller's E provides "sealer/unsealer pairs… The sealer is like
+  an encryption key, and the unsealer like a decryption key"
+  ([erights.org](http://www.erights.org/elib/capability/ode/ode-capabilities.html)).
+  That is the meaning "sealed" would have collided with.
+
+### Contemporary
+
+- **Dual LLM.** Willison, "The Dual LLM pattern for building AI assistants that
+  can resist prompt injection", April 2023
+  ([post](https://simonwillison.net/2023/Apr/25/dual-llm-pattern/)). A
+  privileged LLM with tools, a quarantined LLM that "does not have access to
+  tools, and is expected to have the potential to go rogue at any moment", and
+  a controller that is "regular software, not a language model". The privileged
+  LLM sees only variable names such as `$VAR1`. He says it "isn't a 100%
+  reliable solution".
+- **CaMeL.** Debenedetti et al., "Defeating Prompt Injections by Design",
+  Google DeepMind, 2025 ([arXiv 2503.18813](https://arxiv.org/abs/2503.18813)).
+  It "explicitly extracts the control and data flows from the (trusted)
+  query", so untrusted data "can never impact the program flow"; its quarantined
+  LLM "has no tool access" and answers in a predefined schema; values carry
+  capability tags. It completes 77% of AgentDojo tasks with provable security,
+  against 84% undefended. Its own limits: "CaMeL is vulnerable to side-channel
+  attacks" (§7) and "prompt injection attacks are not fully solved" (§9.3).
+- **FIDES.** Costa et al., "Securing AI Agents with Information-Flow Control",
+  Microsoft, 2025 ([arXiv 2505.23643](https://arxiv.org/abs/2505.23643)).
+  Confidentiality and integrity labels on every value, a `Hide` operation that
+  replaces content with a variable passed by reference, and a quarantined LLM
+  whose result has "a known type", ordered bool, enum, string: "Boolean and
+  enumeration types can carry a bounded amount of information". It concedes it
+  "does not prevent implicit flows due to data-dependent control flow".
+- **Design patterns.** Beurer-Kellner et al., "Design Patterns for Securing LLM
+  Agents against Prompt Injections", 2025
+  ([arXiv 2506.08837](https://arxiv.org/html/2506.08837)). Principle: once an
+  agent has ingested untrusted input, it "must be constrained so that it is
+  impossible for that input to trigger any consequential actions". Six
+  patterns: action-selector (map a request to fixed actions, no feedback),
+  plan-then-execute (fix the plan before reading untrusted data), LLM
+  map-reduce (an isolated LLM per untrusted item, outputs constrained, for
+  example to a number), dual LLM, code-then-execute (the LLM writes a program
+  that calls tools and sub-LLMs), and context-minimization (drop the user
+  prompt from context once it has chosen the first action). Map-reduce and dual
+  LLM map onto open `spawn` with no reach; plan-then-execute and
+  code-then-execute live in the harness, above this package.
+
+### How the SDKs delegate
+
+- **OpenAI Agents SDK** has two modes
+  ([multi-agent](https://openai.github.io/openai-agents-python/multi_agent/),
+  [handoffs](https://openai.github.io/openai-agents-python/handoffs/)). With
+  `Agent.as_tool()` a manager "keeps control of the conversation" and the
+  specialist returns a result. With a handoff the specialist "becomes the
+  active agent for the rest of the turn", with the full history by default.
+  `spawn` is agents-as-tools: the parent keeps control and gets the final reply.
+  There is no handoff here; a child never takes over its parent's conversation.
+- **Claude Agent SDK subagents**
+  ([subagents](https://code.claude.com/docs/en/agent-sdk/subagents)):
+  "intermediate tool calls and results stay inside the subagent; only its final
+  message returns to the parent", and the only content passed down is the
+  prompt string. `spawn` keeps the same shape and adds what an in-process SDK
+  cannot: each tool in its own sandbox with its own grants, a ceiling checked
+  by the host, and approvals bound to a digest.
+
+### Use cases
+
+- **Open spawn:** a reviewer with read-only access to the repo returns a
+  structured verdict; a researcher with one allowed host returns a summary; a
+  test runner with the workspace volume returns pass or fail and a log excerpt.
+- **Quarantine (reverse):** triage an inbound email into a category and an
+  urgency flag; extract a number from a scraped page; classify an
+  attachment as safe or not before the privileged agent decides what to do.
+
+### What these notes do not claim
+
+Nothing here confines a child: its reply returns to its parent by design.
+Covert and timing channels, and services a parent and child can both reach,
+stay open, as Lampson, EROS, CaMeL and FIDES each say of their own systems.
+Nothing here blocks prompt injection.
+
+## Defaults, open to review
+
+Each former open question below now has a stated default with its reasoning.
+Every one is **default, open to review**: the package and the spike follow it
+until someone argues it down.
+
+**1. Folding `tool-workload` into `tools`: decided.** See open question (r),
+closed on 2026-10-15.
+
+**2. Caller-set budgets, optional operator limits, no budget carving.**
+*Default, open to review.* Each spawn carries a budget its caller chooses
+(`max-runs`, `max-steps`, `max-total-tokens`, `max-duration`), and it does not
+have to fit inside the caller's own remaining budget. The spawn tree may be
+bounded by optional operator limits, set in host or policy configuration and
+unset by default: depth, total agents per caller tree, and concurrent agents
+per caller. When one is set and reached, `spawn` returns `over-limit` with the
+matching `limit-scope` (`depth`, `total-agents`, `concurrent-agents`) and the
+limit. Privilege attenuation stays mandatory: a child's grants fit inside its
+caller's ceiling unless a grantor approves.
+
+Why: a spawned agent is just an agent, so nothing about being spawned should
+give it a smaller or different budget model than any other agent. How big a
+tree may grow is an operator decision about cost and capacity, made where the
+operator already sets provider spend limits, not something each caller should
+have to compute. And cost is not a security boundary: carving budgets would
+complicate every harness without protecting anything that the ceiling and the
+approval digest do not already protect.
+
+*Enforced in* the spike's admission (`SpikeConfig::max_depth`, `max_agents`,
+`max_concurrent`, all `None` by default); *tested by* `spawn_depth_is_capped`
+(with `max_depth` set to 1, a child is refused; with 2, a grandchild is
+refused), `no_limit_configured_allows_deep_chains` (with no limit set, a
+chain four agents deep spawns and the leaf answers),
+`max_agents_counts_the_whole_tree` (descendants and ended agents count toward
+the tree's total; another caller is another tree) and
+`over_limit_concurrent_agents`.
+
+Prior art:
+
+- **Claude Code and the Claude Agent SDK** let subagents spawn subagents and
+  bound the tree with operator settings: `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
+  (default 3; 1 stops subagents from spawning), `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`
+  (default 20), and an optional query-wide spend cap, `max_budget_usd`, with no
+  limit by default ([subagents, "Cap subagent depth, concurrency, and
+  spend"](https://code.claude.com/docs/en/agent-sdk/subagents)). These are
+  limits on the whole tree, set by whoever runs the query, not budgets each
+  subagent carves for its children. The docs note that earlier releases lack
+  some of these limits or default differently.
+- **Google ADK, CrewAI's hierarchical process and LangGraph subgraphs** fix the
+  topology in code: ADK sub-agents and workflow agents that "operate based on
+  predefined logic" ([workflow agents](https://adk.dev/agents/workflow-agents/)),
+  a CrewAI manager that delegates among the agents listed on the crew
+  ([hierarchical process](https://docs.crewai.com/en/learn/hierarchical-process)),
+  and LangGraph subgraphs compiled into the parent graph
+  ([subgraphs](https://docs.langchain.com/oss/python/langgraph/use-subgraphs)).
+- **Iteration caps are per run and not inherited:** the OpenAI Agents SDK's
+  `max_turns` ([running agents](https://openai.github.io/openai-agents-python/running_agents/)),
+  LangGraph's `recursion_limit`
+  ([graph API](https://docs.langchain.com/oss/python/langgraph/graph-api)),
+  AutoGen's termination conditions
+  ([termination](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/termination.html)),
+  and CrewAI's per-agent `max_iter`, "Maximum iterations before the agent must
+  provide its best answer. Default is 20"
+  ([agents](https://docs.crewai.com/en/concepts/agents)).
+- None of these carve a child's budget out of its parent's. Spend limits, where
+  they exist, sit outside the agent definitions: a query-wide cap in the Claude
+  Agent SDK, and provider or account limits elsewhere.
+
+**3. Discovery shows what could be granted, marks it, and filters.** *Default,
+open to review.* `tool-discovery.list` returns offers within the caller's
+ceiling and offers beyond it that policy could approve, each marked with its
+`ceiling-fit`, and hides anything never grantable, even from a matching query. Showing
+approvable offers lets a harness plan a request a person can approve instead of
+guessing; hiding never-grantable ones keeps the catalog from advertising what
+no one will get. `list(query: option<string>)` keeps answers small: the query
+matches names, summaries, and tool names and descriptions, ignoring case, and
+the implementer may cap the count. *Enforced and tested in*
+`discovery_lists_against_the_callers_ceiling`.
+
+**4. A parent cannot load tools into a child it spawned.** *Default, open to
+review.* Spawning stays declarative: a parent that wants different tools spawns
+a new child. Loading into a child would make its tool set change under it and
+make the parent a grantor of sorts for another agent's reach. Revisit once
+loading exists at all. Stated in `tool-loading`.
+
+**5. An approval grant is single use and bound to the request digest.**
+*Default, open to review.* A grant admits one identical request from the same
+caller before it expires, and nothing else: another caller, or the same caller
+with any digest-covered field changed, is a different digest and needs its
+own approval. Instructions and labels are caller free text the summary never
+shows, so they are outside the digest (see "The approval digest"). The grant is
+also bound to the admission snapshot of what the request's names resolved to
+when it was reviewed; a rebinding while it is pending or before it is consumed
+voids it. Standing permission belongs in policy a person wrote, where it
+can be read, reviewed and revoked, not in a reusable approval that quietly
+widens what a caller can do. Dropping `decision` stops waiting and does not
+withdraw. A denial holds for a cooldown (identical requests answer
+`access-denied` without a prompt), and pending approvals per caller are
+always capped (`over-limit` with `pending-approvals`); both defaults, one hour
+and three, are recommendations for the operator. *Enforced in* the spike's admission; *tested by*
+`approval_grant_is_single_use_and_bound_to_the_digest`,
+`ceiling_needs_approval_then_identical_resend` and
+`dropping_the_decision_keeps_the_approval_pending`.
+
+**6. Providers are enabled per host by the operator; dispatch on, discovery,
+loading and spawn off by default.** *Default, open to review.* One
+implementer can provide all four (the host-side tool dispatcher behind
+`cosmonic:agent/tools`, `tool-discovery`, `tool-loading` and `spawn`), and the
+operator turns each of the last three on separately. The dispatcher is on
+whenever a workload declares toolsets, because the operator who wrote that
+declaration already granted it. A provider that is off is still linked: its
+calls answer the typed `disabled` case (in `admission-error` and
+`discovery-error`), are audited, start nothing and reveal nothing (discovery answers an
+error, not an empty catalog). The workload is not refused at start, so a
+component built against the `harness` world runs with whichever powers the
+operator allows and can tell a disabled power from an empty result.
+
+Why: safe by default and controllable. Each of the three hands the agent a
+new power (knowing what exists, changing its own tools, starting other
+agents), so none should arrive just because a component imports it. The
+realistic configurations are subsets, not all or nothing: dispatch only
+(declared toolsets, the common case); dispatch and discovery (an agent that
+can see what it could be given, and ask); spawn with declared toolsets
+(children fixed at spawn time, no browsing); dispatch and loading without
+spawn (an agent that grows its own tools but starts no agents); and loading
+without discovery (an agent that loads the toolsets it is handed but cannot
+browse the catalog). The alternative, refusing the workload's start when it
+imports a power that is off, is stricter but turns one disabled power into a
+component that cannot run at all.
+
+*Enforced in* the spike's plugin (`SpikeConfig::spawn`, `discovery` and
+`loading`, all `false` by default, beside the operator limits `max_depth`,
+`max_agents` and `max_concurrent`); *tested by*
+`providers_are_off_by_default_and_enabled_one_by_one`.
+
+### Still open
+
+**(a) One workload for agent and toolsets, or one per toolset?** Both run. Labels fix
+the toolsets when the agent is built and suit presets; one workload per toolset,
+with the host routing `tools`, takes toolsets chosen at spawn time and is
+what `tool-loading` needs. Proposal: one workload per toolset for `spawn` and
+`load`, labeled single-workload placement for presets.
+
+**(c) Lifetime versus store.** A resource dies with its store, so a parent that
+lives for one request kills its children when the request ends. (Loaded
+toolsets are records in the workload revision and session since 2026-10-16,
+so the store ending no longer unloads them.) Options: a reattachable id scoped to the parent's session, or
+request-scoped `spawn` now and session-scoped spawning later.
+
+**(e) Progress stream or host UI only.** `counts` frames lag unless the
+implementer meters the child's model calls, and `max-total-tokens` can only be
+enforced when a run ends unless it does.
+
+**(g) Taint propagation, long term.** Narrowing egress as a child reads needs
+runtime revocation of `allowedHosts`.
+
+**(j) Style.** These interfaces follow the WIT design skill
+(`other(option<string>)`, gates on every item); 0.3.0 and #71 do not. Align
+when they join the real package. One known mismatch: this package says
+`access-denied` in `admission-error` and `denied` in `decision`, while 0.3.0
+uses a bare `denied(string)` for its refusals (`models.open-error`,
+`tools.call-error`).
+
+**(l) Labeled imports for preset agents.** A zero-key `spawn` under a labeled
+import, checked before instantiation. Worth adding?
+
+**(n) Structured-only output for `spawn`?** An output mode that withholds
+`reply` and requires a closed schema (enums, numbers, booleans), so the host
+rather than harness code enforces the quarantine pattern and an approval can
+state how few bits come back; and opaque handles a parent can pass on but not
+read. Neither is added; see "The reverse case". It is also the third option in
+"Considered and dropped" for a model that must read secret data.
+
+**(r) Fold `tool-workload` into `tools`: decided (Eric, 2026-10-15).** Made
+as the three reviews recommended, in #71's breaking 0.4.0 release (branch
+`draft/tools-fold`, stacked on #71): `tools.list` returns
+`result<list<tool-def>, list-error>`, and the same `tools` interface is the
+agent's import and the toolset's export; the records (`tool-def`,
+`tool-response`, `call-error` with its parts, and the new `list-error`) move to
+a function-less `tool-types`, so a toolset imports only types. `tool-workload`
+and the `toolset` world are retired from this draft; toolsets target
+`tool-provider@0.4.0`. `tool-call` stays in `inference-types`, because messages
+carry it and `tool-types` already uses `inference-types`, so moving it would
+make the two interfaces use each other.
+
+*Compatibility.* The published 0.3.0 artifact is unchanged. Hosts keep
+serving `tools@0.3.0` (infallible `list`) to agents built against it, such as
+minimal-agent 0.2.0, and may keep accepting toolsets that export 0.3.0
+`tools` or a per-package shape like sandboxed-agents#24's; the spike does
+both. Where the host cannot answer `list` for a 0.3.0 agent it returns an
+empty list, as before; a 0.4.0 agent gets `list-error`.
+
+**(s) Store-scoped handles, and reattaching.** For Bailey. (No longer applies to `tool-loading`, which has no handle since 2026-10-16; still open for spawn's `agent`.) A handle dies with
+its caller's store, and most callers get a fresh store per request, so a
+child cannot outlive one request (the spike keeps handles in a warm
+instance), and the one handle cannot be shared with waiters in other stores
+(see "A repeat looks like a repeat"). *Recommendation from the reviews (medium confidence):*
+keep store scope as the default, and add an explicit, consume-by-move
+`detach(label)` on `agent` with an `attach(label)` to
+reclaim it, authorized by the host-derived caller identity and session, never
+by a label the guest could leak; parked children count toward
+`concurrent-agents` and end at an idle TTL, their `max-duration`, or the
+session's end. In memory first, durable with the session work.
+
+**(t) Types-only interfaces.** For the runtime. A component that imports an
+interface only for its types (a spawn client imports `inference-types`, a
+toolset imports `tools`) must still have it linked, and two plugins that both
+link one collide. *Recommendation (medium confidence):* the runtime links
+interfaces that have no functions and no resources itself, once per linker,
+before plugins bind; an interface that defines resources stays with the
+plugin whose functions return them. With the fold (r), a 0.4.0 toolset
+imports the function-less `tool-types` instead of `tools`, so the remaining
+case is an empty instance any host can link; only 0.3.0 toolsets still
+import `tools` for types.
+
+**(u) The cancellation trigger, and a `cancelling` frame.** Dropping the
+progress stream requests cancellation today, so a harness that does not want
+progress must hold an unread stream, and idiomatic bindings drop it and
+cancel by accident. *Recommendation (medium confidence):* key cancellation on
+dropping the outcome future (dropping the stream only stops progress), and add
+`progress.cancelling` for the window in which `agent.run` answers `busy`
+because a cancelled run has not stopped. The spike already holds `busy` until
+the old run drains or is hard-stopped.
+
+**(v) Where the gate lives.** Settled: `cosmonic:agent@0.5.0` with
+`@unstable(feature = agent-spawn)` on every item. *Alternative recorded for
+Bailey (from the API design review):* WASI's own practice is to ship gated
+interfaces inside the next real version rather than a separate one, which
+removes the two-version problem, and to give each power its own gate
+(`agent-spawn`, `tool-discovery`, `tool-loading`), since the four powers are
+not equally mature.
+
+**(w) `approval` as a resource.** `approval` is a record holding a `future`,
+returned inside an error variant, and records cannot grow additively. *Open,
+with the reviews' recommendation:* a `resource approval` with `get-` accessors
+and a `wait-for-decision`, which can gain fields and methods without breaking.
+
+**(x) Uncatalogued code within the ceiling.** Today a caller may spawn or load
+any digest the implementer can resolve without a person, as long as its grants
+fit. Grants are reach, not effective reach: a toolset loaded with the agent's
+own hosts turns a latent grant into egress chosen by a model. *Open (medium
+confidence):* within the ceiling, admit at once only digests in the operator's
+catalog, and send any other digest to a grantor; the WIT already lets policy
+ask for approval within the ceiling.
+
+**(y) Product defaults for tree limits.** The plugin keeps them optional and
+unset; turning spawn on then allows an unbounded tree. *Open, a Desktop and
+Control decision:* ship non-null defaults when an operator enables spawn (the
+Claude Agent SDK uses depth 3 and 20 concurrent subagents), and cap a single
+child's budget per host.
+
+**(z) Desktop sequencing.** *Recommendation from the reviews (medium-high
+confidence):* ship the dispatcher for operator-declared toolsets first
+(per-toolset isolation, bounded results, metadata-only audit, per-component
+sessions); with declared toolsets only, aliases are a pure function of
+declaration order and the pinned toolsets' names, so they need no storage.
+Durable alias storage and session-scoped handles (s) then gate loading and
+spawn, each behind its operator switch, off by default.
+
+**(aa) Style of the 0.4.0 package against the WIT design skill.** For Bailey.
+The fold follows #71's style so `tool-types` stays consistent: `list-error`
+uses `denied(string)` and `other(string)` like `dispatch-error`, where the
+skill would use `access-denied` and `other(option<string>)`. The skill also
+asks for shared types in an interface named `types` (the package uses
+`inference-types` and now `tool-types`) and `@since` on every interface (#71
+annotates none; the fold annotates only its own additions: `tool-types` and
+the fallible `tools.list`, both `@since(version = 0.4.0)`). Aligning the whole
+package either way is a 0.4.0 decision.
+
+Settled earlier: (d) containment for allowed hosts, (h) the native plugin with
+the caller's workload identity, (k) the two-version generated module names,
+(m) detach on drop.
+
+## Follow-ups
+
+- **Per-toolset secret bindings for toolset components.** A toolset's grants
+  name secrets, but Desktop's custom-agent tool form has no secret field today.
+- **Host-brokered credentials for tool egress, a platform-owned broker.** Each
+  toolset workload is a service principal with its own workload identity,
+  scoped to its deployment incarnation. A toolset component holds a credential
+  reference (`grants.credentials`): a stable logical name, not secret data.
+  The operator creates a credential binding that maps the reference to a
+  credential, scoped to one workload deployment. At call time the host
+  resolves the reference for the calling workload and applies the credential
+  to the outbound request, as an injected Authorization header, an mTLS client
+  identity, or a signed request. The guest never sees the value. The host owns
+  the authentication headers, so a value the guest supplies for one of them is
+  rejected. The broker belongs to the platform (the runtime's egress path for
+  the mechanism; Control and Desktop for binding objects and their UI); this
+  package only names references. Until it exists, an implementer treats every
+  reference as beyond the ceiling, and the spike refuses them for toolsets.
+  Display names stay metadata, never used for authorization, and the guest
+  sees only authorized opaque aliases (see "Tool naming"). It rests on each
+  toolset being its own workload, which can present its own egress identity
+  (wasmCloud/wasmCloud#5653, wasmCloud/wasmCloud#5588).
+
+## Review fixes
+
+Three independent reviews (security, runtime, API design) of the spike and
+this package. What they changed, all now in the WIT and the spike:
+
+- **Powers attenuate, not only reach.** A child inherits no powers:
+  `spawn-request.powers` (`flags agent-powers { spawn }`) grants `spawn`
+  explicitly; discovery and loading are never granted to a child.
+- **A typed `disabled` case** in `admission-error` and `discovery-error` for a
+  power the operator has not enabled (or did not grant this agent), so a
+  harness adapts instead of branching on a detail string.
+- **Credentials stay out of agent memory.** `grants.credentials` names
+  references the host applies on egress; `secrets` are refused on a spawned
+  agent's own component.
+- **Approvals.** Grants expire; identical pending requests share one approval,
+  and its grant admits one request in total across them; pending approvals per
+  caller may be capped; the digest has a domain tag, the
+  caller identity and a canonical JSON form; summaries use validated
+  values only.
+- **Volumes fail closed.** Names are never compared; a volume grant whose
+  storage the implementer cannot compare is beyond the ceiling.
+- **Grant-bearing config is the operator's.** The spike's delegable `models`
+  and its toolset declarations (one `toolsets` key) are host-owned in the
+  plugin's binding schema, so a workload cannot write them under the
+  runtime's default policy.
+- **Loading is per component.** A loaded toolset is offered only to the
+  component that loaded it.
+- **Names.** `alias-prefix` (operator-owned), `get-aliases`; a digest change under a toolset name holding aliases is refused
+  rather than renaming or taking the alias; tool definitions are capped at
+  attach.
+- **No overlapping runs.** `busy` until a cancelled run has actually stopped.
+- **Budgets** are the implementer's to enforce; `max-steps` is advisory to the
+  agent; self-reported counts are steerable. **Approval authority** never
+  belongs to a spawned agent; an auditor is installed by host policy.
+
+### Approval contract review (2026-10-17)
+
+An internal review of the approval contract, after the single-use grant fix:
+
+- **One caller identity.** `spawn-types` named the workload incarnation in one
+  place and namespace, name and component name in another, and these notes
+  named workload id plus component instance id, which a rollout replaces.
+  All three now say the same thing: workload incarnation plus component name,
+  used in the digest (domain tags move to `@2`), coalescing and toolset
+  scoping, so a sibling component cannot coalesce onto, or consume, another
+  component's approval.
+- **A digest that cannot be dodged, and can be tested.** Set lists were
+  sorted but not deduplicated, hosts were not normalized, labels changed the
+  digest without changing the summary, and RFC 8785 alone left options and
+  variants undefined, so a discovery offer's digest match was untestable.
+  Now inputs are normalized, every WIT value has one JSON form, the digest
+  covers exactly the summary-visible fields (instructions and labels are out),
+  and there is a test vector. See "The approval digest".
+- **Loads never prompt for what is already loaded.** After a winning load,
+  the losers' resends raised a new approval whose grant could only fail with
+  `invalid-request`, because toolset names are unique. `load` now checks the
+  caller's toolsets before any grantor: an identical spec already loaded, or
+  being loaded, returns the existing `loaded-toolset` and admits nothing, and
+  a different spec under a held name is `invalid-request` with no prompt.
+  The concurrent-waiters conformance case expects N `ok` results for a load.
+- **A repeat approval is marked.** A losing spawn resend after a consumed
+  grant raised an approval indistinguishable from the one just granted, and
+  waiters in other stores cannot share the first handle. `approval` gains
+  `repeat-of: option<prior-admission>` and the summary opens with the repeat;
+  the contract now says handle sharing works only within one store. Chosen
+  over a new error to keep one shape and leave the choice with the person.
+- **Resends after a no, and a mandatory cap.** Resends after `denied` or
+  expiry were unspecified, so a looping agent could re-prompt forever. A
+  denial now holds for a host-defined cooldown (recommended one hour) in
+  which identical requests answer `access-denied` with no prompt; an expired
+  approval may be raised again. The per-caller pending cap is mandatory and
+  answers `over-limit` with the new `limit-scope.pending-approvals`.
+- **Smaller fixes.** Grant expiry is checked inside the same atomic step that
+  consumes the grant. The spike paragraph that said toolsets unload when the
+  caller's store ends, and open questions (c) and (s), now match the record
+  model. The contract says waiters sharing one `agent` handle share the
+  child's budget and conversation, and that `busy` only prevents overlapping
+  runs.
+
+### Approval contract review, round 2 (2026-10-17)
+
+- **Approvals bind resolved reach.** The digest bound volume, credential and
+  model alias names but not the storage, binding and model they resolved to,
+  so a name rebound while an approval was pending (storage A reviewed,
+  storage B admitted) was admitted by the same digest. `approval` now
+  specifies an immutable admission snapshot (resolved storage, credential
+  binding, secret, model and interface resource identities, executable
+  digests, materialized defaults) taken before asking, shown in the
+  person-facing approval UI and audit log (never in the caller's `summary`,
+  which gets at most an opaque fingerprint), bound to the approval, and
+  revalidated in the atomic consume step. A
+  mismatch voids the approval and needs a new one; while pending, the stale
+  approval is withdrawn as `expired`. No WIT field was added: the snapshot is
+  implementer state, and `expired` already means "ask again". A new
+  conformance case, "admission snapshot", covers it.
+
+## Conformance with the WIT design skill
+
+Checked against Bailey's WIT design skill on 2026-10-15. Where the skill and
+this draft differ, the draft follows the skill unless that would split style
+inside one package.
+
+| Gap | Skill guidance | Chosen | Reason |
+| --- | --- | --- | --- |
+| `@since` | On every interface, and on items added later | Not added here | Every item is `@unstable(feature = agent-spawn)`, and WIT allows one gate per item; `@since` replaces `@unstable` when an item stabilizes. The fold's own items carry `@since(version = 0.4.0)` |
+| `reply-part.other(opaque-block)` | `other` is the trailing catch-all carrying `option<string>` | Adopted: `opaque(opaque-block)` plus a trailing `other(option<string>)` | No downside: the draft's other variants already end this way |
+| Catch-alls and refusals in this draft | `other(option<string>)` last; `access-denied` where a power may be partly granted | Already so | `admission-error` and `discovery-error` carry `access-denied` and `disabled`; every variant ends in `other(option<string>)` |
+| Shared types in an interface named `types` | `types` | Kept `spawn-types` | Reads clearly beside the package's `inference-types` and `tool-types`; the package's convention wins over the generic name |
+| `approval` is a record holding a `future` | Resources for handles with methods; records cannot grow | Kept, open question (w) | A design change, not a style fix |
+| Capped `tool-discovery.list` without a truncation signal | (not a skill rule) | Kept, noted | Changing the return later breaks callers; worth settling before stabilizing |
+
+The fold's `list-error` keeps #71's style (`denied`, `other(string)`) because it
+sits beside #71's `dispatch-error` and `outcome-error` in `tool-types`; see
+open question (aa).
+
+## What implementing it needs from the runtime
+
+From building it as a native plugin on wash-runtime:
+
+- **Volume identity.** Plugins see a caller's mount names, not the storage
+  behind them, so the ceiling for volumes cannot be enforced. Needed: resolved
+  mount sources exposed to plugins at bind, and host-level named volumes
+  (Desktop: a managed list; Control: a named volume object).
+- **The rest of a caller's reach.** Plugins cannot see secret names, interface
+  bindings or their config, and there is no "this allowed-host entry contains
+  that one" predicate.
+- **Store teardown.** A supported signal that a caller's store is gone, since
+  resource drop does not run on teardown.
+- **A host handle for native plugins.** A plugin cannot start or stop
+  workloads without the embedder injecting a handle, and nothing ties the
+  workloads a plugin starts to their owner. Needed: owned workloads that stop
+  with their owner.
+- **Metering.** A per-workload hook on model calls, for live counts and for
+  enforcing `max-total-tokens` mid-run.
+- **Types-only imports.** A spawn-client imports `inference-types` only for types;
+  two plugins that both link it into one component collide.
+- **Typed dispatch outcomes.** A plugin cannot tell from the runtime whether
+  a dispatched call ran, trapped or ran past its deadline (the errors are
+  strings). The spike records it itself (its own deadline, and whether the
+  call entered the guest), but a trap that ends the store never reaches the
+  plugin's code, so "trapped" and "instance lost" stay one case.
+- **Comparable volume identity and names-only reach** at bind, and an
+  `AllowedHost::contains` next to the matcher (the spike compares parsed
+  values itself until then).
+- **Owned workloads** (`start_owned`): normal admission, the owner's namespace,
+  host-stamped owner fields that a manifest cannot set, stop with the owner,
+  and a dispatch handle for each item whatever it exports (today a plugin can
+  dispatch only into a workload it is bound to).

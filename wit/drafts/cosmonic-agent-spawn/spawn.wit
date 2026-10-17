@@ -1,0 +1,41 @@
+package cosmonic:agent@0.5.0;
+
+/// The caller may spawn a child agent and read its final replies, within the
+/// ceiling stated on `spawn-types`. Not published; for discussion.
+@unstable(feature = agent-spawn)
+interface spawn {
+    @unstable(feature = agent-spawn)
+    use cosmonic:agent/inference-types@0.4.0.{user-message};
+    @unstable(feature = agent-spawn)
+    use spawn-types.{spawn-request, admission-error, start-error, started-run};
+
+    /// A child agent the caller spawned, owned by the caller and scoped to
+    /// the caller's store. Dropping the handle ends the child, cancels a run
+    /// in progress, and releases everything the implementer started for it.
+    /// The implementer does the same when the caller's store ends without
+    /// dropping the handle (a trap, or a handle that was never dropped), so a
+    /// child cannot outlive its caller. A caller that gets a fresh store per
+    /// request therefore cannot keep a child across its own requests, and
+    /// cannot hand the handle to a waiter in another store: an identical
+    /// resend from there is a new request and needs a new approval, which is
+    /// marked as a repeat (`approval.repeat-of`).
+    @unstable(feature = agent-spawn)
+    resource agent {
+        /// Start one run: hand the child a message and let it work until it
+        /// replies or a budget item stops it. Resolves when the run is
+        /// accepted, not when it ends. While a run is in progress, returns
+        /// `busy`, and keeps returning `busy` after a cancellation until the
+        /// child has actually stopped, so two runs never overlap inside it.
+        /// Everyone holding this handle drives the same child: runs from
+        /// any of them draw on one budget and add to one conversation, and
+        /// `busy` only prevents their runs from overlapping.
+        @unstable(feature = agent-spawn)
+        run: async func(message: user-message) -> result<started-run, start-error>;
+    }
+
+    /// Check the request against the ceiling and policy, and start the child.
+    /// Resolves once accepted, not once its components are running; a child
+    /// that fails to start reports it on its first run.
+    @unstable(feature = agent-spawn)
+    spawn: async func(request: spawn-request) -> result<agent, admission-error>;
+}

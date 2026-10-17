@@ -1,0 +1,129 @@
+package cosmonic:agent@0.5.0;
+
+/// The caller may load a toolset into its own workload while it runs. Not
+/// published; for discussion.
+///
+/// Spawning is declarative: a child's toolsets are fixed when it starts. This
+/// interface is the separate, explicit power to change a running agent's own
+/// toolsets. A world that does not import it cannot load anything, and a
+/// spawned child never receives it in this version. A parent cannot load a
+/// toolset into a child it spawned; it spawns a new child with different
+/// toolsets instead.
+///
+/// Nothing is special: a toolset is one more component in the caller's own
+/// workload, with its own grants, and the caller inherits none of them.
+/// Loading is a **rollout**. The implementer admits the request, then rolls
+/// the caller's workload out to a new revision that adds the toolset's
+/// component, attached to the same session, and retires the old revision.
+/// The person does not see the change; the audit log records it. Every
+/// component in the new revision must start and pass its checks before the
+/// old one retires, so a toolset that cannot start leaves the caller as it
+/// was and `load` answers `unavailable`.
+///
+/// The implementer offers the toolset's definitions through the caller's own
+/// `cosmonic:agent/tools` import and dispatches calls to its component, so
+/// the caller carries no router; the same implementer must serve that import
+/// for loading to work, which is why `tool-loading-provider` exports both.
+/// Admission follows `spawn`: the toolset's reach must fit inside the
+/// caller's ceiling, and anything beyond it goes to a grantor and returns
+/// `needs-approval` with a digest over the caller's identity and the
+/// `toolset-spec`. A grant is single use, as for `spawn`: it admits one
+/// load in total, even when several identical loads shared the pending
+/// approval (see `approval`), and is bound to the admission snapshot of
+/// what the spec resolved to when it was reviewed: the storage, credential
+/// bindings, secrets and interface resources its names resolve to, its
+/// executable digests, and the defaults it left open (see `approval`).
+/// Rebinding any of them voids the approval, and the resend needs a new
+/// one. Policy may ask for approval even within the
+/// ceiling, since new code is new risk even when its reach is not. A
+/// `toolset-spec` from a `tool-discovery` offer loads unchanged, and its
+/// digest matches what the caller was shown: the digest is computed over the
+/// normalized spec in one defined JSON form (see `approval.request-digest`),
+/// so the match does not depend on how either side ordered its lists.
+///
+/// **Already loaded.** Before any ceiling check or grantor, `load` checks
+/// the caller's toolsets, in this order:
+///
+/// 1. A toolset with the same digest (same caller, same normalized spec) is
+///    already loaded: `load` returns that `loaded-toolset` unchanged and
+///    admits nothing. No approval is raised or consumed and no rollout runs,
+///    since the caller already holds exactly this reach.
+/// 2. A rollout that adds a toolset with the same digest is in progress: the
+///    request joins it and resolves with its result, the same
+///    `loaded-toolset` or the same error.
+/// 3. Another toolset already holds `name`, whether the caller loaded it or
+///    the operator declared it: `invalid-request`, before any approval, so
+///    the person is never shown a prompt whose grant could only fail.
+///
+/// So the waiters that coalesced on one approval all end with the one
+/// `loaded-toolset`: whichever resend wins the grant runs the rollout, and
+/// the others join it or find it done. A load after `unload` is a new
+/// request and is admitted afresh.
+///
+/// **When the tools arrive.** The new revision serves the caller's next run.
+/// The current run is not moved between revisions: it should finish (an
+/// agent that loads a tool to use it typically ends the run right after
+/// `load` resolves), and the implementer may start the next run on the new
+/// revision at once, from the session's journal, so the person sees one
+/// continuous turn. Because the caller's instance is replaced, a caller keeps
+/// no state in memory across a load; everything it needs is in the session.
+///
+/// The toolset's tools are offered from the next `tools.list` on, under
+/// aliases assigned by the same rules as declared toolsets (own names first,
+/// namespaced only on a collision, never renamed). A caller whose `tools`
+/// import the implementer does not serve has nowhere to offer them, and
+/// `load` answers `unavailable`. An implementer that does not enable loading
+/// answers `disabled`.
+///
+/// The toolset is offered to the component that loaded it and to no sibling
+/// component in the same workload, so a sibling cannot use a toolset
+/// admitted against another component's ceiling. The same caller identity
+/// (workload incarnation and component name, see `spawn-types`) scopes the
+/// toolset and binds the approval digest, so a sibling's identical load is a
+/// different request: it never coalesces onto, or consumes, this component's
+/// approval.
+@unstable(feature = agent-spawn)
+interface tool-loading {
+    @unstable(feature = agent-spawn)
+    use spawn-types.{toolset-spec, admission-error};
+
+    /// A toolset the session now carries. A record, not a handle: it lives in
+    /// the workload's revision and the session, not in the caller's memory,
+    /// so it survives the rollout that loaded it and any later one.
+    @unstable(feature = agent-spawn)
+    record loaded-toolset {
+        /// The toolset's `toolset-spec.name`, unique among the caller's
+        /// toolsets. Names the toolset for `unload`.
+        name: string,
+        /// The aliases under which the caller's `tools` import offers this
+        /// toolset's definitions, in the toolset's own order. An alias is the
+        /// model-facing selection key and carries no authority. Chosen by the
+        /// implementer (see `toolset-spec.alias-prefix`), unique in the
+        /// caller's session, and stable for the session: loading another
+        /// toolset never changes it.
+        aliases: list<string>,
+    }
+
+    /// Return the toolset if an identical one is already loaded or loading,
+    /// refuse a name already held, and otherwise check the spec against the
+    /// ceiling and policy, then roll the caller's workload out to a revision
+    /// that adds the toolset, attached to the same session. Resolves once the
+    /// new revision is ready to serve the next run.
+    @unstable(feature = agent-spawn)
+    load: async func(spec: toolset-spec) -> result<loaded-toolset, admission-error>;
+
+    /// Remove a toolset this caller loaded, by name: another rollout, after
+    /// which its aliases answer `unknown-tool` but stay reserved for the
+    /// session and are never given to another tool. A call in progress is
+    /// cancelled cooperatively; its effects are not rolled back. An unknown
+    /// name, or a toolset the operator declared rather than one the caller
+    /// loaded, answers `invalid-request`.
+    @unstable(feature = agent-spawn)
+    unload: async func(name: string) -> result<_, admission-error>;
+
+    /// The toolsets this caller loaded and the session still carries, in the
+    /// order they were loaded. Declared toolsets are not listed; `tools.list`
+    /// shows every tool offered.
+    @unstable(feature = agent-spawn)
+    loaded: async func() -> list<loaded-toolset>;
+}
