@@ -93,8 +93,8 @@ interface run-types {
         /// read. Diagnostic text, not for branching on. A run may continue
         /// after one, for example when listing tools failed.
         error(string),
-        /// A step kind not captured above. Safe to skip.
-        other(option<string>),
+        /// A step kind not captured above, described by the string. Safe to skip.
+        other(string),
     }
 
     /// One whole message the agent added to the conversation.
@@ -171,8 +171,8 @@ interface run-types {
         /// `agent.compaction.v1`, so a driver can mark the point in the
         /// conversation; the summary itself is read from the journal.
         compacted(compaction-info),
-        /// An event not captured above. Safe to ignore.
-        other(option<string>),
+        /// An event not captured above, described by the string. Safe to ignore.
+        other(string),
     }
 
     /// A final reply part. No tool use, reasoning, or continuation data.
@@ -184,8 +184,9 @@ interface run-types {
         attachment(attachment),
         /// A provider-specific block passed through unchanged.
         opaque(opaque-block),
-        /// A part kind not captured above. Treat as unknown.
-        other(option<string>),
+        /// A part kind not captured above, described by the string. Treat as
+        /// unknown.
+        other(string),
     }
 
     /// Why a run ended with an outcome.
@@ -211,8 +212,8 @@ interface run-types {
         max-total-tokens,
         /// `run-options.max-duration` passed.
         max-duration,
-        /// A reason not captured above.
-        other(option<string>),
+        /// A reason not captured above. Diagnostic detail; never parse it.
+        other(string),
     }
 
     /// The model that answered, for display. A host that meters model calls
@@ -259,8 +260,9 @@ interface run-types {
         /// The run could not be accepted now, for example because the session
         /// could not be read. Retry may succeed.
         unavailable(string),
-        /// A failure not captured above. Treat as permanent.
-        other(option<string>),
+        /// A failure not captured above. Treat as permanent. Diagnostic
+        /// detail; never parse it.
+        other(string),
     }
 
     /// Why a run failed after it started. The person's message and every
@@ -291,8 +293,9 @@ interface run-types {
         output-rejected(string),
         /// The agent failed for a reason it did not classify.
         failed(string),
-        /// A failure not captured above. Treat as permanent.
-        other(option<string>),
+        /// A failure not captured above. Treat as permanent. Diagnostic
+        /// detail; never parse it.
+        other(string),
     }
 
     /// A run that has started: events, then the outcome. The stream closes
