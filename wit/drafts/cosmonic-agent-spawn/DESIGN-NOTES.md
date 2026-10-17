@@ -268,6 +268,15 @@ definition. The WIT states them on `spawn-types`.
   never see a prompt whose grant would only fail on the duplicate name. A
   name already held by a different toolset is refused with
   `invalid-request` before any grantor sees it.
+- **Expiry is checked where the grant is consumed.** Checking whether a grant
+  is still live and consuming it are one atomic step, so a grant that expires
+  while a resend waits its turn behind another admits nothing.
+- **Sharing a handle shares the child.** Waiters handed one `agent` handle
+  drive one child: one budget (runs, tokens and time spent by any waiter
+  count for all), one conversation (each run sees what earlier runs, from
+  any waiter, put in the child's session), and one output channel. `busy`
+  only stops runs from overlapping; it does not give a waiter a child of its
+  own or isolate one waiter's runs from another's.
 - **A repeat looks like a repeat.** Routing the one `agent` handle to other
   waiters works only within one store, since the handle is store-scoped and
   most callers get a fresh store per request (see (s)). Waiters in other
@@ -483,8 +492,12 @@ grantor, the grant admits the identical load once, and the next identical load
 needs approval again. That test is sequential; the concurrent case below is
 not in the spike yet. `load_from_a_discovery_offer` loads an offer's spec
 unchanged. `load_is_denied_when_loading_is_off` checks the provider switch.
-The loader keeps its handles in a warm instance, since the implementer unloads
-a caller's toolsets when its store ends.
+These tests predate the record model: the spike still returns a handle,
+unloads a caller's toolsets when its store ends, and so keeps the loader's
+handles in a warm instance. Under the record model that is gone. A loaded
+toolset lives in the workload's revision and the session, the caller's store
+ending unloads nothing, and only `unload` (another rollout) or the session's
+end removes it.
 
 **Conformance case: concurrent waiters on one approval.** Not yet executable
 (the spike lives outside this repository); any implementer of `spawn` or
@@ -519,7 +532,9 @@ a caller's toolsets when its store ends.
      approval, since a load after `unload` is a new request.
 5. Repeat with the grant decided while some waiters have dropped their
    `decision` future and others still hold it, and with a resend racing the
-   decision itself. The totals in step 3 must not change.
+   decision itself. The totals in step 3 must not change. Repeat once more
+   with a grant lifetime short enough that it ends while resends wait behind
+   one another: a resend that reaches the grant after expiry admits nothing.
 6. Repeat step 1 from a second caller with the same request, once as a new
    incarnation of the same workload and once as a sibling component in the
    same workload incarnation. Each time expect a separate approval with a
@@ -1047,8 +1062,9 @@ what `tool-loading` needs. Proposal: one workload per toolset for `spawn` and
 `load`, labeled single-workload placement for presets.
 
 **(c) Lifetime versus store.** A resource dies with its store, so a parent that
-lives for one request kills its children (and its loaded tools) when the
-request ends. Options: a reattachable id scoped to the parent's session, or
+lives for one request kills its children when the request ends. (Loaded
+toolsets are records in the workload revision and session since 2026-10-16,
+so the store ending no longer unloads them.) Options: a reattachable id scoped to the parent's session, or
 request-scoped `spawn` now and session-scoped spawning later.
 
 **(e) Progress stream or host UI only.** `counts` frames lag unless the
@@ -1096,10 +1112,11 @@ empty list, as before; a 0.4.0 agent gets `list-error`.
 
 **(s) Store-scoped handles, and reattaching.** For Bailey. (No longer applies to `tool-loading`, which has no handle since 2026-10-16; still open for spawn's `agent`.) A handle dies with
 its caller's store, and most callers get a fresh store per request, so a
-child or loaded toolset cannot outlive one request (the spike keeps handles
-in a warm instance). *Recommendation from the reviews (medium confidence):*
+child cannot outlive one request (the spike keeps handles in a warm
+instance), and the one handle cannot be shared with waiters in other stores
+(see "A repeat looks like a repeat"). *Recommendation from the reviews (medium confidence):*
 keep store scope as the default, and add an explicit, consume-by-move
-`detach(label)` on `agent` and `loaded-toolset` with an `attach(label)` to
+`detach(label)` on `agent` with an `attach(label)` to
 reclaim it, authorized by the host-derived caller identity and session, never
 by a label the guest could leak; parked children count toward
 `concurrent-agents` and end at an idle TTL, their `max-duration`, or the
@@ -1269,6 +1286,12 @@ An internal review of the approval contract, after the single-use grant fix:
   which identical requests answer `access-denied` with no prompt; an expired
   approval may be raised again. The per-caller pending cap is mandatory and
   answers `over-limit` with the new `limit-scope.pending-approvals`.
+- **Smaller fixes.** Grant expiry is checked inside the same atomic step that
+  consumes the grant. The spike paragraph that said toolsets unload when the
+  caller's store ends, and open questions (c) and (s), now match the record
+  model. The contract says waiters sharing one `agent` handle share the
+  child's budget and conversation, and that `busy` only prevents overlapping
+  runs.
 
 ## Conformance with the WIT design skill
 

@@ -26,6 +26,9 @@ interface spawn {
         /// accepted, not when it ends. While a run is in progress, returns
         /// `busy`, and keeps returning `busy` after a cancellation until the
         /// child has actually stopped, so two runs never overlap inside it.
+        /// Everyone holding this handle drives the same child: runs from
+        /// any of them draw on one budget and add to one conversation, and
+        /// `busy` only prevents their runs from overlapping.
         @unstable(feature = agent-spawn)
         run: async func(message: user-message) -> result<started-run, start-error>;
     }

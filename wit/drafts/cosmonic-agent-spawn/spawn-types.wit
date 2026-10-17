@@ -367,6 +367,9 @@ interface spawn-types {
     /// The implementer cannot tell waiters with the same digest apart, so
     /// they share that one admission, and the caller hands the one `agent`
     /// handle or `loaded-toolset` to whichever of its waiters need it.
+    /// Waiters sharing one `agent` handle share one child: its budget, its
+    /// conversation, and its output channel. `busy` only keeps their runs
+    /// from overlapping; it gives no waiter a child of its own.
     /// Coalescing saves the person prompts; it never multiplies what one
     /// decision admits.
     ///
@@ -383,8 +386,10 @@ interface spawn-types {
     /// returned as is (see `tool-loading`).
     ///
     /// A grant expires too: it admits the identical request only within the
-    /// implementer's grant lifetime, set by the operator. Once a grant is
-    /// consumed, or expires unused, an identical request is a new,
+    /// implementer's grant lifetime, set by the operator. The expiry check
+    /// is part of the same atomic step that consumes the grant, so a grant
+    /// that expires while a resend waits its turn admits nothing. Once a
+    /// grant is consumed, or expires unused, an identical request is a new,
     /// independent request and needs its own approval: it returns
     /// `needs-approval` with a new approval, never the consumed one, and
     /// identical requests coalesce onto that new approval while it is
@@ -407,9 +412,11 @@ interface spawn-types {
     /// once (distinct digests; coalesced waiters count once). A request that
     /// would raise one past the cap answers `over-limit` with scope
     /// `pending-approvals` and raises no prompt. The cap is the operator's
-    /// and at least one; the recommended default is three. "The same caller" means the same caller identity (see
-    /// the contract on this interface): the same workload incarnation and
-    /// the same component name. A workload recreated under the same name is a
+    /// and at least one; the recommended default is three.
+    ///
+    /// "The same caller" means the same caller identity (see the contract on
+    /// this interface): the same workload incarnation and the same component
+    /// name. A workload recreated under the same name is a
     /// different caller and needs its own approval; a rollout to a new
     /// revision (as `load` does) keeps the caller. A sibling component in the
     /// same workload is a different caller: its identical request neither
