@@ -127,6 +127,8 @@ The published 0.3.0 artifact remains unchanged.
   match `request-option.parallel-tool-calls`.
 - Set `request-meta.cache-points` (empty for none) to mark prompt-cache
   breakpoints by `part-ref`.
+- Set `assistant-part.citations` (empty for none) and render any citations as
+  untrusted links on the text they support.
 
 ## Usage
 
