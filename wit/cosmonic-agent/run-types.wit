@@ -130,6 +130,19 @@ interface run-types {
         end: u64,
     }
 
+    /// Why the agent summarized. Mirrors `trigger` in the `agent.compaction.v1`
+    /// journal entry, as its lowercase name.
+    @unstable(feature = agent-run)
+    enum compaction-trigger {
+        /// The context passed the agent's own threshold before a model call.
+        threshold,
+        /// A model call was refused because the context was too long, so the
+        /// agent summarized before trying again.
+        overflow,
+        /// The driver asked, through `compact`.
+        requested,
+    }
+
     /// The agent replaced older context with a summary so its next model call
     /// fits. Mirrors the `agent.compaction.v1` journal entry (`session`), whose
     /// JSON fields carry the same names in camelCase. The full summary lives
@@ -140,6 +153,8 @@ interface run-types {
     record compaction-info {
         /// The journal entries the summary replaces in the agent's context.
         through: seq-range,
+        /// Why the agent summarized.
+        trigger: compaction-trigger,
         /// Recent messages carried over verbatim after the summary.
         kept: u32,
         /// Estimated context tokens before compaction; none when unknown.
