@@ -1,0 +1,411 @@
+package cosmonic:agent@0.4.0;
+
+/// Types for handing an agent runs: how to do one, what it streams while it
+/// works, and how it ends. Unstable: a consumer enables the `agent-run`
+/// feature to see these items.
+///
+/// Function-less: importing it gives no permission. The power to start a run
+/// lives in `run`, which an agent exports.
+///
+/// A run is one unit of work: a message in, the agent's loop of model calls
+/// (steps) and tool calls, and a final reply out. On Cosmonic Desktop one run
+/// is one turn of the conversation. "Step" means one message the agent adds
+/// to the conversation: a model reply, the results of the tools it called,
+/// or an error it records.
+///
+/// What the agent sends is the agent's own text. A driver treats every
+/// string here as untrusted: it renders text as text, and never parses a
+/// detail string to decide what to do.
+@unstable(feature = agent-run)
+interface run-types {
+    @unstable(feature = agent-run)
+    use wasi:clocks/types@0.3.0.{duration};
+    @unstable(feature = agent-run)
+    use inference-types.{
+        json, attachment, opaque-block, assistant-message, user-message,
+        tool-result, usage, request-error, generation-error, effort,
+        citation,
+    };
+
+    /// How to do one run. Construction is lenient; `run` validates and
+    /// returns `invalid-input`.
+    @unstable(feature = agent-run)
+    record run-options {
+        /// Names this run, chosen by the driver. Unique per session, not per
+        /// workload: two sessions may use the same id space. A driver uses
+        /// a UUID, or the id of the event that started it (a message id, a
+        /// ticket event id), so a redelivered event is recognized. The agent
+        /// records it on the run's journal entries and uses it in the commit id
+        /// of the commit that opens the run, so the same id again returns
+        /// `duplicate` instead of running twice.
+        run-id: string,
+        /// Instructions for this run, ahead of the agent's own. Sent on every
+        /// run, so the agent holds no instructions its driver did not give it.
+        instructions: option<string>,
+        /// JSON Schema the final reply must satisfy. The agent asks its model
+        /// to answer in it and returns the answer as `run-outcome.structured`;
+        /// a driver that needs it checks it again. A refusal or filtered reply
+        /// carries no structured answer (`finish.refusal`,
+        /// `finish.content-filter`).
+        schema: option<json>,
+        /// Model calls the agent may make in this run. The agent stops and
+        /// finishes with `max-steps` when it is reached. Advisory: the agent
+        /// counts its own steps, so a driver enforces it only where it meters
+        /// the agent's model calls itself.
+        max-steps: option<u32>,
+        /// Tokens the agent may spend in this run, across all its model calls:
+        /// the sum of `usage.prompt-tokens` and `usage.completion-tokens`. Not
+        /// `chat-options.max-tokens`, which bounds what one call generates. The
+        /// agent checks it after each model call and finishes with
+        /// `max-total-tokens` once it is spent, so the call that crosses it
+        /// may overshoot. Advisory, like `max-steps`.
+        max-total-tokens: option<u64>,
+        /// Wall-clock time for this run, counted from acceptance: from when
+        /// `run` returns ok, so time spent reading the session before the run
+        /// is accepted does not count. Time spent waiting on a person (a held
+        /// tool call, a question) does count. The agent stops starting model and
+        /// tool calls once it passes, and finishes with `max-duration` and
+        /// what it has. A driver keeps its own deadline a little past this
+        /// one and cancels at it.
+        max-duration: option<duration>,
+        /// Reasoning effort the person chose for this run, such as a
+        /// low-effort quick question or a high-effort refactor. The agent
+        /// passes it as `chat-options.effort` on its model calls; none leaves
+        /// the agent's own choice. Advisory: the provider may map it to a
+        /// coarser scale and report the adaptation.
+        effort: option<effort>,
+        /// W3C traceparent of the driver's trace, for the agent to pass on in
+        /// `request-meta.trace-parent` so its model calls join that trace.
+        trace-parent: option<string>,
+    }
+
+    /// What a step holds.
+    @unstable(feature = agent-run)
+    variant step-content {
+        /// A model reply: text, reasoning summary, tool calls and
+        /// attachments, as the model call returned it. The agent may leave out
+        /// continuation data (`assistant-part.opaque` and `other` blocks); a
+        /// driver ignores it.
+        assistant(assistant-message),
+        /// The results of the tool calls in the assistant step before it.
+        tool(list<tool-result>),
+        /// Reserved: a message from the person that the agent took in during
+        /// the run, such as a steering message, in the place it entered the
+        /// conversation. Never the message that started the run, which the
+        /// driver already has. No interface delivers such messages yet (a
+        /// future opt-in import will), so an agent does not send this case
+        /// today. A driver renders it as the person's own message, in the
+        /// conversation where it appears, attributed to the person and never
+        /// to the agent.
+        user(user-message),
+        /// An error the agent recorded in the conversation, for a person to
+        /// read. Diagnostic text, not for branching on. A run may continue
+        /// after one, for example when listing tools failed.
+        error(string),
+        /// A step kind not captured above, described by the string. Safe to skip.
+        other(string),
+    }
+
+    /// One whole message the agent added to the conversation.
+    @unstable(feature = agent-run)
+    record step {
+        /// What the message holds.
+        content: step-content,
+        /// The `seq` of the `agent.step.v1` journal entry recording this
+        /// message, when the agent committed it before sending this step. A
+        /// driver that also reads the journal uses it to match the two.
+        seq: option<u64>,
+    }
+
+    /// Counters for one run. Reported by the agent, so only as honest as it
+    /// is; a host that meters model calls has its own record.
+    @unstable(feature = agent-run)
+    record run-counts {
+        /// Model calls made.
+        steps: u32,
+        /// Tool calls made.
+        tool-calls: u32,
+        /// Token usage summed over the run's model calls. None in a field
+        /// means unreported.
+        usage: usage,
+    }
+
+    /// An inclusive range of journal entries, by `seq`.
+    @unstable(feature = agent-run)
+    record seq-range {
+        /// `seq` of the first entry in the range.
+        start: u64,
+        /// `seq` of the last entry in the range, inclusive.
+        end: u64,
+    }
+
+    /// Why the agent summarized. Mirrors `trigger` in the `agent.compaction.v1`
+    /// journal entry, as its lowercase name.
+    @unstable(feature = agent-run)
+    enum compaction-trigger {
+        /// The context passed the agent's own threshold before a model call.
+        threshold,
+        /// A model call was refused because the context was too long, so the
+        /// agent summarized before trying again.
+        overflow,
+        /// The driver asked, through `compact`.
+        requested,
+    }
+
+    /// The agent replaced older context with a summary so its next model call
+    /// fits. Mirrors the `agent.compaction.v1` journal entry (`session`), whose
+    /// JSON fields carry the same names in camelCase. The full summary lives
+    /// only in that entry, not here; it is model output, so a driver treats it
+    /// as untrusted text and never as system or person text. The entries it
+    /// covers stay in the journal.
+    @unstable(feature = agent-run)
+    record compaction-info {
+        /// The journal entries the summary replaces in the agent's context.
+        through: seq-range,
+        /// Why the agent summarized.
+        trigger: compaction-trigger,
+        /// Recent messages carried over verbatim after the summary.
+        kept: u32,
+        /// Estimated context tokens before compaction; none when unknown.
+        tokens-before: option<u64>,
+        /// Estimated context tokens after compaction; none when unknown.
+        tokens-after: option<u64>,
+        /// The `seq` of the `agent.compaction.v1` entry, when the agent
+        /// committed it before sending this event, as `step.seq` does.
+        seq: option<u64>,
+    }
+
+    /// Where a plan entry stands.
+    @unstable(feature = agent-run)
+    enum plan-status {
+        pending,
+        in-progress,
+        completed,
+    }
+
+    /// One item of the agent's working plan.
+    @unstable(feature = agent-run)
+    record plan-entry {
+        /// What the item is, in the agent's words.
+        content: string,
+        status: plan-status,
+    }
+
+    /// What a run streams while it works. The person's own message is never
+    /// sent back: the driver already has it.
+    @unstable(feature = agent-run)
+    variant run-event {
+        /// Reply text as the model produces it, in whole UTF-8 characters.
+        /// A driver shows it as a reply in progress until the next `step`,
+        /// which carries the whole message and replaces it.
+        text-delta(string),
+        /// Reasoning summary text as the model produces it, kept apart from
+        /// the reply. Replaced by the next `step` the same way.
+        reasoning-delta(string),
+        /// A whole message, in conversation order.
+        step(step),
+        /// Cumulative counters for this run so far, sent after each model
+        /// call.
+        counts(run-counts),
+        /// Older context was summarized. Sent after the agent commits
+        /// `agent.compaction.v1`, so a driver can mark the point in the
+        /// conversation; the summary itself is read from the journal.
+        compacted(compaction-info),
+        /// The agent's whole current plan, replacing any earlier one, as
+        /// Claude Code's todo list or Codex's update_plan show it. Agent text
+        /// for display: a driver never treats it as progress it can verify or
+        /// as a commitment. An agent that keeps no plan never sends it.
+        plan(list<plan-entry>),
+        /// An event not captured above, described by the string. Safe to ignore.
+        other(string),
+    }
+
+    /// Reply text with the sources the provider attached to it, as
+    /// `assistant-part.citations` carried them. Citations are untrusted
+    /// provider output for display: render them as text and links on the
+    /// text they support, never follow them.
+    @unstable(feature = agent-run)
+    record cited-reply-text {
+        text: string,
+        /// Never empty: text without citations is `reply-part.text`.
+        citations: list<citation>,
+    }
+
+    /// A final reply part: the display projection of one assistant part. No
+    /// tool use, reasoning, or continuation data. Every `assistant-content`
+    /// case maps to one case here, so a driver that reads only the outcome
+    /// loses no display content: `text` with no citations to `text`, `text`
+    /// with citations to `cited-text`, `attachment` to `attachment`, `refusal`
+    /// to `refusal`, `other` to `opaque`; tool use and reasoning are dropped.
+    @unstable(feature = agent-run)
+    variant reply-part {
+        /// Reply text that carries no citations.
+        text(string),
+        /// Reply text with the sources that support it.
+        cited-text(cited-reply-text),
+        /// The model's explanation of why it declined, from
+        /// `assistant-content.refusal`. Show it as the model's text, never as
+        /// an answer: it never satisfies `run-options.schema`.
+        refusal(string),
+        /// An attachment the agent produced.
+        attachment(attachment),
+        /// A provider-specific block passed through unchanged.
+        opaque(opaque-block),
+        /// A part kind not captured above, described by the string. Treat as
+        /// unknown.
+        other(string),
+    }
+
+    /// Why a run ended with an outcome.
+    ///
+    /// `refusal` and `content-filter` are defined by the model call that
+    /// produced the run's last assistant step, never by whichever call came
+    /// last: a summary call that ends refusal or content-filter writes no
+    /// step and no summary (the run goes on with the context it had), so it
+    /// never makes a run finish `refusal` or `content-filter`.
+    ///
+    /// Precedence. When that call ended refusal or content-filter, the run
+    /// finishes `refusal` or `content-filter`, even if the call also reached
+    /// a limit, and the agent does not report `input-required` from a reply
+    /// it was refused. A limit (`max-steps`, `max-total-tokens`,
+    /// `max-duration`) is the finish only when it stopped the run before a
+    /// call the run would otherwise have made, such as the tool calls a
+    /// reply asked for, and `input-required` only when the last assistant
+    /// step is the agent's own question.
+    @unstable(feature = agent-run)
+    variant finish {
+        /// The agent ended its reply.
+        done,
+        /// The agent stopped because it needs something only a person can
+        /// give (an answer, a choice, a decision) and no one could answer
+        /// during the run: the host offered no way to ask, or the person did
+        /// not answer in time. `reply` says what is needed, in the agent's own
+        /// words; a driver shows it as the agent's text, never as host UI.
+        /// The answer starts the next run, as its message, and the journal
+        /// tells the agent where it left off. An agent uses it only when it
+        /// cannot go on without the answer; one that can go on with a stated
+        /// assumption does so and finishes `done`. Agent-reported, so a driver
+        /// uses it to route the outcome (to a person, a ticket, an A2A
+        /// `input-required` task) and never to allow anything.
+        input-required,
+        /// `run-options.max-steps` was reached.
+        max-steps,
+        /// `run-options.max-total-tokens` was spent.
+        max-total-tokens,
+        /// `run-options.max-duration` passed.
+        max-duration,
+        /// The model declined to answer: the call that produced the run's last
+        /// assistant step ended with `finish-reason.refusal`, or that step's
+        /// reply carries a `refusal` part.
+        /// `reply` holds whatever the model said, usually a `refusal` part; a
+        /// provider that sent the refusal as text leaves it as `text`. Not an
+        /// error and not an answer: `structured` is none, and a run with a
+        /// schema finishes `refusal` rather than failing `output-rejected`.
+        refusal,
+        /// A provider safety filter withheld or cut the output of the call
+        /// that produced the run's last assistant step
+        /// (`finish-reason.content-filter`). `reply` holds what
+        /// survived, which may be partial or empty, and `structured` is none,
+        /// as for `refusal`. The agent does not retry the call to get around
+        /// the filter.
+        content-filter,
+        /// A reason not captured above. Diagnostic detail; never parse it.
+        other(string),
+    }
+
+    /// The model that answered, for display. A host that meters model calls
+    /// has the authoritative record.
+    @unstable(feature = agent-run)
+    record served-model {
+        /// The alias the agent opened, as `models.open` took it.
+        alias: string,
+        /// The concrete model that served the run's last model call, as
+        /// `completion.model` reported it.
+        model: string,
+    }
+
+    /// The result of a run that ended with a reply.
+    @unstable(feature = agent-run)
+    record run-outcome {
+        /// Final reply parts, in order: the reply of the run's last assistant
+        /// step, projected as `reply-part` describes, without its tool calls.
+        reply: list<reply-part>,
+        /// The reply as JSON satisfying `run-options.schema`; present only
+        /// when one was set. Always none when `finish` is `refusal` or
+        /// `content-filter`, which a schema never turns into
+        /// `output-rejected`.
+        structured: option<json>,
+        /// What the run cost.
+        counts: run-counts,
+        /// Why the run ended.
+        finish: finish,
+        /// The model that answered, when the run made a model call.
+        model: option<served-model>,
+    }
+
+    /// Why a run did not start. In every case nothing ran and nothing new
+    /// was written to the session.
+    @unstable(feature = agent-run)
+    variant start-error {
+        /// A run is already in progress in this session. One run at a time.
+        busy,
+        /// A run with this `run-id` already started in this session. Its
+        /// outcome is in the journal, not here.
+        duplicate,
+        /// The message or options cannot be taken, for example an attachment
+        /// the agent does not accept, an empty message, or a schema it cannot
+        /// follow. A different message may succeed.
+        invalid-input(string),
+        /// The run could not be accepted now, for example because the session
+        /// could not be read. Retry may succeed.
+        unavailable(string),
+        /// A failure not captured above. Treat as permanent. Diagnostic
+        /// detail; never parse it.
+        other(string),
+    }
+
+    /// Why a run failed after it started. The person's message and every
+    /// step sent before the failure are in the journal; effects of model and
+    /// tool calls made before the failure are not rolled back. Detail strings
+    /// are diagnostic only.
+    @unstable(feature = agent-run)
+    variant run-error {
+        /// The driver dropped the events stream. Cancellation is cooperative:
+        /// the agent stopped its model and tool calls first.
+        cancelled,
+        /// `models.open` refused the agent's alias: unknown, denied, or
+        /// unavailable.
+        no-model(string),
+        /// A model call was refused before it was accepted. The case says
+        /// whether waiting, the operator, or a smaller request can fix it.
+        model-refused(request-error),
+        /// A model call failed after it was accepted.
+        model-failed(generation-error),
+        /// The session refused a write the run needed (too large, or
+        /// unavailable), so the agent stopped rather than act without a
+        /// record.
+        not-recorded(string),
+        /// Another writer changed the session during the run, so the agent
+        /// stopped before its next model or tool call.
+        superseded,
+        /// The reply did not satisfy `run-options.schema`. Never used for a
+        /// refusal or a filtered reply: those finish `refusal` or
+        /// `content-filter`.
+        output-rejected(string),
+        /// The agent failed for a reason it did not classify.
+        failed(string),
+        /// A failure not captured above. Treat as permanent. Diagnostic
+        /// detail; never parse it.
+        other(string),
+    }
+
+    /// A run that has started: events, then the outcome. The stream closes
+    /// before the outcome resolves; a closed stream alone does not mean
+    /// success. Drain events before awaiting the outcome: the agent may wait
+    /// on a slow reader, as `chat` does. Dropping the stream requests
+    /// cancellation, so a driver that wants only the outcome still reads
+    /// and discards the events. An outcome already recorded wins the race,
+    /// so a cancelled run may still resolve to its outcome.
+    @unstable(feature = agent-run)
+    type started-run = tuple<stream<run-event>, future<result<run-outcome, run-error>>>;
+}

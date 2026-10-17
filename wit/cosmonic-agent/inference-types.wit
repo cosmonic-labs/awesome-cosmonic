@@ -1,6 +1,7 @@
 package cosmonic:agent@0.4.0;
 
 /// Messages, model handles, options, usage, and inference errors.
+@since(version = 0.4.0)
 interface inference-types {
     /// UTF-8 JSON. Producers emit valid JSON; consumers parse it defensively.
     type json = string;
@@ -37,7 +38,10 @@ interface inference-types {
         max-output-tokens: option<u32>,
         tools: option<bool>,
         reasoning: option<bool>,
-        /// None means unknown; some(empty) means text-only input.
+        /// Non-text input media types the model takes in user and tool content,
+        /// such as image/png, image/*, application/pdf, text/csv, text/* or
+        /// audio/wav. A type/* entry covers every subtype. None means unknown;
+        /// some(empty) means text-only input.
         accepts: option<list<media-type>>,
         response-formats: option<response-formats>,
         /// None means unknown; some(empty) means no optional knobs.
@@ -50,6 +54,10 @@ interface inference-types {
         /// The provider must support this type or report an adaptation.
         media-type: media-type,
         source: attachment-source,
+        /// A display filename, such as `report.pdf`. Untrusted text supplied
+        /// by whoever made the attachment: render it as text, never use it as
+        /// a path, and never infer the media type from it.
+        name: option<string>,
     }
 
     variant attachment-source {
@@ -59,6 +67,13 @@ interface inference-types {
         /// The host checks egress before fetching or forwarding the URL, and
         /// rejects fetched content whose media type differs from the declaration.
         url(string),
+        /// An opaque id the host issued for content it stores, sealed to the
+        /// session it was issued in. Agents keep it and pass it through
+        /// unchanged; the host resolves it to the bytes when it calls a model.
+        /// When a blob id exists, agents must not persist the bytes, in the
+        /// session or anywhere else. An id from another session, or one the
+        /// host no longer holds, is refused before any model is called.
+        blob(string),
     }
 
     /// A function call requested by the model.
@@ -97,6 +112,10 @@ interface inference-types {
     /// Displayable reasoning summary; an empty summary is valid.
     /// Return continuation data unmodified: complete provider blocks in
     /// assistant-content.other, and modeled parts' data in assistant-part.opaque.
+    /// Signed or encrypted reasoning that must be replayed, such as Anthropic
+    /// thinking signatures and OpenAI encrypted reasoning items, travels in
+    /// opaque. Redacted reasoning, such as Anthropic redacted_thinking, is a
+    /// reasoning part with an empty summary and its data in opaque.
     record reasoning {
         summary: list<string>,
     }
@@ -107,6 +126,11 @@ interface inference-types {
         tool-use(tool-call),
         /// Generated media. Return it unchanged; unsupported providers report an adaptation.
         attachment(attachment),
+        /// The model's explanation of why it declined, kept apart from answer
+        /// text, such as OpenAI's refusal content part. It is not an answer
+        /// and never satisfies a response format. Providers without a refusal
+        /// part send it back as text and report part-substituted(text).
+        refusal(string),
         other(opaque-block),
     }
 
@@ -118,6 +142,25 @@ interface inference-types {
         /// do not parse, synthesize, or re-encode it. The host checks whether it is
         /// valid for the destination provider and model.
         opaque: option<string>,
+        /// Sources the provider attached to a text part, for display; empty for
+        /// other parts. Replay needs nothing from it: the provider's own form
+        /// travels in `opaque`.
+        citations: list<citation>,
+    }
+
+    /// A source the provider says supports some of a text part, such as an
+    /// Anthropic citation or an OpenAI url_citation annotation. Untrusted
+    /// provider output: render it as text and links, never follow it.
+    record citation {
+        /// The source's URL, when it has one.
+        url: option<string>,
+        /// The source's title, such as a page or document title.
+        title: option<string>,
+        /// The quoted source text, when the provider returns it.
+        cited-text: option<string>,
+        /// UTF-8 byte offsets, start inclusive and end exclusive, of the text
+        /// this source supports. None means the whole part.
+        span: option<tuple<u32, u32>>,
     }
 
     variant user-part {
@@ -174,6 +217,9 @@ interface inference-types {
         /// Tools offered to the model. Providers render definitions and parse calls.
         tools: list<tool-def>,
         tool-choice: option<tool-choice>,
+        /// Whether the model may request more than one tool call in a reply.
+        /// None uses the provider default; false asks for at most one.
+        parallel-tool-calls: option<bool>,
         /// Reasoning mode. None uses the provider default; off explicitly disables it.
         /// Unsupported modes follow on-unrepresentable.
         thinking: option<thinking-mode>,
@@ -193,6 +239,11 @@ interface inference-types {
         deadline-ms: option<u32>,
         /// Provider prompt-cache key. The host must scope it to the calling workload.
         cache-key: option<string>,
+        /// Cache the prompt prefix ending at each of these parts, as Anthropic's
+        /// cache_control breakpoints do. Tools and system text come first in the
+        /// prefix. Providers that cache automatically, or cannot place this
+        /// many breakpoints, use what they can.
+        cache-points: list<part-ref>,
         /// Key-value labels for metering and logs. Not sent to a provider.
         labels: list<tuple<string, string>>,
     }
@@ -245,6 +296,17 @@ interface inference-types {
         /// precedence. Drop incomplete calls and report part-dropped(tool-use);
         /// never dispatch a call with truncated arguments.
         tool-calls,
+        /// The model declined to answer, such as Anthropic's refusal stop
+        /// reason. Any refusal text is in the message.
+        refusal,
+        /// A provider safety filter withheld or cut the output, such as
+        /// OpenAI's content_filter or Gemini's SAFETY. The message may be
+        /// partial or empty.
+        content-filter,
+        /// The provider paused a long turn, such as Anthropic's pause_turn
+        /// during server-side tool use. Append the message unchanged and call
+        /// again to let the model continue; it is not a final reply.
+        pause-turn,
         /// An unmodeled stop reason, using the provider's name.
         other(string),
     }
@@ -325,6 +387,7 @@ interface inference-types {
     enum request-option {
         tools,
         tool-choice,
+        parallel-tool-calls,
         response-format,
         thinking,
         effort,

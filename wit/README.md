@@ -21,13 +21,26 @@ Long-lived operations use native WIT streams and futures.
 | `chat-provider` | None | `inference-types`, `model-admin`, `chat` |
 | `embeddings-provider` | None | `inference-types`, `model-admin`, `embeddings` |
 | `agent` | `inference-types`, `models`, `chat`, `tools`, `session` | None |
-| `tool-provider` | Inference resource types referenced by `tools` | `tools` |
+| `tool-provider` | `tool-types` and the inference types it references (types only) | `tools` |
+| `runnable-agent` (unstable, `agent-run`) | Those of `agent` | `run` |
+| `run-client` (unstable, `agent-run`) | `run` | None |
+| `compactable-agent` (unstable, `agent-run`) | Those of `agent` | `run`, `compact` |
+| `compact-client` (unstable, `agent-run`) | `run`, `compact` | None |
 
 A serving component that needs chat and embeddings uses `inference-client`; a
 full provider implements `inference-provider`. A caller that only needs chat or
 embeddings can import those interfaces directly and use the smaller providers.
 A provider serving one operation still implements the other interface and
 reports unsupported models there.
+
+`run` is the typed export a host calls to hand an agent one unit of work: a
+message in, the agent's loop of model and tool calls, a final reply out. It
+streams text deltas and whole steps while the agent works, then resolves to an
+outcome or a typed error. It replaces the `POST /task` HTTP convention as the
+contract between an agent and whatever drives it. `run`, `run-types` and the
+two worlds that use them are marked `@unstable(feature = agent-run)`: a
+consumer enables that feature to see them. The design note is
+[`drafts/cosmonic-agent-run/README.md`](drafts/cosmonic-agent-run/README.md).
 
 `model-admin` exposes the trusted catalog and preparation controls. Preparing a
 model can load local weights or open a remote connection. A remote provider can
@@ -37,7 +50,7 @@ through `models`; they do not import model administration.
 `model-residency` is an optional trusted interface for local providers. It
 reports residency, holds independent pins, and drains existing reservations
 before unloading. It is not included in the inference or agent worlds; hosts
-grant it explicitly. Dropping an inference handle releases only its reservation.
+allow it explicitly. Dropping an inference handle releases only its reservation.
 Providers control retention and sharing, including for direct WIT callers.
 
 ## Model ownership and supported operations
@@ -75,12 +88,65 @@ The published 0.3.0 artifact remains unchanged.
   `outcome-unknown(outcome-error)`. The first confirms that this attempt produced
   no execution or effects; the second includes uncertain dispatch and lost replies.
   Both preserve typed cancellation, timeout, upstream failure, and diagnostic detail.
+- Handle `tools.list` failing with `list-error` (`unavailable`, `denied`,
+  `other`) instead of reading an empty list as "no tools". The same `tools`
+  interface is imported by agents and exported by tool providers.
+- Import tool records from the function-less `tool-types` interface, where
+  `tool-def`, `tool-response` and the error types now live. A tool provider
+  no longer imports `tools` just for its types.
 - Keep completed execution failures in `tool-response.is-error`, with their output
   available to the model. Cancellation and timeout do not imply rollback.
+- Optionally export `run` (unstable, `agent-run`) and target `runnable-agent`.
+  A run writes `agent.run.v1` and `agent.run-result.v1`, now reserved in
+  `session`, and streams `run-event.compacted` after it commits an
+  `agent.compaction.v1` entry. The summary stays in the journal and is
+  untrusted model output. `compaction-info.trigger` and the entry's `trigger`
+  say why the agent summarized: `threshold`, `overflow` or `requested`.
+- Optionally also export `compact` (unstable, `agent-run`) and target
+  `compactable-agent`, so a driver can ask for a summary between runs with an
+  optional `focus` from the person. It accepts by committing `agent.compact.v1`
+  under commit id `compact:<run-id>` before its model call, and ends every
+  accepted compaction with at most one `agent.compact-result.v1` (none means
+  it was cut off by a crash, which a driver treats as failed); a summary's
+  `agent.compaction.v1` (trigger `requested`) shares that final commit with the
+  replacement state. A refused or content-filtered summary is never committed:
+  no `compacted` event, the state unchanged, and the compaction ends failed. Compaction ids are a namespace apart from run ids, and a
+  driver that gets `duplicate` reads the outcome from the journal.
+- Match the new `reply-part` cases `cited-text` (text with its citations) and
+  `refusal`, and the new `finish` cases `refusal` and `content-filter`. A
+  driver that reads only `run-outcome` keeps citations and can tell a refusal
+  from an answer. Neither finish carries `structured`, and neither is
+  `output-rejected`. Both describe the call that produced the run's last
+  assistant step, so a refused summary never makes a run finish `refusal`;
+  they take precedence over a limit reached by that same call and over
+  `input-required`.
+- Treat tool output as possibly truncated. A host may cap a tool's output and
+  append a short text note stating the original size.
+- Match `other(string)` in every variant; `run-types` no longer uses
+  `other(option<string>)`. Stable interfaces and worlds carry
+  `@since(version = 0.4.0)`.
 - Record an unknown tool outcome or abandoned call as an unresolved operation.
   Retry with the same id and arguments only when trusted configuration authorizes
   repeat detection. Provider annotations cannot authorize replay. A not-dispatched
   result describes this attempt and does not erase effects from earlier attempts.
+- Match `attachment-source.blob`: an opaque, session-sealed id for content the
+  host stores. Pass it through unchanged and never persist the bytes behind it.
+- Set or ignore `attachment.name`, an optional display filename. It is untrusted
+  text, never a path.
+- Match the new `finish-reason` cases `refusal`, `content-filter` and
+  `pause-turn`. On `pause-turn`, append the message and call again.
+- Match `assistant-content.refusal`, the model's reason for declining. Show it
+  as the model's text; it never satisfies a response format.
+- Set `chat-options.parallel-tool-calls` (none keeps the provider default) and
+  match `request-option.parallel-tool-calls`.
+- Set `request-meta.cache-points` (empty for none) to mark prompt-cache
+  breakpoints by `part-ref`.
+- Set `assistant-part.citations` (empty for none) and render any citations as
+  untrusted links on the text they support.
+- Set `run-options.effort` (none leaves the agent's choice) and pass it on as
+  `chat-options.effort`.
+- Match `run-event.plan`, the agent's whole current plan for display; each
+  event replaces the last.
 
 ## Usage
 
@@ -91,15 +157,18 @@ client -> cosmonic:agent inference -> local provider
 agent -> authorized model aliases + chat + tools + session
 ```
 
-`cosmonic:agent` and `cosmonic:notify` are self-contained:
+`cosmonic:notify` is self-contained:
 
 ```sh
-wasm-tools component wit wit/cosmonic-agent
+wasm-tools component wit wit/cosmonic-notify
 ```
 
-`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, which `wkg.lock` pins by
-digest. The build script fetches them and checks the lock still reproduces:
+`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, and `cosmonic:agent`
+imports `wasi:clocks` (for the `duration` in `run-types`), which each
+package's `wkg.lock` pins by digest. The build script fetches them and checks
+the lock still reproduces:
 
 ```sh
 node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
+node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
 ```

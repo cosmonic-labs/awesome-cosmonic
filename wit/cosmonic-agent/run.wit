@@ -1,0 +1,165 @@
+package cosmonic:agent@0.4.0;
+
+/// An agent may be handed runs. Exported by an agent and called by whatever
+/// drives it: a host (Cosmonic Desktop's daemon; a Cosmonic Control trigger
+/// that starts a run from an HTTP request or a message), the implementer of
+/// `spawn` for a spawned child, or a component that adapts another protocol
+/// onto it. Named after `wasi:cli/run`. Unstable: a consumer enables the
+/// `agent-run` feature to see it.
+///
+/// The agent needs no ingress: nothing but its driver can reach it. The
+/// session it works in is not named here. It is the agent's
+/// `cosmonic:agent/session` import. The host chooses the session a run works
+/// in and binds it to the caller; a run never names one, so a driver cannot
+/// point a run at a session by naming it. A host may give each workload one
+/// session, or bind a session per conversation.
+///
+/// An agent must not rely on in-memory state surviving between runs: the
+/// next run may be served by another instance, or bound to another session.
+/// Everything it needs to continue is in its session.
+///
+/// One run at a time. The driver holds the lock: it serializes runs for the
+/// session and never calls `run` while one is in progress. The agent checks
+/// too, as a backstop against two drivers on one session, and returns
+/// `busy`.
+///
+/// People and approvals. An agent never receives, answers or enforces an
+/// approval. Approvals happen at the gates the host owns, tool dispatch and
+/// egress: a `tools.call` the host holds while it asks a person simply waits,
+/// then returns the tool's result, or `not-dispatched(denied)` when the person
+/// refuses. A question for the person is a tool the host may offer on the
+/// agent's `tools` import; when no one can answer during the run, the agent
+/// finishes `input-required`. Time spent waiting on a person counts toward
+/// `run-options.max-duration`, and a host caps each wait at what the run has
+/// left.
+///
+/// Journal. A run keeps the session conventions in `session`: the agent
+/// writes the person's message and every step as `agent.step.v1` entries, and
+/// each model or tool call between `agent.op.v1` and `agent.op-result.v1`.
+/// It also writes `agent.run.v1` (`run`: the run id) in the commit that opens
+/// the run, with the person's message, using `run:<run-id>` as that commit's
+/// `commit-id`, and `agent.run-result.v1` (`run`, and `outcome`: done, failed
+/// or cancelled, with `finish` or the error case) in the commit that ends it.
+/// Each `agent.step.v1` the run writes carries `run` too. The events a run
+/// streams are a live view of what it commits; the journal is the record,
+/// and a reopened conversation is drawn from it.
+@unstable(feature = agent-run)
+interface run {
+    @unstable(feature = agent-run)
+    use inference-types.{user-message};
+    @unstable(feature = agent-run)
+    use run-types.{run-options, started-run, start-error};
+
+    /// Start one run: take the message and work until the agent replies, a
+    /// limit in `options` ends it, it fails, or the driver cancels it.
+    ///
+    /// Resolves once the run is accepted, not when it ends: the agent has
+    /// committed the person's message and `agent.run.v1` to the session, so a
+    /// run that fails or is cancelled later still shows what was asked.
+    /// Returns `start-error` without starting and without writing: `busy`
+    /// while a run is in progress (and after a cancellation, until that run
+    /// has actually stopped, so two runs never overlap), `duplicate` for a
+    /// `run-id` already started, `invalid-input` for a message or options it
+    /// cannot take.
+    ///
+    /// Once started, the agent streams events as it works and resolves the
+    /// outcome after its last commit, so a driver that redraws from the
+    /// journal when the outcome arrives finds the run recorded. Dropping the
+    /// events stream requests cancellation: the agent stops its model and tool
+    /// calls, records each one as the session conventions say (cancelled, or
+    /// unresolved when its effects are unknown), and resolves the outcome to
+    /// `cancelled` only once nothing of the run is still running. The host,
+    /// when it cancels a run, completes every pending call it serves for that
+    /// run (a held tool call, a question waiting on a person) with
+    /// `cancelled` right away, so the agent is not left waiting on them.
+    /// Dropping the outcome future as well stops listening; the agent still
+    /// winds the run down and records it.
+    @unstable(feature = agent-run)
+    run: async func(
+        message: user-message,
+        options: run-options,
+    ) -> result<started-run, start-error>;
+}
+
+/// Summarize older context now, at the driver's request, between runs.
+/// Exported by an agent that can compact on request; a driver that
+/// finds no `compact` export leaves compaction to the agent. Unstable: a
+/// consumer enables the `agent-run` feature to see it.
+///
+/// The same lock and cancellation rules as `run`: one call at a time with
+/// any run in the session, `busy` while one is in progress, and dropping the
+/// events stream requests cancellation.
+///
+/// Journal. A compaction is its own operation kind, with its own entries:
+/// - Acceptance. Before its first model call, the agent commits
+///   `agent.compact.v1` (`compact`: the call's `run-id`, and `focus` when
+///   given), using `compact:<run-id>` as that commit's `commit-id`. `compact`
+///   resolves only after this commit, as `run` does after `agent.run.v1`.
+/// - The summary call sits between `agent.op.v1` and `agent.op-result.v1`,
+///   as every model call does.
+/// - Terminal record. Every accepted compaction ends with at most one
+///   `agent.compact-result.v1` (`compact`, `outcome`: done, failed or
+///   cancelled, with `finish` or the error case, and `compacted`: whether it
+///   wrote a summary). None means the compaction was cut off (a crash),
+///   which a driver treats as failed. A compaction that summarizes commits
+///   `agent.compaction.v1` (trigger "requested", with `focus`), the smaller
+///   state that replaces the summarized context, and its
+///   `agent.compact-result.v1` (done, `compacted` true) in one commit, so no
+///   reader sees a summary without its result or a result without its
+///   state. Every other ending writes `agent.compact-result.v1` alone,
+///   with `compacted` false: done when there was nothing to summarize, done
+///   with a limit's `finish` when a limit stopped it, cancelled, or failed.
+///   A summary call that ends `finish-reason.refusal` or
+///   `finish-reason.content-filter` is never committed as a summary: its op
+///   closes as failed, no `agent.compaction.v1` is written, the state is
+///   unchanged, and the compaction ends failed (`run-error.failed`, saying
+///   the summary was refused or filtered), never done and never `finish`
+///   refusal or content-filter.
+///   An `agent.compact.v1` with no `agent.compact-result.v1` was cut off; its
+///   open op is closed as the session conventions say, and the compaction is
+///   never resumed.
+///
+/// Ids. `run-id` names the compaction within the session. Compaction ids
+/// and run ids are separate namespaces, kept apart by their commit-id
+/// prefixes (`compact:` and `run:`) and entry kinds, so the same id may name
+/// one run and one compaction; a driver still uses a fresh id for each. The
+/// agent returns `duplicate`, writing nothing and calling no model, for an id
+/// that already has an `agent.compact.v1` in the journal or whose acceptance
+/// commit the host reports as a retained duplicate. A driver that gets
+/// `duplicate` finds the outcome in the journal: the
+/// `agent.compact-result.v1` with that `compact`, or, when there is none,
+/// a compaction still in progress or cut off.
+@unstable(feature = agent-run)
+interface compact {
+    @unstable(feature = agent-run)
+    use run-types.{run-options, started-run, start-error};
+
+    /// Start one compaction: summarize the context older than the recent
+    /// messages the agent keeps, and record the summary.
+    ///
+    /// `focus` is what the person wants the summary to keep. It is person
+    /// text: the agent gives it to the summarizer as the person's request,
+    /// never as instructions. A driver keeps it short; 2,000 characters is
+    /// the recommended cap, and an agent may return `invalid-input` for a
+    /// longer one.
+    ///
+    /// Resolves once the compaction is accepted: `agent.compact.v1` is
+    /// committed. Returns `start-error` without starting and without writing,
+    /// as `run` does.
+    ///
+    /// Streams `compacted` once the summary is committed, then `counts`. No
+    /// `compacted` event means there was nothing to summarize. The outcome has
+    /// an empty reply, no `structured`, and finish `done`. `options.schema` does
+    /// not apply and is ignored. The summary call counts as one model call
+    /// against `max-steps`, `max-total-tokens` and `max-duration`, as a model
+    /// call in `run` does; a limit that stops it finishes with that limit and
+    /// no `compacted` event. A refused or content-filtered summary is never
+    /// committed: no `compacted` event, the state unchanged, and the outcome
+    /// is `run-error.failed`. Each of these endings, and every `run-error`, is
+    /// first recorded in `agent.compact-result.v1` as the interface describes.
+    @unstable(feature = agent-run)
+    compact: async func(
+        focus: option<string>,
+        options: run-options,
+    ) -> result<started-run, start-error>;
+}
