@@ -117,6 +117,8 @@ The published 0.3.0 artifact remains unchanged.
   result describes this attempt and does not erase effects from earlier attempts.
 - Match `attachment-source.blob`: an opaque, session-sealed id for content the
   host stores. Pass it through unchanged and never persist the bytes behind it.
+- Set or ignore `attachment.name`, an optional display filename. It is untrusted
+  text, never a path.
 
 ## Usage
 

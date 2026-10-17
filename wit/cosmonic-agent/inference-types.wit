@@ -51,6 +51,10 @@ interface inference-types {
         /// The provider must support this type or report an adaptation.
         media-type: media-type,
         source: attachment-source,
+        /// A display filename, such as `report.pdf`. Untrusted text supplied
+        /// by whoever made the attachment: render it as text, never use it as
+        /// a path, and never infer the media type from it.
+        name: option<string>,
     }
 
     variant attachment-source {
