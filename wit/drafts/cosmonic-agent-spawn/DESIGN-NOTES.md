@@ -260,9 +260,14 @@ definition. The WIT states them on `spawn-types`.
   resends are serialized and exactly one wins; the implementer cannot tell
   same-digest waiters apart, so the caller routes the one `agent` handle or
   `loaded-toolset` to the waiters that need it. After the grant is consumed
-  or expires, an identical request (a race loser included) is independent
+  or expires, an identical spawn (a race loser included) is independent
   and gets `needs-approval` with a new approval (shared, as above, by
-  identical requests while it is pending). An earlier draft said the
+  identical requests while it is pending). An identical load is not: once
+  the winner's rollout has added the toolset, or while it is adding it,
+  `load` returns that `loaded-toolset` and admits nothing, so the losers
+  never see a prompt whose grant would only fail on the duplicate name. A
+  name already held by a different toolset is refused with
+  `invalid-request` before any grantor sees it. An earlier draft said the
   grant admitted "each request that shared it, once", which let N coalesced
   beyond-ceiling requests ride one human decision; that wording is gone.
   Policy may hold an outcome until a person or the auditor releases it; the
@@ -467,16 +472,23 @@ a caller's toolsets when its store ends.
    results that carry the same `id` and `request-digest`, and one pending
    prompt in the approval UI and audit log.
 2. Grant it once. Expect every waiter's `decision` to resolve to `granted`.
-3. Resend the identical request from all N waiters concurrently. Expect
-   exactly one `ok` (one `agent` handle, or one `loaded-toolset`) and N - 1
-   `needs-approval` results that share one new approval `id` (they coalesce
-   again, so the person sees one new prompt). Expect the
-   implementer to have started exactly one child (`spawn`) or rolled out
-   exactly one revision that adds the toolset (`load`), and the audit log to
-   record one admission against the approval.
-4. Resend once more after the winner is admitted. Expect `needs-approval`
-   carrying the new pending approval from step 3, never the consumed `id`, and
-   never a second child or rollout.
+3. Resend the identical request from all N waiters concurrently, and expect
+   the audit log to record one admission against the approval.
+   - `spawn`: exactly one `ok` (one `agent` handle) and N - 1
+     `needs-approval` results that share one new approval `id` (they coalesce
+     again, so the person sees one new prompt). Exactly one child started.
+   - `load`: N `ok` results carrying the same `loaded-toolset` (same name,
+     same aliases), no new approval, and exactly one revision rolled out
+     that adds the toolset. The losers join the winner's rollout or find it
+     done.
+4. Resend once more after the winner is admitted.
+   - `spawn`: expect `needs-approval` carrying the new pending approval from
+     step 3, never the consumed `id`, and never a second child.
+   - `load`: expect `ok` with the same `loaded-toolset`, no approval, and no
+     rollout. Then send a different spec under the same `name` and expect
+     `invalid-request` with no approval raised. Then `unload` the toolset and
+     load the original spec again: expect `needs-approval` with a new
+     approval, since a load after `unload` is a new request.
 5. Repeat with the grant decided while some waiters have dropped their
    `decision` future and others still hold it, and with a resend racing the
    decision itself. The totals in step 3 must not change.
@@ -1197,6 +1209,13 @@ An internal review of the approval contract, after the single-use grant fix:
   Now inputs are normalized, every WIT value has one JSON form, the digest
   covers exactly the summary-visible fields (instructions and labels are out),
   and there is a test vector. See "The approval digest".
+- **Loads never prompt for what is already loaded.** After a winning load,
+  the losers' resends raised a new approval whose grant could only fail with
+  `invalid-request`, because toolset names are unique. `load` now checks the
+  caller's toolsets before any grantor: an identical spec already loaded, or
+  being loaded, returns the existing `loaded-toolset` and admits nothing, and
+  a different spec under a held name is `invalid-request` with no prompt.
+  The concurrent-waiters conformance case expects N `ok` results for a load.
 
 ## Conformance with the WIT design skill
 

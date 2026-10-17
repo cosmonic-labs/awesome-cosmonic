@@ -361,7 +361,11 @@ interface spawn-types {
     /// independent request and needs its own approval: it returns
     /// `needs-approval` with a new approval, never the consumed one, and
     /// identical requests coalesce onto that new approval while it is
-    /// pending. This includes a resend that lost the race for the grant.
+    /// pending. For a spawn, this includes a resend that lost the race for
+    /// the grant. A load is different: an identical toolset already loaded,
+    /// or being loaded, is returned as is and admits nothing (see
+    /// `tool-loading`), so a load's race losers get the winner's
+    /// `loaded-toolset`, not a new approval.
     /// The implementer may cap how many approvals one caller has pending, so
     /// a looping agent cannot bury the person in prompts (it gets
     /// `over-limit`). "The same caller" means the same caller identity (see

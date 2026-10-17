@@ -224,7 +224,10 @@ instance is replaced, nothing about a loaded toolset lives in the agent's
 memory: `loaded-toolset` is a record, not a handle.
 
 `load` follows the same admission as `spawn`: within the ceiling it may load at
-once, beyond it goes to a grantor, and policy may ask for approval anyway. The
+once, beyond it goes to a grantor, and policy may ask for approval anyway. An
+identical spec that is already loaded (or loading) returns the existing
+`loaded-toolset` and admits nothing, and a different spec under a name already
+held is refused before any grantor sees it. The
 implementer adds the toolset as a component and offers its tools
 through the caller's existing `cosmonic:agent/tools` import, so the agent never
 carries a router; that is why `tool-loading-provider` exports both

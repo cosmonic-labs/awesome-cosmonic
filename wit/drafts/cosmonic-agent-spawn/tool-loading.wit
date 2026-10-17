@@ -36,6 +36,25 @@ package cosmonic:agent@0.5.0;
 /// normalized spec in one defined JSON form (see `approval.request-digest`),
 /// so the match does not depend on how either side ordered its lists.
 ///
+/// **Already loaded.** Before any ceiling check or grantor, `load` checks
+/// the caller's toolsets, in this order:
+///
+/// 1. A toolset with the same digest (same caller, same normalized spec) is
+///    already loaded: `load` returns that `loaded-toolset` unchanged and
+///    admits nothing. No approval is raised or consumed and no rollout runs,
+///    since the caller already holds exactly this reach.
+/// 2. A rollout that adds a toolset with the same digest is in progress: the
+///    request joins it and resolves with its result, the same
+///    `loaded-toolset` or the same error.
+/// 3. Another toolset already holds `name`, whether the caller loaded it or
+///    the operator declared it: `invalid-request`, before any approval, so
+///    the person is never shown a prompt whose grant could only fail.
+///
+/// So the waiters that coalesced on one approval all end with the one
+/// `loaded-toolset`: whichever resend wins the grant runs the rollout, and
+/// the others join it or find it done. A load after `unload` is a new
+/// request and is admitted afresh.
+///
 /// **When the tools arrive.** The new revision serves the caller's next run.
 /// The current run is not moved between revisions: it should finish (an
 /// agent that loads a tool to use it typically ends the run right after
@@ -80,10 +99,11 @@ interface tool-loading {
         aliases: list<string>,
     }
 
-    /// Check the spec against the ceiling and policy, then roll the caller's
-    /// workload out to a revision that adds the toolset, attached to the same
-    /// session. Resolves once the new revision is ready to serve the next
-    /// run.
+    /// Return the toolset if an identical one is already loaded or loading,
+    /// refuse a name already held, and otherwise check the spec against the
+    /// ceiling and policy, then roll the caller's workload out to a revision
+    /// that adds the toolset, attached to the same session. Resolves once the
+    /// new revision is ready to serve the next run.
     @unstable(feature = agent-spawn)
     load: async func(spec: toolset-spec) -> result<loaded-toolset, admission-error>;
 
