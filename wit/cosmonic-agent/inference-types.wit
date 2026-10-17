@@ -216,6 +216,11 @@ interface inference-types {
         deadline-ms: option<u32>,
         /// Provider prompt-cache key. The host must scope it to the calling workload.
         cache-key: option<string>,
+        /// Cache the prompt prefix ending at each of these parts, as Anthropic's
+        /// cache_control breakpoints do. Tools and system text come first in the
+        /// prefix. Providers that cache automatically, or cannot place this
+        /// many breakpoints, use what they can.
+        cache-points: list<part-ref>,
         /// Key-value labels for metering and logs. Not sent to a provider.
         labels: list<tuple<string, string>>,
     }
