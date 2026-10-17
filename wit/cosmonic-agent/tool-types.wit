@@ -55,8 +55,15 @@ interface tool-types {
     }
 
     /// The response returned by a tool.
+    ///
+    /// Output may be truncated. A host that dispatches the call may cap the
+    /// size of a tool's output. When it cuts output, it appends a short text
+    /// part saying so and stating the original size, and leaves the rest of
+    /// the response as the tool returned it. Callers treat any output as
+    /// possibly truncated and never assume it is the tool's complete result.
     record tool-response {
-        /// What to show the model and the user, in order.
+        /// What to show the model and the user, in order. May end with the
+        /// host's truncation note.
         output: list<tool-output>,
         /// Machine-readable JSON matching output-schema when declared.
         structured: option<json>,
