@@ -129,6 +129,8 @@ The published 0.3.0 artifact remains unchanged.
   breakpoints by `part-ref`.
 - Set `assistant-part.citations` (empty for none) and render any citations as
   untrusted links on the text they support.
+- Set `run-options.effort` (none leaves the agent's choice) and pass it on as
+  `chat-options.effort`.
 
 ## Usage
 
