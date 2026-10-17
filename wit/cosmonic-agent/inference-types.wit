@@ -138,6 +138,25 @@ interface inference-types {
         /// do not parse, synthesize, or re-encode it. The host checks whether it is
         /// valid for the destination provider and model.
         opaque: option<string>,
+        /// Sources the provider attached to a text part, for display; empty for
+        /// other parts. Replay needs nothing from it: the provider's own form
+        /// travels in `opaque`.
+        citations: list<citation>,
+    }
+
+    /// A source the provider says supports some of a text part, such as an
+    /// Anthropic citation or an OpenAI url_citation annotation. Untrusted
+    /// provider output: render it as text and links, never follow it.
+    record citation {
+        /// The source's URL, when it has one.
+        url: option<string>,
+        /// The source's title, such as a page or document title.
+        title: option<string>,
+        /// The quoted source text, when the provider returns it.
+        cited-text: option<string>,
+        /// UTF-8 byte offsets, start inclusive and end exclusive, of the text
+        /// this source supports. None means the whole part.
+        span: option<tuple<u32, u32>>,
     }
 
     variant user-part {
