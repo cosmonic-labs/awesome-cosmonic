@@ -121,6 +121,8 @@ The published 0.3.0 artifact remains unchanged.
   text, never a path.
 - Match the new `finish-reason` cases `refusal`, `content-filter` and
   `pause-turn`. On `pause-turn`, append the message and call again.
+- Match `assistant-content.refusal`, the model's reason for declining. Show it
+  as the model's text; it never satisfies a response format.
 
 ## Usage
 
