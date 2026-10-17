@@ -24,6 +24,8 @@ Long-lived operations use native WIT streams and futures.
 | `tool-provider` | `tool-types` and the inference types it references (types only) | `tools` |
 | `runnable-agent` (unstable, `agent-run`) | Those of `agent` | `run` |
 | `run-client` (unstable, `agent-run`) | `run` | None |
+| `compactable-agent` (unstable, `agent-run`) | Those of `agent` | `run`, `compact` |
+| `compact-client` (unstable, `agent-run`) | `run`, `compact` | None |
 
 A serving component that needs chat and embeddings uses `inference-client`; a
 full provider implements `inference-provider`. A caller that only needs chat or
@@ -98,7 +100,12 @@ The published 0.3.0 artifact remains unchanged.
   A run writes `agent.run.v1` and `agent.run-result.v1`, now reserved in
   `session`, and streams `run-event.compacted` after it commits an
   `agent.compaction.v1` entry. The summary stays in the journal and is
-  untrusted model output.
+  untrusted model output. `compaction-info.trigger` and the entry's `trigger`
+  say why the agent summarized: `threshold`, `overflow` or `requested`.
+- Optionally also export `compact` (unstable, `agent-run`) and target
+  `compactable-agent`, so a driver can ask for a summary between runs with an
+  optional `focus` from the person. It writes `agent.compaction.v1` with
+  trigger `requested` under commit id `compact:<run-id>`.
 - Treat tool output as possibly truncated. A host may cap a tool's output and
   append a short text note stating the original size.
 - Match `other(string)` in every variant; `run-types` no longer uses
