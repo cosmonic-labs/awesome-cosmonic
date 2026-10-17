@@ -122,6 +122,11 @@ interface inference-types {
         tool-use(tool-call),
         /// Generated media. Return it unchanged; unsupported providers report an adaptation.
         attachment(attachment),
+        /// The model's explanation of why it declined, kept apart from answer
+        /// text, such as OpenAI's refusal content part. It is not an answer
+        /// and never satisfies a response format. Providers without a refusal
+        /// part send it back as text and report part-substituted(text).
+        refusal(string),
         other(opaque-block),
     }
 
