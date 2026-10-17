@@ -334,6 +334,18 @@ interface spawn-types {
         other(option<string>),
     }
 
+    /// An earlier admission of the same digest from the same caller, which
+    /// makes a new approval a repeat.
+    @unstable(feature = agent-spawn)
+    record prior-admission {
+        /// The `id` of the approval whose grant admitted it.
+        approval-id: string,
+        /// How long before this approval was issued it was admitted.
+        admitted-ago: duration,
+        /// True while the child that admission started is still running.
+        still-running: bool,
+    }
+
     /// A request beyond the caller's ceiling, sent to a grantor. The
     /// approval outlives the call that produced it: it stays pending until
     /// the grantor decides or it expires, whether or not anyone is waiting.
@@ -354,6 +366,18 @@ interface spawn-types {
     /// handle or `loaded-toolset` to whichever of its waiters need it.
     /// Coalescing saves the person prompts; it never multiplies what one
     /// decision admits.
+    ///
+    /// Handing the one `agent` handle to other waiters works only within one
+    /// store: the handle is scoped to the store that spawned it (see
+    /// `spawn.agent`), and most callers get a fresh store per request. A
+    /// waiter in another store cannot receive it, so its resend is a new
+    /// request and raises a new approval. That approval would read the same
+    /// as the one the person just granted, and a person approving a
+    /// seemingly duplicate prompt by reflex would start a second child. So
+    /// an approval for a digest that was admitted within the repeat window
+    /// is marked as a repeat (`repeat-of`), and its summary says so first.
+    /// A load needs no marker: an identical toolset already loaded is
+    /// returned as is (see `tool-loading`).
     ///
     /// A grant expires too: it admits the identical request only within the
     /// implementer's grant lifetime, set by the operator. Once a grant is
@@ -435,12 +459,31 @@ interface spawn-types {
         /// (schema S, at most N bytes) return to <caller>". Built only from
         /// values the implementer has validated (parsed hosts, checked names
         /// and digests); free text the caller wrote, such as instructions or
-        /// labels, never appears in it. It shows every input of
+        /// labels, never appears in it. For a repeat (`repeat-of` is
+        /// some), it begins by saying so, for example "An identical request
+        /// from <caller> was admitted 2 minutes ago and is still running.
+        /// Approving starts a second, separate agent." It shows every input of
         /// `request-digest`, in normalized form, so two approvals whose
         /// digests differ never read the same; a caller-authored value with
         /// no safe rendering (`output.schema`) is shown by the `sha256:` of
         /// its canonical JSON.
         summary: string,
+        /// Some when the same caller had a request with this digest admitted
+        /// within the repeat window: the most recent such admission. The
+        /// host renders a repeat distinctly from a first request, so a
+        /// person does not approve what looks like a duplicate prompt by
+        /// reflex. The repeat window is the operator's; the recommended
+        /// default is one hour, extended for as long as a child admitted on
+        /// this digest is still running. Only `spawn` sets it; a load that
+        /// is already admitted returns its `loaded-toolset` instead.
+        ///
+        /// A marker rather than an error: a second identical child is
+        /// sometimes wanted (parallel workers), the caller cannot fetch the
+        /// first handle from another store anyway, and an error would add a
+        /// case every caller handles without giving the person the choice.
+        /// The marker keeps one shape, `needs-approval`, and moves the
+        /// decision to the person with what they need to make it.
+        repeat-of: option<prior-admission>,
         /// Resolves when the grantor decides. Dropping it stops waiting; it
         /// does not withdraw the request, so a person who decides after the
         /// caller's own request has ended is not too late.

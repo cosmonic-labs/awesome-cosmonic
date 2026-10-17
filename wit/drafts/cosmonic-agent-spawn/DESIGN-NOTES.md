@@ -267,7 +267,21 @@ definition. The WIT states them on `spawn-types`.
   `load` returns that `loaded-toolset` and admits nothing, so the losers
   never see a prompt whose grant would only fail on the duplicate name. A
   name already held by a different toolset is refused with
-  `invalid-request` before any grantor sees it. An earlier draft said the
+  `invalid-request` before any grantor sees it.
+- **A repeat looks like a repeat.** Routing the one `agent` handle to other
+  waiters works only within one store, since the handle is store-scoped and
+  most callers get a fresh store per request (see (s)). Waiters in other
+  stores resend, and their new approval would read exactly like the one just
+  granted: a person approving it by reflex starts a second child. So a new
+  approval for a digest the same caller had admitted within the repeat window
+  (the operator's; recommended one hour, and always while that child still
+  runs) carries `repeat-of` (the earlier approval's id, how long ago, whether
+  the child still runs), and its summary opens with that fact. A marker, not
+  a new error: a second identical child is sometimes wanted (parallel
+  workers), the waiter could not fetch the first handle from another store
+  anyway, and an error would add a case every caller must handle while taking
+  the choice away from the person. The marker keeps the one
+  `needs-approval` shape. An earlier draft said the
   grant admitted "each request that shared it, once", which let N coalesced
   beyond-ceiling requests ride one human decision; that wording is gone.
   Policy may hold an outcome until a person or the auditor releases it; the
@@ -483,7 +497,12 @@ a caller's toolsets when its store ends.
      done.
 4. Resend once more after the winner is admitted.
    - `spawn`: expect `needs-approval` carrying the new pending approval from
-     step 3, never the consumed `id`, and never a second child.
+     step 3, never the consumed `id`, and never a second child. That new
+     approval (here and in step 3) carries `repeat-of` naming the consumed
+     approval's `id`, with `still-running` true, and its summary opens by
+     saying an identical request was admitted; a first approval for a digest
+     never carries `repeat-of`. Repeat from a fresh store per resend (as a
+     per-request caller would) and expect the same.
    - `load`: expect `ok` with the same `loaded-toolset`, no approval, and no
      rollout. Then send a different spec under the same `name` and expect
      `invalid-request` with no approval raised. Then `unload` the toolset and
@@ -1216,6 +1235,12 @@ An internal review of the approval contract, after the single-use grant fix:
   being loaded, returns the existing `loaded-toolset` and admits nothing, and
   a different spec under a held name is `invalid-request` with no prompt.
   The concurrent-waiters conformance case expects N `ok` results for a load.
+- **A repeat approval is marked.** A losing spawn resend after a consumed
+  grant raised an approval indistinguishable from the one just granted, and
+  waiters in other stores cannot share the first handle. `approval` gains
+  `repeat-of: option<prior-admission>` and the summary opens with the repeat;
+  the contract now says handle sharing works only within one store. Chosen
+  over a new error to keep one shape and leave the choice with the person.
 
 ## Conformance with the WIT design skill
 

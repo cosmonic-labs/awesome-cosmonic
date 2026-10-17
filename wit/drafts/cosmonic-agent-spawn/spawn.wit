@@ -15,7 +15,10 @@ interface spawn {
     /// The implementer does the same when the caller's store ends without
     /// dropping the handle (a trap, or a handle that was never dropped), so a
     /// child cannot outlive its caller. A caller that gets a fresh store per
-    /// request therefore cannot keep a child across its own requests.
+    /// request therefore cannot keep a child across its own requests, and
+    /// cannot hand the handle to a waiter in another store: an identical
+    /// resend from there is a new request and needs a new approval, which is
+    /// marked as a repeat (`approval.repeat-of`).
     @unstable(feature = agent-spawn)
     resource agent {
         /// Start one run: hand the child a message and let it work until it
