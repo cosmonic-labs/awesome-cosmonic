@@ -86,13 +86,42 @@ interface run {
 /// finds no `compact` export leaves compaction to the agent. Unstable: a
 /// consumer enables the `agent-run` feature to see it.
 ///
-/// The same lock, cancellation and journal rules as `run`: one call at a
-/// time with any run in the session, `busy` while one is in progress, and
-/// dropping the events stream requests cancellation. The agent writes the
-/// summary call between `agent.op.v1` and `agent.op-result.v1`, and
-/// `agent.compaction.v1` (trigger "requested", with `focus` when given) in
-/// the commit that records it, using `compact:<run-id>` as that commit's
-/// `commit-id`, so the same `run-id` again returns `duplicate`.
+/// The same lock and cancellation rules as `run`: one call at a time with
+/// any run in the session, `busy` while one is in progress, and dropping the
+/// events stream requests cancellation.
+///
+/// Journal. A compaction is its own operation kind, with its own entries:
+/// - Acceptance. Before its first model call, the agent commits
+///   `agent.compact.v1` (`compact`: the call's `run-id`, and `focus` when
+///   given), using `compact:<run-id>` as that commit's `commit-id`. `compact`
+///   resolves only after this commit, as `run` does after `agent.run.v1`.
+/// - The summary call sits between `agent.op.v1` and `agent.op-result.v1`,
+///   as every model call does.
+/// - Terminal record. Every accepted compaction ends with exactly one
+///   `agent.compact-result.v1` (`compact`, `outcome`: done, failed or
+///   cancelled, with `finish` or the error case, and `compacted`: whether it
+///   wrote a summary). A compaction that summarizes commits
+///   `agent.compaction.v1` (trigger "requested", with `focus`), the smaller
+///   state that replaces the summarized context, and its
+///   `agent.compact-result.v1` (done, `compacted` true) in one commit, so no
+///   reader sees a summary without its result or a result without its
+///   state. Every other ending writes `agent.compact-result.v1` alone,
+///   with `compacted` false: done when there was nothing to summarize, done
+///   with a limit's `finish` when a limit stopped it, cancelled, or failed.
+///   An `agent.compact.v1` with no `agent.compact-result.v1` was cut off; its
+///   open op is closed as the session conventions say, and the compaction is
+///   never resumed.
+///
+/// Ids. `run-id` names the compaction within the session. Compaction ids
+/// and run ids are separate namespaces, kept apart by their commit-id
+/// prefixes (`compact:` and `run:`) and entry kinds, so the same id may name
+/// one run and one compaction; a driver still uses a fresh id for each. The
+/// agent returns `duplicate`, writing nothing and calling no model, for an id
+/// that already has an `agent.compact.v1` in the journal or whose acceptance
+/// commit the host reports as a retained duplicate. A driver that gets
+/// `duplicate` finds the outcome in the journal: the
+/// `agent.compact-result.v1` with that `compact`, or, when there is none,
+/// a compaction still in progress or cut off.
 @unstable(feature = agent-run)
 interface compact {
     @unstable(feature = agent-run)
@@ -107,13 +136,18 @@ interface compact {
     /// the recommended cap, and an agent may return `invalid-input` for a
     /// longer one.
     ///
+    /// Resolves once the compaction is accepted: `agent.compact.v1` is
+    /// committed. Returns `start-error` without starting and without writing,
+    /// as `run` does.
+    ///
     /// Streams `compacted` once the summary is committed, then `counts`. No
     /// `compacted` event means there was nothing to summarize. The outcome has
     /// an empty reply, no `structured`, and finish `done`. `options.schema` does
     /// not apply and is ignored. The summary call counts as one model call
     /// against `max-steps`, `max-total-tokens` and `max-duration`, as a model
     /// call in `run` does; a limit that stops it finishes with that limit and
-    /// no `compacted` event.
+    /// no `compacted` event. Each of these endings, and every `run-error`, is
+    /// first recorded in `agent.compact-result.v1` as the interface describes.
     @unstable(feature = agent-run)
     compact: async func(
         focus: option<string>,

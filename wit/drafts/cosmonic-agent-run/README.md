@@ -189,7 +189,7 @@ record run-outcome {
     reply: list<reply-part>,
     structured: option<json>,
     counts: run-counts,
-    finish: finish,          // done, input-required, max-steps, max-total-tokens, max-duration, other
+    finish: finish,          // done, input-required, max-steps, max-total-tokens, max-duration, refusal, content-filter, other
     model: option<served-model>,  // alias and the concrete model, for display
 }
 ```
