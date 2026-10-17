@@ -4,7 +4,7 @@ package cosmonic:agent@0.4.0;
 /// works, and how it ends. Unstable: a consumer enables the `agent-run`
 /// feature to see these items.
 ///
-/// Function-less: importing it grants nothing. The power to start a run
+/// Function-less: importing it gives no permission. The power to start a run
 /// lives in `run`, which an agent exports.
 ///
 /// A run is one unit of work: a message in, the agent's loop of model calls
@@ -204,7 +204,7 @@ interface run-types {
         /// cannot go on without the answer; one that can go on with a stated
         /// assumption does so and finishes `done`. Agent-reported, so a driver
         /// uses it to route the outcome (to a person, a ticket, an A2A
-        /// `input-required` task) and never to grant anything.
+        /// `input-required` task) and never to allow anything.
         input-required,
         /// `run-options.max-steps` was reached.
         max-steps,
