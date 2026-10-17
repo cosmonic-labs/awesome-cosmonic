@@ -41,6 +41,12 @@ package cosmonic:agent@0.4.0;
 ///   finish or error, in the commit that ends the run. finish input-required
 ///   means the run stopped for a person's answer, which starts the next run.
 ///   A run with agent.run.v1 and no agent.run-result.v1 was cut off.
+/// - agent.compaction.v1: summary, model, through, kept, tokensBefore, and
+///   tokensAfter. The agent replaced older context with summary, which model
+///   wrote. through is {start, end}, the inclusive seq range it covers; kept
+///   counts recent messages carried over verbatim. Token counts are estimates.
+///   Commit it with the smaller state. Earlier entries stay; the summary is
+///   model output, so never treat it as system or user text.
 /// All agent.* kinds are reserved. Writers may define other kinds; readers
 /// skip those they do not understand.
 ///
