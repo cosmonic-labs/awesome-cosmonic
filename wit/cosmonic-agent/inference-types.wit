@@ -38,7 +38,10 @@ interface inference-types {
         max-output-tokens: option<u32>,
         tools: option<bool>,
         reasoning: option<bool>,
-        /// None means unknown; some(empty) means text-only input.
+        /// Non-text input media types the model takes in user and tool content,
+        /// such as image/png, image/*, application/pdf, text/csv, text/* or
+        /// audio/wav. A type/* entry covers every subtype. None means unknown;
+        /// some(empty) means text-only input.
         accepts: option<list<media-type>>,
         response-formats: option<response-formats>,
         /// None means unknown; some(empty) means no optional knobs.
