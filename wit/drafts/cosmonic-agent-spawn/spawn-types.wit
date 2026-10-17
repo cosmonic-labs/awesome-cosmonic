@@ -297,7 +297,9 @@ interface spawn-types {
         /// never chats has no aliases of its own. Counts toward read reach
         /// like any other grant.
         model-alias: string,
-        /// The child's instructions.
+        /// The child's instructions. Caller free text: not covered by the
+        /// approval digest and never shown in its summary (see
+        /// `approval.request-digest`).
         instructions: string,
         /// What the agent component itself may touch, in the same shape as a
         /// toolset's grants. Toolsets carry their own.
@@ -313,7 +315,8 @@ interface spawn-types {
         /// implementer has spawn enabled for the caller; it lets the child
         /// spawn in turn, within any operator limits.
         powers: agent-powers,
-        /// For logs, audit, and display. Never policy input.
+        /// For logs, audit, and display. Never policy input, and not
+        /// covered by the approval digest.
         labels: list<tuple<string, string>>,
     }
 
@@ -377,13 +380,50 @@ interface spawn-types {
         /// version (`cosmonic:agent/spawn-request@2` or
         /// `cosmonic:agent/toolset-spec@2`), a zero byte, the caller's
         /// workload incarnation, a zero byte, the caller's component name, a
-        /// zero byte, and the request in canonical JSON: object
-        /// keys sorted, lists that are sets (`allowed-hosts`, `secrets`,
-        /// `credentials`, interface `config`) sorted, no insignificant
-        /// whitespace (RFC 8785). For a spawn the request is the whole
-        /// `spawn-request` including `output`, `budget` and `powers`; for a
-        /// load, the `toolset-spec`. A changed request has a different digest
-        /// and is a new request. Compare for equality only.
+        /// zero byte, and the digest input in canonical JSON. Compare for
+        /// equality only.
+        ///
+        /// What it covers: exactly the fields `summary` shows, and all of
+        /// them. For a load, the whole `toolset-spec`. For a spawn, every
+        /// `spawn-request` field except `instructions` and `labels`: those
+        /// are caller free text, which the summary never shows, so the person
+        /// never decides on them, and a digest over them would let a caller
+        /// raise prompts that differ in nothing the person can see.
+        /// Instructions are content sent down, like `agent.run` messages.
+        ///
+        /// Normalization, before digesting and before the ceiling check:
+        /// - `allowed-hosts` entries are parsed; the scheme and host are
+        ///   lowercased, an internationalized host becomes its A-label form,
+        ///   one trailing dot is stripped, and a port equal to the scheme's
+        ///   default (80 for `http` and `ws`, 443 for `https` and `wss`) is
+        ///   dropped. A port with no scheme is kept. An entry that does not
+        ///   parse is `invalid-request`.
+        /// - Lists that are sets (`allowed-hosts`, `secrets`, `credentials`,
+        ///   `volumes`, `interfaces`) drop exact duplicates and are sorted
+        ///   by the UTF-8 bytes of each element's canonical JSON. Two
+        ///   different elements with one key (two volumes at one
+        ///   `mount-path`, two interface grants with one `name`) are
+        ///   `invalid-request`. `toolsets` is ordered and keeps its order,
+        ///   which assigns aliases.
+        /// - Names, digests, paths and secret and credential names are
+        ///   compared as given; no case folding or Unicode normalization.
+        ///
+        /// Encoding of each WIT value as JSON, then serialized by RFC 8785
+        /// (JCS: sorted member names, no insignificant whitespace):
+        /// - record: an object with every field, named as in this WIT
+        ///   (kebab-case).
+        /// - string: a JSON string. bool: `true` or `false`. u32: a number.
+        /// - u64 and `duration`: a string of decimal digits with no leading
+        ///   zeros, since RFC 8785 numbers are IEEE 754 doubles.
+        /// - option: `null` for none, the value's encoding for some.
+        /// - list: an array. list<tuple<string, string>> (interface
+        ///   `config`): an object; a repeated key is `invalid-request`.
+        /// - flags: an array of the names of the set flags, sorted.
+        /// - variant: the case name as a string for a case with no payload,
+        ///   otherwise an object with one member, the case name, whose value
+        ///   is the payload's encoding.
+        /// - `json` (`output.schema`): parsed and embedded as a JSON value;
+        ///   invalid JSON or a repeated member name is `invalid-request`.
         request-digest: string,
         /// Implementer-authored text for the person who decides, like
         /// `toolset-offer.summary`, and unlike diagnostic detail strings.
@@ -391,7 +431,11 @@ interface spawn-types {
         /// (schema S, at most N bytes) return to <caller>". Built only from
         /// values the implementer has validated (parsed hosts, checked names
         /// and digests); free text the caller wrote, such as instructions or
-        /// labels, never appears in it.
+        /// labels, never appears in it. It shows every input of
+        /// `request-digest`, in normalized form, so two approvals whose
+        /// digests differ never read the same; a caller-authored value with
+        /// no safe rendering (`output.schema`) is shown by the `sha256:` of
+        /// its canonical JSON.
         summary: string,
         /// Resolves when the grantor decides. Dropping it stops waiting; it
         /// does not withdraw the request, so a person who decides after the

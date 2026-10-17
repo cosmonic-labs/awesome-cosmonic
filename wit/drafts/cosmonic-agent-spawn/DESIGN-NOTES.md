@@ -243,9 +243,12 @@ definition. The WIT states them on `spawn-types`.
   ceiling.
 - **Beyond the ceiling: `needs-approval`.** Approval is explicit
   declassification (deciding that data may cross a boundary it otherwise could
-  not). The digest covers the caller's identity and the whole request,
-  including `output { schema, max-bytes }` and `budget`; for a load, the
-  `toolset-spec`. The `approval` carries a
+  not). The digest covers the caller's identity and exactly the fields the
+  approval's summary shows: for a spawn, every `spawn-request` field except
+  the caller free text (`instructions`, `labels`), so `output { schema,
+  max-bytes }`, `budget` and `powers` are in; for a load, the whole
+  `toolset-spec`. Inputs are normalized first (see "The approval digest").
+  The `approval` carries a
   `decision` future: await it, then resend the identical request. Dropping it
   only stops waiting; the approval stays pending until it is decided or
   expires, and a grant admits one identical request from the same caller.
@@ -487,6 +490,63 @@ a caller's toolsets when its store ends.
    unrelated `load`) while an approval is pending, then resend the identical
    request from the new instance. Expect it to coalesce onto the same pending
    approval (same `id`, same `request-digest`): a rollout keeps the caller.
+
+## The approval digest
+
+The digest is what coalescing and single use compare, and what a discovery
+offer's spec must reproduce when loaded unchanged, so two implementers must
+compute the same bytes. `approval.request-digest` in `spawn-types` is the
+normative text; this section explains the choices and gives a test vector.
+
+- **Only what the person sees.** The digest covers exactly the fields the
+  summary shows, and the summary shows all of them. The alternative, a digest
+  over the whole request, let a caller vary a label (or the instructions) and
+  raise prompts that differ in nothing the person can see, so a person
+  approving one would reasonably approve its twin. Instructions are caller
+  free text, which the summary may never show, so they leave the digest:
+  they are content sent down, like `agent.run` messages, which no approval
+  ever bound. `output.schema` stays in and is shown by its `sha256:` because
+  it bounds the declassification channel.
+- **Normalized before digesting.** Set lists are deduplicated and sorted, and
+  allowed hosts are lowercased, stripped of one trailing dot, converted to
+  A-labels, and lose a default port. Without this, `API.example.com.` and
+  `api.example.com` (or a list with a duplicate entry) were two digests for
+  one reach, which dodges coalescing. The same normal form feeds the ceiling
+  check, so a request is judged on what it digests to.
+- **Every WIT value has one JSON form.** RFC 8785 fixes object member order,
+  whitespace and number formatting, but not how WIT options, variants, flags,
+  tuples or 64-bit integers map onto JSON. The mapping is: record as an object
+  with every field; option as `null` or the value; variant as the bare case
+  name, or a one-member object `{"case": payload}`; flags as a sorted array of
+  set names; `config` as an object; u64 and `duration` as decimal strings,
+  since RFC 8785 numbers are IEEE 754 doubles; `json` embedded as parsed JSON.
+
+**Test vector (load).** Caller workload incarnation
+`0b6f1f9e-3c5d-4e2a-9a71-5d2c8e4f6a10`, component name `agent`, and a
+`toolset-spec` named `repo-fs` for `ghcr.io/cosmonic/tools/fs:0.2.0` at
+`sha256:1c1c…1c` (the byte `1c` 32 times), with no `alias-prefix`, a read-only
+`workspace` volume at `/src`, credential `github`, and allowed hosts given as
+`API.GitHub.com.`, `api.github.com` and `https://Uploads.GitHub.com:443`. The
+hosts normalize to `api.github.com` (twice, so once) and
+`https://uploads.github.com`. The canonical JSON is:
+
+```json
+{"alias-prefix":null,"component":{"digest":"sha256:1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c","image":"ghcr.io/cosmonic/tools/fs:0.2.0"},"grants":{"allowed-hosts":["api.github.com","https://uploads.github.com"],"credentials":["github"],"interfaces":[],"secrets":[],"volumes":[{"mount-path":"/src","read-only":true,"volume":"workspace"}]},"name":"repo-fs"}
+```
+
+The preimage is `cosmonic:agent/toolset-spec@2`, a zero byte, the
+incarnation, a zero byte, `agent`, a zero byte, then those JSON bytes, and the
+digest is
+`sha256:0ff43f9bb36586a3b4393e291a66ce44fcfc83d2526c64840a80162f397d5f01`.
+Any reordering of the hosts, volumes or credentials, any of the three host
+spellings, or a duplicated entry must produce the same digest.
+
+**Conformance case: normalization.** From one caller, send identical
+beyond-ceiling requests that differ only in set order, duplicate set entries,
+host case, a trailing dot, or a default port, and for a spawn, in `labels` or
+`instructions`. Expect one approval (same `id` and `request-digest`). Then
+change one digest-covered field (a non-default port, a budget value, the
+schema) and expect a new approval whose summary differs from the first.
 
 ## Tool naming: identity, alias, display
 
@@ -884,8 +944,9 @@ loading exists at all. Stated in `tool-loading`.
 **5. An approval grant is single use and bound to the request digest.**
 *Default, open to review.* A grant admits one identical request from the same
 caller before it expires, and nothing else: another caller, or the same caller
-with any field changed (labels included), is a different digest and needs its
-own approval. Standing permission belongs in policy a person wrote, where it
+with any digest-covered field changed, is a different digest and needs its
+own approval. Instructions and labels are caller free text the summary never
+shows, so they are outside the digest (see "The approval digest"). Standing permission belongs in policy a person wrote, where it
 can be read, reviewed and revoked, not in a reusable approval that quietly
 widens what a caller can do. Dropping `decision` stops waiting and does not
 withdraw. *Enforced in* the spike's admission; *tested by*
@@ -1129,6 +1190,13 @@ An internal review of the approval contract, after the single-use grant fix:
   used in the digest (domain tags move to `@2`), coalescing and toolset
   scoping, so a sibling component cannot coalesce onto, or consume, another
   component's approval.
+- **A digest that cannot be dodged, and can be tested.** Set lists were
+  sorted but not deduplicated, hosts were not normalized, labels changed the
+  digest without changing the summary, and RFC 8785 alone left options and
+  variants undefined, so a discovery offer's digest match was untestable.
+  Now inputs are normalized, every WIT value has one JSON form, the digest
+  covers exactly the summary-visible fields (instructions and labels are out),
+  and there is a test vector. See "The approval digest".
 
 ## Conformance with the WIT design skill
 
