@@ -1,6 +1,7 @@
 package cosmonic:agent@0.4.0;
 
 /// Text embeddings with a prepared model.
+@since(version = 0.4.0)
 interface embeddings {
     use inference-types.{model};
 
