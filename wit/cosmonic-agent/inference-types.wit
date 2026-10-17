@@ -260,6 +260,17 @@ interface inference-types {
         /// precedence. Drop incomplete calls and report part-dropped(tool-use);
         /// never dispatch a call with truncated arguments.
         tool-calls,
+        /// The model declined to answer, such as Anthropic's refusal stop
+        /// reason. Any refusal text is in the message.
+        refusal,
+        /// A provider safety filter withheld or cut the output, such as
+        /// OpenAI's content_filter or Gemini's SAFETY. The message may be
+        /// partial or empty.
+        content-filter,
+        /// The provider paused a long turn, such as Anthropic's pause_turn
+        /// during server-side tool use. Append the message unchanged and call
+        /// again to let the model continue; it is not a final reply.
+        pause-turn,
         /// An unmodeled stop reason, using the provider's name.
         other(string),
     }
