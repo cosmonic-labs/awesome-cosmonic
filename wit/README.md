@@ -125,6 +125,8 @@ The published 0.3.0 artifact remains unchanged.
   as the model's text; it never satisfies a response format.
 - Set `chat-options.parallel-tool-calls` (none keeps the provider default) and
   match `request-option.parallel-tool-calls`.
+- Set `request-meta.cache-points` (empty for none) to mark prompt-cache
+  breakpoints by `part-ref`.
 
 ## Usage
 
