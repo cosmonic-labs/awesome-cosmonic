@@ -97,10 +97,11 @@ interface run {
 ///   resolves only after this commit, as `run` does after `agent.run.v1`.
 /// - The summary call sits between `agent.op.v1` and `agent.op-result.v1`,
 ///   as every model call does.
-/// - Terminal record. Every accepted compaction ends with exactly one
+/// - Terminal record. Every accepted compaction ends with at most one
 ///   `agent.compact-result.v1` (`compact`, `outcome`: done, failed or
 ///   cancelled, with `finish` or the error case, and `compacted`: whether it
-///   wrote a summary). A compaction that summarizes commits
+///   wrote a summary). None means the compaction was cut off (a crash),
+///   which a driver treats as failed. A compaction that summarizes commits
 ///   `agent.compaction.v1` (trigger "requested", with `focus`), the smaller
 ///   state that replaces the summarized context, and its
 ///   `agent.compact-result.v1` (done, `compacted` true) in one commit, so no
@@ -108,6 +109,12 @@ interface run {
 ///   state. Every other ending writes `agent.compact-result.v1` alone,
 ///   with `compacted` false: done when there was nothing to summarize, done
 ///   with a limit's `finish` when a limit stopped it, cancelled, or failed.
+///   A summary call that ends `finish-reason.refusal` or
+///   `finish-reason.content-filter` is never committed as a summary: its op
+///   closes as failed, no `agent.compaction.v1` is written, the state is
+///   unchanged, and the compaction ends failed (`run-error.failed`, saying
+///   the summary was refused or filtered), never done and never `finish`
+///   refusal or content-filter.
 ///   An `agent.compact.v1` with no `agent.compact-result.v1` was cut off; its
 ///   open op is closed as the session conventions say, and the compaction is
 ///   never resumed.
@@ -146,7 +153,9 @@ interface compact {
     /// not apply and is ignored. The summary call counts as one model call
     /// against `max-steps`, `max-total-tokens` and `max-duration`, as a model
     /// call in `run` does; a limit that stops it finishes with that limit and
-    /// no `compacted` event. Each of these endings, and every `run-error`, is
+    /// no `compacted` event. A refused or content-filtered summary is never
+    /// committed: no `compacted` event, the state unchanged, and the outcome
+    /// is `run-error.failed`. Each of these endings, and every `run-error`, is
     /// first recorded in `agent.compact-result.v1` as the interface describes.
     @unstable(feature = agent-run)
     compact: async func(
