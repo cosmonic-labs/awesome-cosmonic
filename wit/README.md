@@ -48,7 +48,7 @@ through `models`; they do not import model administration.
 `model-residency` is an optional trusted interface for local providers. It
 reports residency, holds independent pins, and drains existing reservations
 before unloading. It is not included in the inference or agent worlds; hosts
-grant it explicitly. Dropping an inference handle releases only its reservation.
+allow it explicitly. Dropping an inference handle releases only its reservation.
 Providers control retention and sharing, including for direct WIT callers.
 
 ## Model ownership and supported operations

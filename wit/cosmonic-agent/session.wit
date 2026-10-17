@@ -3,8 +3,8 @@ package cosmonic:agent@0.4.0;
 /// An append-only journal and opaque agent state, scoped by the host to the
 /// caller. The host chooses the session a caller works in (one per workload,
 /// or one per conversation) and binds it; the caller never names one. The
-/// host grants component access, stamps authors and timestamps, and deletes
-/// the session when its scope ends.
+/// host decides which components may access it, stamps authors and
+/// timestamps, and deletes the session when its scope ends.
 ///
 /// Commits apply entries and state atomically. State writes require both state
 /// and journal-end conditions; entry-only writes may omit them. A failed
