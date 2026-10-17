@@ -68,8 +68,11 @@ package cosmonic:agent@0.5.0;
 /// human in the loop, and returns `needs-approval`. An approval is an
 /// explicit declassification (a decision that data may cross a boundary it
 /// otherwise could not), bound to a digest over the caller's identity and the
-/// whole request. Content the caller sends down can reach the child's egress;
-/// an approval of egress beyond the ceiling says so too.
+/// whole request, and to the admission snapshot of what that request's names
+/// resolved to when the person reviewed it (see `approval`). Volume, secret,
+/// credential and model alias names are no more an approval's identity than
+/// they are a containment identity. Content the caller sends down can reach
+/// the child's egress; an approval of egress beyond the ceiling says so too.
 ///
 /// Authorship. A model can paraphrase anything it read, so redaction is not
 /// a security boundary and a child's final reply is a declassification
@@ -147,6 +150,8 @@ interface spawn-types {
         /// caller's scope. Never a host path. The implementer compares the
         /// storage behind the name with the storage behind the caller's
         /// mounts; two workloads may use the same name for different storage.
+        /// An approval binds the storage the name resolved to, not the name
+        /// (see `approval`), so rebinding the name voids a pending approval.
         volume: string,
         /// Where the component sees the volume.
         mount-path: string,
@@ -330,8 +335,10 @@ interface spawn-types {
         /// from the same caller answer `access-denied` for the host's denial
         /// cooldown and raise no new prompt (see `approval`).
         denied(string),
-        /// No decision before the approval expired. An identical request
-        /// raises a new approval.
+        /// No decision before the approval expired, or the implementer
+        /// withdrew it because its admission snapshot no longer matches (see
+        /// `approval`). Not a denial: an identical request raises a new
+        /// approval.
         expired,
         /// A decision not captured above. Treat as denied.
         other(option<string>),
@@ -398,6 +405,58 @@ interface spawn-types {
     /// or being loaded, is returned as is and admits nothing (see
     /// `tool-loading`), so a load's race losers get the winner's
     /// `loaded-toolset`, not a new approval.
+    ///
+    /// Admission snapshot. The digest binds names; an approval also binds
+    /// what those names reached when the person reviewed them. Before it
+    /// raises an approval, and before building `summary`, the implementer
+    /// resolves the normalized request into an immutable admission snapshot:
+    /// - for each volume, the identity of the storage behind it;
+    /// - for each credential reference, the identity of the credential
+    ///   binding it resolves through: the binding itself and what it
+    ///   authenticates as and to. Not the secret value, so rotating a value
+    ///   within one binding changes nothing;
+    /// - for each secret name, the identity of the secret it resolves to;
+    /// - for the model alias, the provider, model and endpoint it resolves
+    ///   to;
+    /// - for each interface grant, the resource its config resolves to (a
+    ///   bucket, a topic) where the implementer resolves one, and whether it
+    ///   classified the grant as reading, writing, or both;
+    /// - the executable identities: the agent's and every toolset's
+    ///   component digest (already pinned by the request), and the digest of
+    ///   any component the implementer adds to run them;
+    /// - every default the request left to the implementer, materialized:
+    ///   each `budget` field that is none, and the operator limits that will
+    ///   apply to the child or toolset. Aliases carry no authority and are
+    ///   not part of it.
+    /// `summary` shows the snapshot: each resolved identity by the name the
+    /// operator gave it with a stable short id, and each materialized default
+    /// as its value, so the person reviews concrete reach, not names whose
+    /// meaning could change. The implementer keeps the snapshot with the
+    /// approval and in the audit log; it is not a WIT field, since the caller
+    /// cannot act on it.
+    ///
+    /// The approval is bound to its digest and its snapshot together.
+    /// Consuming the grant resolves the request again and compares it with
+    /// the snapshot inside the same atomic step that checks expiry and
+    /// consumes the grant, and the admitted child or rollout runs with
+    /// exactly the snapshot's identities, never a later lookup. If anything
+    /// differs (a volume rebound to other storage, a credential binding
+    /// replaced or rescoped, a model alias pointed elsewhere, a secret
+    /// repointed, a default changed), the approval is unusable: the resend
+    /// admits nothing, the grant is spent even if the binding later changes
+    /// back, and the resend returns `needs-approval` with a new approval
+    /// bound to a new snapshot, for the person to review afresh.
+    ///
+    /// The same holds while an approval is pending. Coalescing compares the
+    /// digest and a fresh snapshot, so a request whose names now resolve
+    /// differently never joins the stale approval: the implementer withdraws
+    /// it (every waiter's `decision` resolves to `expired`, and it leaves the
+    /// pending cap) and raises one new approval for the new snapshot. An
+    /// implementer that watches bindings may withdraw at the moment of the
+    /// change. A withdrawal is not a denial and starts no cooldown. An
+    /// approval never authorizes a name for whatever it is later bound to:
+    /// that is standing authority and belongs in policy a person wrote.
+    ///
     /// After a denial, the same digest from the same caller is refused
     /// outright for a cooldown: every identical request answers
     /// `access-denied`, with an implementer-authored reason, and raises no
@@ -488,7 +547,9 @@ interface spawn-types {
         /// `request-digest`, in normalized form, so two approvals whose
         /// digests differ never read the same; a caller-authored value with
         /// no safe rendering (`output.schema`) is shown by the `sha256:` of
-        /// its canonical JSON.
+        /// its canonical JSON. It also shows the admission snapshot (see
+        /// above), so two approvals with one digest but different snapshots
+        /// never read the same either.
         summary: string,
         /// Some when the same caller had a request with this digest admitted
         /// within the repeat window: the most recent such admission. The

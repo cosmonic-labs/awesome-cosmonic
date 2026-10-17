@@ -271,6 +271,27 @@ definition. The WIT states them on `spawn-types`.
 - **Expiry is checked where the grant is consumed.** Checking whether a grant
   is still live and consuming it are one atomic step, so a grant that expires
   while a resend waits its turn behind another admits nothing.
+- **An approval binds resolved reach, not names.** The digest covers names
+  (volume, secret, credential and model alias names), and names can be
+  rebound. Before asking, the implementer resolves an immutable admission
+  snapshot: the storage behind each volume, the credential binding behind
+  each reference (the binding and what it authenticates as and to, not the
+  secret value, so rotation is not a rebinding), the secret each name
+  resolves to, the model alias's provider, model and endpoint, the resource
+  and classification of each interface grant, every executable digest, and
+  every default the request left open (budget fields that are none, the
+  operator limits that apply). The summary shows it; the audit log records
+  it. Consuming the grant re-resolves and compares inside the same atomic
+  step as the expiry check, and the admission runs with the snapshot's
+  identities. Any difference makes the approval unusable: the grant is
+  spent and the resend gets a new approval to review. While pending,
+  coalescing compares a fresh snapshot too, so a rebinding withdraws the
+  stale approval (`decision` resolves to `expired`, no cooldown) and raises
+  one new approval. Without this, a person who reviewed `reports` backed by
+  storage A could have their grant admit `reports` rebound to storage B,
+  since the request bytes and digest are the same. Approving a name for
+  whatever it is later bound to is standing authority, which belongs in
+  policy a person wrote.
 - **Sharing a handle shares the child.** Waiters handed one `agent` handle
   drive one child: one budget (runs, tokens and time spent by any waiter
   count for all), one conversation (each run sees what earlier runs, from
@@ -612,6 +633,35 @@ host case, a trailing dot, or a default port, and for a spawn, in `labels` or
 `instructions`. Expect one approval (same `id` and `request-digest`). Then
 change one digest-covered field (a non-default port, a budget value, the
 schema) and expect a new approval whose summary differs from the first.
+
+**Conformance case: admission snapshot.** Run once for `spawn` and once for
+`load`, from one caller, with a request beyond the ceiling that names a
+volume `reports`, a credential reference and a model alias (the alias only
+for `spawn`).
+
+1. Raise the approval with `reports` backed by storage A. Expect its summary
+   to name storage A (the operator's name and a stable id), the credential
+   binding, the model the alias resolves to, and the value of every budget
+   field the request left as none, and expect the audit log to record that
+   snapshot.
+2. Rebind `reports` to storage B while the approval is pending, then resend
+   the identical request. Expect the first approval withdrawn (each waiter's
+   `decision` resolves to `expired`), a new approval with a new `id` and the
+   same `request-digest` whose summary names storage B, one pending approval
+   for the digest in the cap, and no denial cooldown.
+3. Grant an approval, then rebind `reports` before the resend. Expect the
+   resend to admit nothing (no child, no rollout) and to return
+   `needs-approval` with a new approval for storage B. Bind `reports` back to
+   storage A and resend: still a new approval, never the spent grant.
+4. Repeat steps 2 and 3 with each of: the credential reference moved to a
+   different binding, the model alias pointed at another model, and an
+   operator default (a budget default) changed. Each must void the approval.
+   Then rotate the secret value inside the same credential binding between
+   grant and resend: expect the resend admitted, since a rotation is not a
+   rebinding.
+5. Race a rebinding against concurrent resends of a granted approval. Expect
+   either one admission running with storage A, or none and a new approval;
+   never an admission that runs with storage B on the old grant.
 
 ## Tool naming: identity, alias, display
 
@@ -1011,7 +1061,10 @@ loading exists at all. Stated in `tool-loading`.
 caller before it expires, and nothing else: another caller, or the same caller
 with any digest-covered field changed, is a different digest and needs its
 own approval. Instructions and labels are caller free text the summary never
-shows, so they are outside the digest (see "The approval digest"). Standing permission belongs in policy a person wrote, where it
+shows, so they are outside the digest (see "The approval digest"). The grant is
+also bound to the admission snapshot of what the request's names resolved to
+when it was reviewed; a rebinding while it is pending or before it is consumed
+voids it. Standing permission belongs in policy a person wrote, where it
 can be read, reviewed and revoked, not in a reusable approval that quietly
 widens what a caller can do. Dropping `decision` stops waiting and does not
 withdraw. A denial holds for a cooldown (identical requests answer
@@ -1292,6 +1345,21 @@ An internal review of the approval contract, after the single-use grant fix:
   model. The contract says waiters sharing one `agent` handle share the
   child's budget and conversation, and that `busy` only prevents overlapping
   runs.
+
+### Approval contract review, round 2 (2026-10-17)
+
+- **Approvals bind resolved reach.** The digest bound volume, credential and
+  model alias names but not the storage, binding and model they resolved to,
+  so a name rebound while an approval was pending (storage A reviewed,
+  storage B admitted) was admitted by the same digest. `approval` now
+  specifies an immutable admission snapshot (resolved storage, credential
+  binding, secret, model and interface resource identities, executable
+  digests, materialized defaults) taken before asking, shown in the summary,
+  bound to the approval, and revalidated in the atomic consume step. A
+  mismatch voids the approval and needs a new one; while pending, the stale
+  approval is withdrawn as `expired`. No WIT field was added: the snapshot is
+  implementer state, and `expired` already means "ask again". A new
+  conformance case, "admission snapshot", covers it.
 
 ## Conformance with the WIT design skill
 
