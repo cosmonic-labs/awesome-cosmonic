@@ -96,7 +96,14 @@ The published 0.3.0 artifact remains unchanged.
   available to the model. Cancellation and timeout do not imply rollback.
 - Optionally export `run` (unstable, `agent-run`) and target `runnable-agent`.
   A run writes `agent.run.v1` and `agent.run-result.v1`, now reserved in
-  `session`.
+  `session`, and streams `run-event.compacted` after it commits an
+  `agent.compaction.v1` entry. The summary stays in the journal and is
+  untrusted model output.
+- Treat tool output as possibly truncated. A host may cap a tool's output and
+  append a short text note stating the original size.
+- Match `other(string)` in every variant; `run-types` no longer uses
+  `other(option<string>)`. Stable interfaces and worlds carry
+  `@since(version = 0.4.0)`.
 - Record an unknown tool outcome or abandoned call as an unresolved operation.
   Retry with the same id and arguments only when trusted configuration authorizes
   repeat detection. Provider annotations cannot authorize replay. A not-dispatched
