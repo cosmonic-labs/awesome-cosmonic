@@ -106,15 +106,20 @@ The published 0.3.0 artifact remains unchanged.
   `compactable-agent`, so a driver can ask for a summary between runs with an
   optional `focus` from the person. It accepts by committing `agent.compact.v1`
   under commit id `compact:<run-id>` before its model call, and ends every
-  accepted compaction with one `agent.compact-result.v1`; a summary's
+  accepted compaction with at most one `agent.compact-result.v1` (none means
+  it was cut off by a crash, which a driver treats as failed); a summary's
   `agent.compaction.v1` (trigger `requested`) shares that final commit with the
-  replacement state. Compaction ids are a namespace apart from run ids, and a
+  replacement state. A refused or content-filtered summary is never committed:
+  no `compacted` event, the state unchanged, and the compaction ends failed. Compaction ids are a namespace apart from run ids, and a
   driver that gets `duplicate` reads the outcome from the journal.
 - Match the new `reply-part` cases `cited-text` (text with its citations) and
   `refusal`, and the new `finish` cases `refusal` and `content-filter`. A
   driver that reads only `run-outcome` keeps citations and can tell a refusal
   from an answer. Neither finish carries `structured`, and neither is
-  `output-rejected`.
+  `output-rejected`. Both describe the call that produced the run's last
+  assistant step, so a refused summary never makes a run finish `refusal`;
+  they take precedence over a limit reached by that same call and over
+  `input-required`.
 - Treat tool output as possibly truncated. A host may cap a tool's output and
   append a short text note stating the original size.
 - Match `other(string)` in every variant; `run-types` no longer uses

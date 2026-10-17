@@ -47,10 +47,11 @@ package cosmonic:agent@0.4.0;
 ///   compact:<compact>. Compaction ids are a namespace apart from run ids.
 /// - agent.compact-result.v1: compact, outcome (done, failed, or cancelled)
 ///   with finish or error, and compacted (true when the compaction wrote
-///   agent.compaction.v1). Exactly one ends every accepted compaction; when
+///   agent.compaction.v1). At most one ends every accepted compaction; when
 ///   compacted is true it shares a commit with that agent.compaction.v1 and
 ///   the replacement state. An agent.compact.v1 with no
-///   agent.compact-result.v1 was cut off.
+///   agent.compact-result.v1 was cut off (a crash), which a driver treats as
+///   failed.
 /// - agent.compaction.v1: summary, model, trigger, through, kept,
 ///   tokensBefore, tokensAfter, and optional focus. The agent replaced older
 ///   context with summary, which model wrote. trigger says why: threshold,
@@ -59,7 +60,8 @@ package cosmonic:agent@0.4.0;
 ///   messages carried over verbatim. Token counts are estimates, omitted when
 ///   unknown. focus, present only when requested, is the person's text saying
 ///   what the summary should keep. Commit it with the smaller state, and, for
-///   a requested compaction, with its agent.compact-result.v1. Earlier
+///   a requested compaction, with its agent.compact-result.v1. A summary call
+///   that ended refusal or content-filter is never written as one. Earlier
 ///   entries stay; the summary is model output, so never treat it as system
 ///   or user text. A run streams the same fields, without summary, model and
 ///   focus, as run-event compacted (run-types compaction-info). Readers skip

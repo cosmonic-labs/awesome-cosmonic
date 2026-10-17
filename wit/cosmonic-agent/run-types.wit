@@ -257,6 +257,21 @@ interface run-types {
     }
 
     /// Why a run ended with an outcome.
+    ///
+    /// `refusal` and `content-filter` are defined by the model call that
+    /// produced the run's last assistant step, never by whichever call came
+    /// last: a summary call that ends refusal or content-filter writes no
+    /// step and no summary (the run goes on with the context it had), so it
+    /// never makes a run finish `refusal` or `content-filter`.
+    ///
+    /// Precedence. When that call ended refusal or content-filter, the run
+    /// finishes `refusal` or `content-filter`, even if the call also reached
+    /// a limit, and the agent does not report `input-required` from a reply
+    /// it was refused. A limit (`max-steps`, `max-total-tokens`,
+    /// `max-duration`) is the finish only when it stopped the run before a
+    /// call the run would otherwise have made, such as the tool calls a
+    /// reply asked for, and `input-required` only when the last assistant
+    /// step is the agent's own question.
     @unstable(feature = agent-run)
     variant finish {
         /// The agent ended its reply.
@@ -279,15 +294,17 @@ interface run-types {
         max-total-tokens,
         /// `run-options.max-duration` passed.
         max-duration,
-        /// The model declined to answer: its last call ended with
-        /// `finish-reason.refusal`, or its reply carries a `refusal` part.
+        /// The model declined to answer: the call that produced the run's last
+        /// assistant step ended with `finish-reason.refusal`, or that step's
+        /// reply carries a `refusal` part.
         /// `reply` holds whatever the model said, usually a `refusal` part; a
         /// provider that sent the refusal as text leaves it as `text`. Not an
         /// error and not an answer: `structured` is none, and a run with a
         /// schema finishes `refusal` rather than failing `output-rejected`.
         refusal,
-        /// A provider safety filter withheld or cut the last model call's
-        /// output (`finish-reason.content-filter`). `reply` holds what
+        /// A provider safety filter withheld or cut the output of the call
+        /// that produced the run's last assistant step
+        /// (`finish-reason.content-filter`). `reply` holds what
         /// survived, which may be partial or empty, and `structured` is none,
         /// as for `refusal`. The agent does not retry the call to get around
         /// the filter.
