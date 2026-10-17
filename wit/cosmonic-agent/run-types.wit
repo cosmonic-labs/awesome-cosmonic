@@ -23,7 +23,7 @@ interface run-types {
     @unstable(feature = agent-run)
     use inference-types.{
         json, attachment, opaque-block, assistant-message, user-message,
-        tool-result, usage, request-error, generation-error,
+        tool-result, usage, request-error, generation-error, effort,
     };
 
     /// How to do one run. Construction is lenient; `run` validates and
@@ -65,6 +65,12 @@ interface run-types {
         /// what it has. A driver keeps its own deadline a little past this
         /// one and cancels at it.
         max-duration: option<duration>,
+        /// Reasoning effort the person chose for this run, such as a
+        /// low-effort quick question or a high-effort refactor. The agent
+        /// passes it as `chat-options.effort` on its model calls; none leaves
+        /// the agent's own choice. Advisory: the provider may map it to a
+        /// coarser scale and report the adaptation.
+        effort: option<effort>,
         /// W3C traceparent of the driver's trace, for the agent to pass on in
         /// `request-meta.trace-parent` so its model calls join that trace.
         trace-parent: option<string>,
