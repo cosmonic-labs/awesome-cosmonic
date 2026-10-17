@@ -123,6 +123,8 @@ The published 0.3.0 artifact remains unchanged.
   `pause-turn`. On `pause-turn`, append the message and call again.
 - Match `assistant-content.refusal`, the model's reason for declining. Show it
   as the model's text; it never satisfies a response format.
+- Set `chat-options.parallel-tool-calls` (none keeps the provider default) and
+  match `request-option.parallel-tool-calls`.
 
 ## Usage
 
