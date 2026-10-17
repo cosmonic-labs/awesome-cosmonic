@@ -20,5 +20,7 @@ interface tools {
     /// Retry an unknown outcome only with trusted repeat detection for this id.
     /// Dropping the pending call requests cooperative cancellation and may return
     /// no result. Without a terminal response, treat its effects as unknown.
+    /// A host may cap the response's output and note the original size; see
+    /// `tool-response`.
     call: async func(request: tool-call) -> result<tool-response, call-error>;
 }
