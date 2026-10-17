@@ -2,6 +2,7 @@ package cosmonic:agent@0.4.0;
 
 /// Workload-scoped aliases resolved by the host to an inference provider.
 /// Trusted catalog and residency controls are separate.
+@since(version = 0.4.0)
 interface models {
     use inference-types.{model, model-description};
 

@@ -3,6 +3,7 @@ package cosmonic:agent@0.4.0;
 /// Tool discovery and calls. The same interface is imported by an agent and
 /// exported by a tool provider, so a provider links directly to an agent or
 /// sits behind a host that lists and dispatches across several providers.
+@since(version = 0.4.0)
 interface tools {
     use inference-types.{tool-call};
     use tool-types.{tool-def, tool-response, call-error, list-error};
@@ -11,7 +12,6 @@ interface tools {
     /// list when the tools cannot be described, so a caller can tell "none" from
     /// "unknown". A host listing several providers keeps offering one that stops
     /// after it was listed; calls to it fail instead. Fallible since 0.4.0.
-    @since(version = 0.4.0)
     %list: async func() -> result<list<tool-def>, list-error>;
 
     /// Run a tool call. Its id correlates execution with the requesting turn.

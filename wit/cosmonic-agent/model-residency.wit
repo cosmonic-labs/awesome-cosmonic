@@ -2,6 +2,7 @@ package cosmonic:agent@0.4.0;
 
 /// Optional, trusted controls for providers that manage local model residency.
 /// Hosts allow this interface separately from inference and agent aliases.
+@since(version = 0.4.0)
 interface model-residency {
     use model-admin.{prepare-progress, prepare-error};
 
