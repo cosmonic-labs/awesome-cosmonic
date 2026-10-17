@@ -121,6 +121,36 @@ interface run-types {
         usage: usage,
     }
 
+    /// An inclusive range of journal entries, by `seq`.
+    @unstable(feature = agent-run)
+    record seq-range {
+        /// `seq` of the first entry in the range.
+        start: u64,
+        /// `seq` of the last entry in the range, inclusive.
+        end: u64,
+    }
+
+    /// The agent replaced older context with a summary so its next model call
+    /// fits. Mirrors the `agent.compaction.v1` journal entry (`session`), whose
+    /// JSON fields carry the same names in camelCase. The full summary lives
+    /// only in that entry, not here; it is model output, so a driver treats it
+    /// as untrusted text and never as system or person text. The entries it
+    /// covers stay in the journal.
+    @unstable(feature = agent-run)
+    record compaction-info {
+        /// The journal entries the summary replaces in the agent's context.
+        through: seq-range,
+        /// Recent messages carried over verbatim after the summary.
+        kept: u32,
+        /// Estimated context tokens before compaction; none when unknown.
+        tokens-before: option<u64>,
+        /// Estimated context tokens after compaction; none when unknown.
+        tokens-after: option<u64>,
+        /// The `seq` of the `agent.compaction.v1` entry, when the agent
+        /// committed it before sending this event, as `step.seq` does.
+        seq: option<u64>,
+    }
+
     /// What a run streams while it works. The person's own message is never
     /// sent back: the driver already has it.
     @unstable(feature = agent-run)
@@ -137,6 +167,10 @@ interface run-types {
         /// Cumulative counters for this run so far, sent after each model
         /// call.
         counts(run-counts),
+        /// Older context was summarized. Sent after the agent commits
+        /// `agent.compaction.v1`, so a driver can mark the point in the
+        /// conversation; the summary itself is read from the journal.
+        compacted(compaction-info),
         /// An event not captured above. Safe to ignore.
         other(option<string>),
     }
