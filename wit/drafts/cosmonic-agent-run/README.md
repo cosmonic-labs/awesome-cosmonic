@@ -133,7 +133,7 @@ variant run-event {
     step(step),
     counts(run-counts),
     compacted(compaction-info),
-    other(option<string>),
+    other(string),
 }
 
 record compaction-info {
@@ -154,7 +154,7 @@ variant step-content {
     tool(list<tool-result>),
     user(user-message),      // reserved: a message taken in mid-run
     error(string),
-    other(option<string>),
+    other(string),
 }
 ```
 
@@ -210,7 +210,7 @@ record, which is where Desktop already reads a reply's cost from.
 | `duplicate` | This `run-id` already started here. Its outcome is in the journal. |
 | `invalid-input(string)` | An empty message, an attachment the agent does not take, a schema it cannot follow. |
 | `unavailable(string)` | The session could not be read, for example. Retry may succeed. |
-| `other(option<string>)` | Treat as permanent. |
+| `other(string)` | Treat as permanent. |
 
 `run-error` means the run started and then failed. The person's message and
 every step already sent are in the journal, and effects are not rolled back:
@@ -225,7 +225,7 @@ every step already sent are in the journal, and effects are not rolled back:
 | `superseded` | Another writer changed the session mid-run; the agent stopped before its next call. |
 | `output-rejected(string)` | The reply did not satisfy `schema`. |
 | `failed(string)` | Unclassified. |
-| `other(option<string>)` | Treat as permanent. |
+| `other(string)` | Treat as permanent. |
 
 Reusing `request-error` and `generation-error` is the main gain over the
 `failed` line, whose only field is a string. A client can now show a top-up
