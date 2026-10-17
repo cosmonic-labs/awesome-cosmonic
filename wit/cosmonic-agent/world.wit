@@ -63,6 +63,16 @@ world runnable-agent {
     export run;
 }
 
+/// A runnable agent that can also summarize its context when its driver
+/// asks: `runnable-agent` plus the `compact` export. Optional: a driver
+/// that finds no `compact` export leaves compaction to the agent.
+@unstable(feature = agent-run)
+world compactable-agent {
+    include runnable-agent;
+
+    export compact;
+}
+
 /// The power to drive an agent's runs. Holds only this import. For a
 /// component that adapts another protocol onto an agent (an adapter that
 /// imports `run` and exports `wasi:http/handler` to serve `POST /task`), or a
@@ -70,4 +80,15 @@ world runnable-agent {
 @unstable(feature = agent-run)
 world run-client {
     import run;
+}
+
+/// The power to drive an agent's runs and ask it to compact. `run-client`
+/// plus the `compact` import, for a driver bound to a `compactable-agent`.
+/// Kept apart from `run-client` so a component that only drives runs can
+/// still be composed with an agent that does not export `compact`.
+@unstable(feature = agent-run)
+world compact-client {
+    include run-client;
+
+    import compact;
 }
