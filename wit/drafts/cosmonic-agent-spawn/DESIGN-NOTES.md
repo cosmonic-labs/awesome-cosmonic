@@ -281,7 +281,16 @@ definition. The WIT states them on `spawn-types`.
   workers), the waiter could not fetch the first handle from another store
   anyway, and an error would add a case every caller must handle while taking
   the choice away from the person. The marker keeps the one
-  `needs-approval` shape. An earlier draft said the
+  `needs-approval` shape.
+- **No after a no.** After a denial (or a `decision` of `other`), every
+  identical request from the same caller answers `access-denied` for the
+  host's denial cooldown (recommended one hour) and raises no prompt, so a
+  looping agent cannot re-ask the person who just refused. After an approval
+  expires undecided, an identical request raises a new one: the person may
+  simply have been away. The pending-approval cap is mandatory, not optional:
+  at most N distinct digests pending per caller (operator-set, at least one,
+  recommended three), and a request past it answers `over-limit` with scope
+  `pending-approvals` and raises no prompt. An earlier draft said the
   grant admitted "each request that shared it, once", which let N coalesced
   beyond-ceiling requests ride one human decision; that wording is gone.
   Policy may hold an outcome until a person or the auditor releases it; the
@@ -521,6 +530,16 @@ a caller's toolsets when its store ends.
    unrelated `load`) while an approval is pending, then resend the identical
    request from the new instance. Expect it to coalesce onto the same pending
    approval (same `id`, same `request-digest`): a rollout keeps the caller.
+8. Deny an approval. Resend the identical request at once and again inside
+   the cooldown: expect `access-denied` each time and no new prompt or audit
+   entry for a new approval. After the cooldown, expect `needs-approval` with
+   a new approval. Let another approval expire undecided and resend: expect
+   a new approval at once.
+9. With the pending cap at K, raise K approvals for distinct digests from
+   one caller, then a (K + 1)th: expect `over-limit` with scope
+   `pending-approvals` and no prompt. An identical resend of one of the K
+   still coalesces onto it. Decide one, and expect the next distinct request
+   to raise an approval.
 
 ## The approval digest
 
@@ -980,7 +999,10 @@ own approval. Instructions and labels are caller free text the summary never
 shows, so they are outside the digest (see "The approval digest"). Standing permission belongs in policy a person wrote, where it
 can be read, reviewed and revoked, not in a reusable approval that quietly
 widens what a caller can do. Dropping `decision` stops waiting and does not
-withdraw. *Enforced in* the spike's admission; *tested by*
+withdraw. A denial holds for a cooldown (identical requests answer
+`access-denied` without a prompt), and pending approvals per caller are
+always capped (`over-limit` with `pending-approvals`); both defaults, one hour
+and three, are recommendations for the operator. *Enforced in* the spike's admission; *tested by*
 `approval_grant_is_single_use_and_bound_to_the_digest`,
 `ceiling_needs_approval_then_identical_resend` and
 `dropping_the_decision_keeps_the_approval_pending`.
@@ -1241,6 +1263,12 @@ An internal review of the approval contract, after the single-use grant fix:
   `repeat-of: option<prior-admission>` and the summary opens with the repeat;
   the contract now says handle sharing works only within one store. Chosen
   over a new error to keep one shape and leave the choice with the person.
+- **Resends after a no, and a mandatory cap.** Resends after `denied` or
+  expiry were unspecified, so a looping agent could re-prompt forever. A
+  denial now holds for a host-defined cooldown (recommended one hour) in
+  which identical requests answer `access-denied` with no prompt; an expired
+  approval may be raised again. The per-caller pending cap is mandatory and
+  answers `over-limit` with the new `limit-scope.pending-approvals`.
 
 ## Conformance with the WIT design skill
 

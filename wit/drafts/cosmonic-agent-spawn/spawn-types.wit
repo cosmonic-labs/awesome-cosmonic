@@ -326,9 +326,12 @@ interface spawn-types {
         /// Granted. Resend the identical request; the grant admits one
         /// request in total, however many waiters shared the approval.
         granted,
-        /// Denied, with an implementer-authored reason.
+        /// Denied, with an implementer-authored reason. Identical requests
+        /// from the same caller answer `access-denied` for the host's denial
+        /// cooldown and raise no new prompt (see `approval`).
         denied(string),
-        /// No decision before the approval expired.
+        /// No decision before the approval expired. An identical request
+        /// raises a new approval.
         expired,
         /// A decision not captured above. Treat as denied.
         other(option<string>),
@@ -390,9 +393,21 @@ interface spawn-types {
     /// or being loaded, is returned as is and admits nothing (see
     /// `tool-loading`), so a load's race losers get the winner's
     /// `loaded-toolset`, not a new approval.
-    /// The implementer may cap how many approvals one caller has pending, so
-    /// a looping agent cannot bury the person in prompts (it gets
-    /// `over-limit`). "The same caller" means the same caller identity (see
+    /// After a denial, the same digest from the same caller is refused
+    /// outright for a cooldown: every identical request answers
+    /// `access-denied`, with an implementer-authored reason, and raises no
+    /// prompt, so a looping agent cannot re-ask the person who just said no.
+    /// The cooldown is the host's; the recommended default is one hour. A
+    /// `decision` of `other` counts as a denial. After an approval expires
+    /// undecided, an identical request raises a new approval; coalescing
+    /// keeps that to one pending prompt per digest, and the cap below
+    /// bounds the rest.
+    ///
+    /// The implementer must cap how many approvals one caller has pending at
+    /// once (distinct digests; coalesced waiters count once). A request that
+    /// would raise one past the cap answers `over-limit` with scope
+    /// `pending-approvals` and raises no prompt. The cap is the operator's
+    /// and at least one; the recommended default is three. "The same caller" means the same caller identity (see
     /// the contract on this interface): the same workload incarnation and
     /// the same component name. A workload recreated under the same name is a
     /// different caller and needs its own approval; a rollout to a new
@@ -493,7 +508,8 @@ interface spawn-types {
     /// Which implementer limit a request would exceed. The tree limits
     /// (`concurrent-agents`, `depth`, `total-agents`) are operator limits:
     /// optional, set in host or policy configuration, and unset by default,
-    /// so nothing caps them unless an operator chooses to. A child's budget
+    /// so nothing caps them unless an operator chooses to.
+    /// `pending-approvals` is always set. A child's budget
     /// is chosen by its caller and is not carved from the caller's own.
     @unstable(feature = agent-spawn)
     variant limit-scope {
@@ -510,6 +526,9 @@ interface spawn-types {
         /// Toolsets loaded into one agent at once. May clear when one is
         /// unloaded.
         loaded-toolsets,
+        /// Approvals one caller has pending at once. Mandatory, unlike the
+        /// tree limits. Clears when one is decided or expires.
+        pending-approvals,
         /// A scope not captured above.
         other(option<string>),
     }
@@ -533,7 +552,9 @@ interface spawn-types {
         /// adapt instead (for example, hide a delegate action).
         disabled,
         /// A policy or a person refused. The capability is partially granted:
-        /// a different request may succeed.
+        /// a different request may succeed. Also the answer, with no new
+        /// prompt, to an identical request during the cooldown after a
+        /// person denied it.
         access-denied(string),
         /// Beyond the ceiling and sent to a grantor. Await `decision`, then
         /// resend the identical request. A grant admits one request in
