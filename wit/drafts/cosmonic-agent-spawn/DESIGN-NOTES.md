@@ -272,11 +272,23 @@ definition. The WIT states them on `spawn-types`.
 - **Steerable channels.** Counts, the finish code, the error kind, an
   `output-rejected` over `max-bytes`, and timing are all chosen by the child.
   Each is a narrow channel, minor next to the reply itself.
-- **Caller identity** is the caller's workload identity. Approval digests
-  bind its deployment incarnation (the spike: workload id and component
-  instance id), so a workload recreated under the same name is a different
-  caller and needs its own approval; namespace, name and component name are
-  display metadata. Policy wrappers are host-installed.
+- **Caller identity** is one pair, used in the approval digest, in
+  coalescing, in the pending-approval cap and denial cooldown, and in scoping
+  loaded toolsets: the **workload incarnation** (an id the host mints when the
+  workload is created and keeps across rollouts and restarts) and the
+  **component name** within that workload (from the workload definition,
+  stable across revisions). A workload recreated under the same name gets a
+  new incarnation, so it is a different caller and needs its own approval. A
+  rollout keeps both values, so `load` does not orphan the caller's pending
+  approvals or loaded toolsets. The component name keeps sibling components
+  apart: without it, a sibling's identical load would coalesce onto another
+  component's approval and consume its grant, gaining reach that was approved
+  against the other component's ceiling, although loaded toolsets are scoped
+  per component. Instance ids are never identity, since a rollout replaces
+  every instance; namespace and workload name are display and audit metadata.
+  The spike still binds workload id and component instance id, which does not
+  survive a rollout; it moves to this pair with the record model. Policy
+  wrappers are host-installed.
 
 ## Runs: the child's `run` export
 
@@ -447,7 +459,7 @@ a caller's toolsets when its store ends.
 (the spike lives outside this repository); any implementer of `spawn` or
 `tool-loading` must pass it, once for each operation.
 
-1. From one caller incarnation, send N (at least 3) identical beyond-ceiling
+1. From one caller, send N (at least 3) identical beyond-ceiling
    requests concurrently, before any decision. Expect N `needs-approval`
    results that carry the same `id` and `request-digest`, and one pending
    prompt in the approval UI and audit log.
@@ -465,9 +477,16 @@ a caller's toolsets when its store ends.
 5. Repeat with the grant decided while some waiters have dropped their
    `decision` future and others still hold it, and with a resend racing the
    decision itself. The totals in step 3 must not change.
-6. Repeat step 1 from a second caller incarnation with the same request.
-   Expect a separate approval with a different `request-digest`; granting the
-   first approval admits nothing for the second caller.
+6. Repeat step 1 from a second caller with the same request, once as a new
+   incarnation of the same workload and once as a sibling component in the
+   same workload incarnation. Each time expect a separate approval with a
+   different `request-digest`; granting the first approval admits nothing for
+   the second caller, and the sibling's load is never offered to the first
+   component or vice versa.
+7. Roll the caller's workload out to a new revision (for example with an
+   unrelated `load`) while an approval is pending, then resend the identical
+   request from the new instance. Expect it to coalesce onto the same pending
+   approval (same `id`, same `request-digest`): a rollout keeps the caller.
 
 ## Tool naming: identity, alias, display
 
@@ -1081,7 +1100,7 @@ this package. What they changed, all now in the WIT and the spike:
 - **Approvals.** Grants expire; identical pending requests share one approval,
   and its grant admits one request in total across them; pending approvals per
   caller may be capped; the digest has a domain tag, the
-  caller's incarnation and a canonical JSON form; summaries use validated
+  caller identity and a canonical JSON form; summaries use validated
   values only.
 - **Volumes fail closed.** Names are never compared; a volume grant whose
   storage the implementer cannot compare is beyond the ceiling.
@@ -1098,6 +1117,18 @@ this package. What they changed, all now in the WIT and the spike:
 - **Budgets** are the implementer's to enforce; `max-steps` is advisory to the
   agent; self-reported counts are steerable. **Approval authority** never
   belongs to a spawned agent; an auditor is installed by host policy.
+
+### Approval contract review (2026-10-17)
+
+An internal review of the approval contract, after the single-use grant fix:
+
+- **One caller identity.** `spawn-types` named the workload incarnation in one
+  place and namespace, name and component name in another, and these notes
+  named workload id plus component instance id, which a rollout replaces.
+  All three now say the same thing: workload incarnation plus component name,
+  used in the digest (domain tags move to `@2`), coalescing and toolset
+  scoping, so a sibling component cannot coalesce onto, or consume, another
+  component's approval.
 
 ## Conformance with the WIT design skill
 

@@ -51,7 +51,11 @@ package cosmonic:agent@0.5.0;
 ///
 /// The toolset is offered to the component that loaded it and to no sibling
 /// component in the same workload, so a sibling cannot use a toolset
-/// admitted against another component's ceiling.
+/// admitted against another component's ceiling. The same caller identity
+/// (workload incarnation and component name, see `spawn-types`) scopes the
+/// toolset and binds the approval digest, so a sibling's identical load is a
+/// different request: it never coalesces onto, or consumes, this component's
+/// approval.
 @unstable(feature = agent-spawn)
 interface tool-loading {
     @unstable(feature = agent-spawn)

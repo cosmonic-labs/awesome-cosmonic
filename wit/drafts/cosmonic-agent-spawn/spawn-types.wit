@@ -21,12 +21,28 @@ package cosmonic:agent@0.5.0;
 ///
 /// The contract below binds the implementer of those interfaces, whatever it
 /// is: a native host plugin, a host-installed policy layer in front of it, or
-/// a test double. "The caller" is the component the import is bound to,
-/// identified by its stable workload identity (workload namespace and name,
-/// and component name), never by instance ids that change on every start.
-/// A policy wrapper must be installed by the host and pass the original
-/// caller through: a guest component in front of the implementer would
-/// become the caller, and its own grants would become the ceiling.
+/// a test double. "The caller" is the component the import is bound to.
+///
+/// Caller identity. One identity is used everywhere these interfaces bind a
+/// caller: in the approval digest, in coalescing, in the pending-approval
+/// cap and denial cooldown, and in scoping loaded toolsets. It is the pair
+/// of two host-assigned values:
+///
+/// - the workload incarnation: an id the host mints when the workload is
+///   created and keeps for that workload's whole life, across rollouts to
+///   new revisions (as `tool-loading.load` does) and instance restarts. A
+///   workload deleted and recreated under the same name gets a new
+///   incarnation, so it is a different caller.
+/// - the component name: the caller's name within its workload, as the
+///   workload definition gives it. It is stable across revisions and
+///   restarts, and it tells sibling components of one workload apart.
+///
+/// Never an instance id: a rollout replaces every instance, so an instance
+/// id would make a caller a stranger to its own pending approvals and loaded
+/// toolsets. Workload namespace and name are display and audit metadata, not
+/// identity. A policy wrapper must be installed by the host and pass the
+/// original caller through: a guest component in front of the implementer
+/// would become the caller, and its own grants would become the ceiling.
 ///
 /// Reach. A request's read reach is the union, over the agent and every
 /// toolset, of its read grants: volumes, secrets, interfaces the implementer
@@ -345,19 +361,23 @@ interface spawn-types {
     /// pending. This includes a resend that lost the race for the grant.
     /// The implementer may cap how many approvals one caller has pending, so
     /// a looping agent cannot bury the person in prompts (it gets
-    /// `over-limit`). The caller is bound by its workload incarnation, not
-    /// its name: a workload recreated under the same name is a different
-    /// caller and needs its own approval. A rollout to a new revision (as
-    /// `load` does) keeps the incarnation. Only a person, or policy a person
-    /// wrote, decides; never a spawned agent.
+    /// `over-limit`). "The same caller" means the same caller identity (see
+    /// the contract on this interface): the same workload incarnation and
+    /// the same component name. A workload recreated under the same name is a
+    /// different caller and needs its own approval; a rollout to a new
+    /// revision (as `load` does) keeps the caller. A sibling component in the
+    /// same workload is a different caller: its identical request neither
+    /// coalesces onto this approval nor consumes its grant. Only a person, or
+    /// policy a person wrote, decides; never a spawned agent.
     @unstable(feature = agent-spawn)
     record approval {
         /// Implementer-issued id, to correlate with the approval UI and audit log.
         id: string,
         /// `sha256:<hex>` over a domain tag naming the operation and its
-        /// version (`cosmonic:agent/spawn-request@1` or
-        /// `cosmonic:agent/toolset-spec@1`), a zero byte, the caller's
-        /// incarnation, a zero byte, and the request in canonical JSON: object
+        /// version (`cosmonic:agent/spawn-request@2` or
+        /// `cosmonic:agent/toolset-spec@2`), a zero byte, the caller's
+        /// workload incarnation, a zero byte, the caller's component name, a
+        /// zero byte, and the request in canonical JSON: object
         /// keys sorted, lists that are sets (`allowed-hosts`, `secrets`,
         /// `credentials`, interface `config`) sorted, no insignificant
         /// whitespace (RFC 8785). For a spawn the request is the whole

@@ -43,7 +43,7 @@ when the interfaces join the real package the dependency disappears.
 | ceiling | By default a child's or a loaded toolset's reach must fit inside the caller's own. |
 | budget | What a child may spend (`max-runs`, `max-steps`, `max-total-tokens`, `max-duration`), chosen by its caller and not carved from the caller's own. |
 | operator limits | Optional caps on the spawn tree (depth, total agents, concurrent agents), set in host or policy configuration and unset by default. Reaching one returns `over-limit`. |
-| caller | The component the import is bound to, identified by workload namespace, workload name and component name. |
+| caller | The component the import is bound to, identified by its workload incarnation (minted when the workload is created, kept across rollouts) and its component name within the workload. Namespace and workload name are display metadata. Approval digests, coalescing and loaded toolsets all bind this one identity. |
 
 ## Worlds
 
