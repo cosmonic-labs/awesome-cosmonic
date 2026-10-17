@@ -119,6 +119,8 @@ The published 0.3.0 artifact remains unchanged.
   host stores. Pass it through unchanged and never persist the bytes behind it.
 - Set or ignore `attachment.name`, an optional display filename. It is untrusted
   text, never a path.
+- Match the new `finish-reason` cases `refusal`, `content-filter` and
+  `pause-turn`. On `pause-turn`, append the message and call again.
 
 ## Usage
 
