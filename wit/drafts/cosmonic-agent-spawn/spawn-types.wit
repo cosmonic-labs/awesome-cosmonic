@@ -304,7 +304,8 @@ interface spawn-types {
     /// A grantor's decision on a request that needed approval.
     @unstable(feature = agent-spawn)
     variant decision {
-        /// Granted. Resend the identical request; it is admitted.
+        /// Granted. Resend the identical request; the grant admits one
+        /// request in total, however many waiters shared the approval.
         granted,
         /// Denied, with an implementer-authored reason.
         denied(string),
@@ -317,24 +318,38 @@ interface spawn-types {
     /// A request beyond the caller's ceiling, sent to a grantor. The
     /// approval outlives the call that produced it: it stays pending until
     /// the grantor decides or it expires, whether or not anyone is waiting.
-    /// A grant is single use and bound to the request digest: it admits one
-    /// identical request from the same caller before the approval expires,
-    /// and nothing else. A changed request, or the same request from another
-    /// caller, is a new request. Standing permission belongs in policy a
-    /// person wrote, not in a reusable approval.
+    /// It is bound to the request digest. A changed request, or the same
+    /// request from another caller, is a new request. Standing permission
+    /// belongs in policy a person wrote, not in a reusable approval.
+    ///
+    /// One logical request, one admission. Every identical request from the
+    /// same caller made while an approval is pending is the same logical
+    /// request: it returns that same pending approval (the same `id`, one
+    /// prompt, not many), and every waiter's `decision` resolves to the same
+    /// value. A grant is single use and is consumed atomically, exactly
+    /// once, across all of those waiters and every resend: the implementer
+    /// admits one request on it (one child started, or one rollout) and no
+    /// more, and serializes concurrent resends so exactly one is admitted.
+    /// The implementer cannot tell waiters with the same digest apart, so
+    /// they share that one admission, and the caller hands the one `agent`
+    /// handle or `loaded-toolset` to whichever of its waiters need it.
+    /// Coalescing saves the person prompts; it never multiplies what one
+    /// decision admits.
     ///
     /// A grant expires too: it admits the identical request only within the
-    /// implementer's grant lifetime, set by the operator. An identical request
-    /// while one is pending returns that same pending approval (one prompt,
-    /// not many), and the grant then admits each request that shared it,
-    /// once. The
-    /// implementer may cap how many approvals one caller has pending, so a
-    /// looping agent cannot bury the person in prompts (it gets `over-limit`).
-    /// The caller is bound by its workload incarnation, not its name: a
-    /// workload recreated under the same name is a different caller and
-    /// needs its own approval. A rollout to a new revision (as `load` does)
-    /// keeps the incarnation. Only a person, or policy a person wrote,
-    /// decides; never a spawned agent.
+    /// implementer's grant lifetime, set by the operator. Once a grant is
+    /// consumed, or expires unused, an identical request is a new,
+    /// independent request and needs its own approval: it returns
+    /// `needs-approval` with a new approval, never the consumed one, and
+    /// identical requests coalesce onto that new approval while it is
+    /// pending. This includes a resend that lost the race for the grant.
+    /// The implementer may cap how many approvals one caller has pending, so
+    /// a looping agent cannot bury the person in prompts (it gets
+    /// `over-limit`). The caller is bound by its workload incarnation, not
+    /// its name: a workload recreated under the same name is a different
+    /// caller and needs its own approval. A rollout to a new revision (as
+    /// `load` does) keeps the incarnation. Only a person, or policy a person
+    /// wrote, decides; never a spawned agent.
     @unstable(feature = agent-spawn)
     record approval {
         /// Implementer-issued id, to correlate with the approval UI and audit log.
@@ -410,7 +425,8 @@ interface spawn-types {
         /// a different request may succeed.
         access-denied(string),
         /// Beyond the ceiling and sent to a grantor. Await `decision`, then
-        /// resend the identical request.
+        /// resend the identical request. A grant admits one request in
+        /// total; see `approval`.
         needs-approval(approval),
         /// An implementer limit would be exceeded.
         over-limit(over-limit),

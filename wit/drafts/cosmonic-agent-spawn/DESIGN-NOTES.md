@@ -249,6 +249,19 @@ definition. The WIT states them on `spawn-types`.
   `decision` future: await it, then resend the identical request. Dropping it
   only stops waiting; the approval stays pending until it is decided or
   expires, and a grant admits one identical request from the same caller.
+- **One approval, one admission.** Identical requests from one caller while
+  an approval is pending coalesce onto it (same `id`, one prompt), and every
+  waiter's `decision` resolves to the same value. Coalescing is one logical
+  request, not N: the grant is consumed atomically, exactly once, across all
+  waiters and every resend, so it starts one child or one rollout. Concurrent
+  resends are serialized and exactly one wins; the implementer cannot tell
+  same-digest waiters apart, so the caller routes the one `agent` handle or
+  `loaded-toolset` to the waiters that need it. After the grant is consumed
+  or expires, an identical request (a race loser included) is independent
+  and gets `needs-approval` with a new approval (shared, as above, by
+  identical requests while it is pending). An earlier draft said the
+  grant admitted "each request that shared it, once", which let N coalesced
+  beyond-ceiling requests ride one human decision; that wording is gone.
   Policy may hold an outcome until a person or the auditor releases it; the
   parent sees `blocked(outcome-release)`.
 - **Downward flow.** Messages from `agent.run` are caller-controlled content
@@ -424,10 +437,37 @@ answers `unknown-tool`, and another toolset with the same tool is namespaced
 because the alias stays reserved. `load_beyond_the_ceiling_needs_approval_once`
 loads `iss-position` with a host the caller cannot reach: it goes to a
 grantor, the grant admits the identical load once, and the next identical load
-needs approval again. `load_from_a_discovery_offer` loads an offer's spec
+needs approval again. That test is sequential; the concurrent case below is
+not in the spike yet. `load_from_a_discovery_offer` loads an offer's spec
 unchanged. `load_is_denied_when_loading_is_off` checks the provider switch.
 The loader keeps its handles in a warm instance, since the implementer unloads
 a caller's toolsets when its store ends.
+
+**Conformance case: concurrent waiters on one approval.** Not yet executable
+(the spike lives outside this repository); any implementer of `spawn` or
+`tool-loading` must pass it, once for each operation.
+
+1. From one caller incarnation, send N (at least 3) identical beyond-ceiling
+   requests concurrently, before any decision. Expect N `needs-approval`
+   results that carry the same `id` and `request-digest`, and one pending
+   prompt in the approval UI and audit log.
+2. Grant it once. Expect every waiter's `decision` to resolve to `granted`.
+3. Resend the identical request from all N waiters concurrently. Expect
+   exactly one `ok` (one `agent` handle, or one `loaded-toolset`) and N - 1
+   `needs-approval` results that share one new approval `id` (they coalesce
+   again, so the person sees one new prompt). Expect the
+   implementer to have started exactly one child (`spawn`) or rolled out
+   exactly one revision that adds the toolset (`load`), and the audit log to
+   record one admission against the approval.
+4. Resend once more after the winner is admitted. Expect `needs-approval`
+   carrying the new pending approval from step 3, never the consumed `id`, and
+   never a second child or rollout.
+5. Repeat with the grant decided while some waiters have dropped their
+   `decision` future and others still hold it, and with a resend racing the
+   decision itself. The totals in step 3 must not change.
+6. Repeat step 1 from a second caller incarnation with the same request.
+   Expect a separate approval with a different `request-digest`; granting the
+   first approval admits nothing for the second caller.
 
 ## Tool naming: identity, alias, display
 
@@ -1038,8 +1078,9 @@ this package. What they changed, all now in the WIT and the spike:
 - **Credentials stay out of agent memory.** `grants.credentials` names
   references the host applies on egress; `secrets` are refused on a spawned
   agent's own component.
-- **Approvals.** Grants expire; identical pending requests share one approval;
-  pending approvals per caller may be capped; the digest has a domain tag, the
+- **Approvals.** Grants expire; identical pending requests share one approval,
+  and its grant admits one request in total across them; pending approvals per
+  caller may be capped; the digest has a domain tag, the
   caller's incarnation and a canonical JSON form; summaries use validated
   values only.
 - **Volumes fail closed.** Names are never compared; a volume grant whose

@@ -27,10 +27,12 @@ package cosmonic:agent@0.5.0;
 /// Admission follows `spawn`: the toolset's reach must fit inside the
 /// caller's ceiling, and anything beyond it goes to a grantor and returns
 /// `needs-approval` with a digest over the caller's identity and the
-/// `toolset-spec`. A grant is single use, as for `spawn`. Policy may ask
-/// for approval even within the ceiling, since new code is new risk even
-/// when its reach is not. A `toolset-spec` from a `tool-discovery` offer
-/// loads unchanged, and its digest matches what the caller was shown.
+/// `toolset-spec`. A grant is single use, as for `spawn`: it admits one
+/// load in total, even when several identical loads shared the pending
+/// approval (see `approval`). Policy may ask for approval even within the
+/// ceiling, since new code is new risk even when its reach is not. A
+/// `toolset-spec` from a `tool-discovery` offer loads unchanged, and its
+/// digest matches what the caller was shown.
 ///
 /// **When the tools arrive.** The new revision serves the caller's next run.
 /// The current run is not moved between revisions: it should finish (an
