@@ -131,6 +131,8 @@ The published 0.3.0 artifact remains unchanged.
   untrusted links on the text they support.
 - Set `run-options.effort` (none leaves the agent's choice) and pass it on as
   `chat-options.effort`.
+- Match `run-event.plan`, the agent's whole current plan for display; each
+  event replaces the last.
 
 ## Usage
 
