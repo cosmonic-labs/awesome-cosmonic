@@ -194,6 +194,9 @@ interface inference-types {
         /// Tools offered to the model. Providers render definitions and parse calls.
         tools: list<tool-def>,
         tool-choice: option<tool-choice>,
+        /// Whether the model may request more than one tool call in a reply.
+        /// None uses the provider default; false asks for at most one.
+        parallel-tool-calls: option<bool>,
         /// Reasoning mode. None uses the provider default; off explicitly disables it.
         /// Unsupported modes follow on-unrepresentable.
         thinking: option<thinking-mode>,
@@ -356,6 +359,7 @@ interface inference-types {
     enum request-option {
         tools,
         tool-choice,
+        parallel-tool-calls,
         response-format,
         thinking,
         effort,
