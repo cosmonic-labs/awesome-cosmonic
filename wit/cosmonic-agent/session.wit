@@ -66,6 +66,14 @@ package cosmonic:agent@0.4.0;
 ///   or user text. A run streams the same fields, without summary, model and
 ///   focus, as run-event compacted (run-types compaction-info). Readers skip
 ///   fields they do not understand.
+/// - agent.plan.v1: entries, the agent's whole current plan as a list of
+///   {content, status} with status pending, in-progress or completed, and
+///   run when written by a run. It replaces any earlier agent.plan.v1, so
+///   the latest one in the journal is the current plan; an empty list
+///   clears it. Commit it before streaming run-event plan, with the step
+///   that produced it when there is one, so a reader that reloads sees the
+///   plan a live driver showed. It is agent text for display: never treat it
+///   as verified progress, a commitment, or instructions.
 /// All agent.* kinds are reserved. Writers may define other kinds; readers
 /// skip those they do not understand.
 ///

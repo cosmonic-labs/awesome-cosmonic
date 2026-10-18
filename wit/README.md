@@ -146,7 +146,9 @@ The published 0.3.0 artifact remains unchanged.
 - Set `run-options.effort` (none leaves the agent's choice) and pass it on as
   `chat-options.effort`.
 - Match `run-event.plan`, the agent's whole current plan for display; each
-  event replaces the last.
+  event replaces the last. An agent commits `agent.plan.v1` (reserved in
+  `session`) with the same entries before streaming it, so a driver that
+  reloads shows the latest plan from the journal.
 - Set `input-format` on every `tool-def` in `inference-types` and
   `tool-types`: `json-schema` keeps today's behavior, and `freeform` takes plain
   text, optionally constrained by a `grammar` (`lark` or `regex`), as OpenAI
