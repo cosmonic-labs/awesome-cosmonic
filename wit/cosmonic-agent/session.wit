@@ -29,7 +29,7 @@ package cosmonic:agent@0.4.0;
 ///   blocks names content kinds such as text, toolRequest, toolResponse, image,
 ///   thinking, and error. Other kinds are allowed; readers skip unknown kinds.
 /// - agent.op.v1: op, target (model or tool), name, and tool arguments as a JSON
-///   value. Tool ops use the tool-call id; model ops use a session-unique id.
+///   value; a freeform tool's raw text is a JSON string. Tool ops use the tool-call id; model ops use a session-unique id.
 /// - agent.op-result.v1: op and outcome. succeeded/failed means the call returned;
 ///   cancelled means it was not dispatched or a model call will repeat;
 ///   unresolved means its effects are unknown.

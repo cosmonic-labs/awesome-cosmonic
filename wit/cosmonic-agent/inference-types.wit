@@ -82,8 +82,11 @@ interface inference-types {
         id: string,
         /// The name advertised in the request's tool list.
         name: string,
-        /// Arguments as a JSON object. Parse model-generated arguments defensively.
-        arguments: json,
+        /// The call's input, read as the named tool's `input-format` says: a
+        /// JSON object for `json-schema` tools, or the model's raw text,
+        /// verbatim and never JSON parsed, for `freeform` tools. Both are
+        /// model-generated and untrusted; parse and validate defensively.
+        arguments: string,
     }
 
     /// Text or attachments returned by a tool.
@@ -334,7 +337,9 @@ interface inference-types {
         model: string,
     }
 
-    /// Incremental tool-call fields. arguments-delta is a JSON fragment.
+    /// Incremental tool-call fields. arguments-delta is a fragment of
+    /// `tool-call.arguments`: JSON for `json-schema` tools, raw text for
+    /// `freeform` tools.
     record tool-call-delta {
         /// Zero-based call index in opening order. Join interleaved fragments by this id.
         index: u32,
@@ -388,6 +393,9 @@ interface inference-types {
         tools,
         tool-choice,
         parallel-tool-calls,
+        /// `freeform` tool input or a grammar syntax. In `supported-options` it
+        /// advertises native freeform tools.
+        tool-input-format,
         response-format,
         thinking,
         effort,
@@ -517,10 +525,46 @@ interface inference-types {
         /// Display label; name is the model's selection key.
         title: option<string>,
         description: string,
-        /// JSON Schema for the arguments object.
+        /// JSON Schema for the arguments object. Ignored for `freeform` tools,
+        /// which set it to `{}`.
         input-schema: json,
+        /// How the model writes the call's input.
+        input-format: tool-input-format,
         /// Optional JSON Schema for the result.
         output-schema: option<json>,
+    }
+
+    /// How the model writes a tool call's input, and so how
+    /// `tool-call.arguments` is read.
+    ///
+    /// A provider without native freeform tools either refuses or, under
+    /// `adapt`, offers the tool as a JSON schema with one string property,
+    /// unwraps the model's string back into `arguments`, and reports
+    /// `option-ignored(tool-input-format)` naming the tool. Callers always see
+    /// raw text for a freeform tool. Agents can check `supported-options` for
+    /// `tool-input-format` before relying on the grammar.
+    ///
+    /// The grammar steers the model; it is not validation. Freeform input is
+    /// untrusted text like any tool input, and the tool must validate it.
+    variant tool-input-format {
+        /// A JSON object matching `input-schema`. The common case.
+        json-schema,
+        /// Plain text, constrained by the grammar when one is given, such as
+        /// a patch format. None leaves the text unconstrained.
+        freeform(option<grammar>),
+    }
+
+    /// A grammar the model's freeform input should match.
+    record grammar {
+        syntax: grammar-syntax,
+        definition: string,
+    }
+
+    enum grammar-syntax {
+        /// A Lark grammar, as OpenAI custom tools take.
+        lark,
+        /// A regular expression the whole input matches.
+        regex,
     }
 
     variant tool-choice {
