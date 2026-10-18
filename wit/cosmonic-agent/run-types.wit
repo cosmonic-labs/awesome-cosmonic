@@ -215,6 +215,9 @@ interface run-types {
         /// Claude Code's todo list or Codex's update_plan show it. Agent text
         /// for display: a driver never treats it as progress it can verify or
         /// as a commitment. An agent that keeps no plan never sends it.
+        /// Sent after the agent commits `agent.plan.v1` with the same
+        /// entries, so a driver that reloads reads the current plan from the
+        /// journal.
         plan(list<plan-entry>),
         /// An event not captured above, described by the string. Safe to ignore.
         other(string),
