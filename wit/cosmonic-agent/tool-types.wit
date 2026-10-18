@@ -6,7 +6,7 @@ package cosmonic:agent@0.4.0;
 /// Introduced in 0.4.0, when the records moved here from `tools`.
 @since(version = 0.4.0)
 interface tool-types {
-    use inference-types.{json, tool-output};
+    use inference-types.{json, tool-output, tool-input-format};
 
     /// Provider claims for display. Host permissions enforce access; these hints
     /// cannot authorize calls or retries.
@@ -45,8 +45,12 @@ interface tool-types {
         /// Display label; name is the model's selection key.
         title: option<string>,
         description: string,
-        /// JSON Schema for the arguments object.
+        /// JSON Schema for the arguments object. Ignored for `freeform` tools,
+        /// which set it to `{}`.
         input-schema: json,
+        /// How the model writes the call's input; see `tool-input-format`.
+        /// A freeform tool receives `tool-call.arguments` as raw text.
+        input-format: tool-input-format,
         /// JSON Schema for `structured`, where the tool declares one.
         output-schema: option<json>,
         annotations: tool-annotations,
@@ -75,7 +79,8 @@ interface tool-types {
     variant dispatch-error {
         /// No tool by that name.
         unknown-tool(string),
-        /// Arguments failed schema validation.
+        /// Arguments failed schema validation, or the tool rejected freeform
+        /// input. The host does not check a grammar on the tool's behalf.
         invalid-arguments(string),
         /// Provider unavailable before execution could start.
         upstream(string),
