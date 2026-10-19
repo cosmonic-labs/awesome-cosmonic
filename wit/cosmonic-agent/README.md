@@ -59,9 +59,9 @@ agent can't fake one. When nobody is there to answer, a run ends
 
 ### What an agent sees
 
-`tools.list` returns `tool-def`s: a name, a description, and an `input`
-that is either a JSON Schema for the arguments (`json-schema`) or `freeform`
-text, optionally constrained by a grammar. `tools.call` takes the model's
+`tools.list` returns `tool-def`s: a name, a description, and an `input`:
+a JSON Schema for the arguments (`json-schema`), text a grammar constrains
+(`grammar`), or plain `text`. `tools.call` takes the model's
 `tool-call` as it came, with `json` or `text` arguments, and returns a
 `tool-response` with text and attachments, optional structured output, and
 `is-error` for a call that ran and failed.
@@ -109,7 +109,7 @@ Cosmonic hosts translate typed tools this way:
   short JSON header. A field named `image`, a record of `media-type` and
   `data`, is passed to the model as an image.
 - A function whose single parameter is a `string` and whose doc comment has a
-  paragraph starting `Freeform:` is offered with freeform input.
+  paragraph starting `Freeform:` is offered with `text` input.
 - Functions that take or return resources, streams or futures have no JSON form
   and are not offered.
 - Descriptions come from the tool's published WIT package, because a built
