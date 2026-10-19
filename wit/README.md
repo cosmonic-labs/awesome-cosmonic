@@ -39,8 +39,9 @@ streams text deltas and whole steps while the agent works, then resolves to an
 outcome or a typed error. It replaces the `POST /task` HTTP convention as the
 contract between an agent and whatever drives it. `run`, `run-types` and the
 two worlds that use them are marked `@unstable(feature = agent-run)`: a
-consumer enables that feature to see them. The design note is
-[`drafts/cosmonic-agent-run/README.md`](drafts/cosmonic-agent-run/README.md).
+consumer enables that feature to see them. The design note for the package,
+including how tools and typed tools work, is
+[`cosmonic-agent/README.md`](cosmonic-agent/README.md).
 
 `model-admin` exposes the trusted catalog and preparation controls. Preparing a
 model can load local weights or open a remote connection. A remote provider can
