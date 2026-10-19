@@ -152,3 +152,123 @@ fn run_error(f: Failure) -> RunError {
         Failure::OutputRejected(d) => RunError::OutputRejected(d),
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+    use crate::agent::inference_types::{AssistantPart, Attachment, Citation, Reasoning};
+
+    fn options(run_id: &str) -> RunOptions {
+        RunOptions {
+            run_id: run_id.into(),
+            instructions: None,
+            schema: None,
+            max_steps: None,
+            max_total_tokens: None,
+            max_duration: None,
+            effort: None,
+            trace_parent: None,
+        }
+    }
+
+    fn text(t: &str) -> UserMessage {
+        UserMessage {
+            content: vec![UserPart::Text(t.into())],
+            name: None,
+        }
+    }
+
+    fn with_attachment(source: AttachmentSource) -> UserMessage {
+        let mut m = text("see this");
+        m.content.push(UserPart::Attachment(Attachment {
+            media_type: "image/png".into(),
+            source,
+            name: Some("photo.png".into()),
+        }));
+        m
+    }
+
+    #[test]
+    fn a_plain_request_takes_the_defaults() {
+        let req = validate(text("hello"), options("r1")).unwrap();
+        assert_eq!(req.run_id, "r1");
+        assert_eq!(req.text, "hello");
+        assert_eq!(req.max_steps, DEFAULT_MAX_STEPS);
+    }
+
+    #[test]
+    fn a_run_id_must_fit_the_commit_id() {
+        assert!(validate(text("hi"), options("")).is_err());
+        assert!(validate(text("hi"), options(&"x".repeat(MAX_RUN_ID_BYTES))).is_ok());
+        assert!(validate(text("hi"), options(&"x".repeat(MAX_RUN_ID_BYTES + 1))).is_err());
+        assert!(validate(text("hi"), options("a\nb")).is_err());
+    }
+
+    #[test]
+    fn a_message_needs_text() {
+        assert!(validate(text("  "), options("r1")).is_err());
+    }
+
+    #[test]
+    fn attachments_are_bytes_or_blobs_not_urls() {
+        let url = with_attachment(AttachmentSource::Url("https://example.com/a.png".into()));
+        assert!(validate(url, options("r1")).is_err());
+        let blob = with_attachment(AttachmentSource::Blob("blob-1".into()));
+        assert!(validate(blob, options("r1")).is_ok());
+        let bytes = with_attachment(AttachmentSource::Bytes(vec![0]));
+        assert!(validate(bytes, options("r1")).is_ok());
+    }
+
+    #[test]
+    fn max_steps_is_at_least_one_and_capped() {
+        let mut o = options("r1");
+        o.max_steps = Some(0);
+        assert!(validate(text("hi"), o).is_err());
+        let mut o = options("r1");
+        o.max_steps = Some(1000);
+        assert_eq!(validate(text("hi"), o).unwrap().max_steps, MAX_STEPS_CAP);
+    }
+
+    #[test]
+    fn a_schema_must_be_json() {
+        let mut o = options("r1");
+        o.schema = Some("{not json".into());
+        assert!(validate(text("hi"), o).is_err());
+    }
+
+    #[test]
+    fn the_reply_keeps_what_a_person_sees() {
+        let part = |content, citations| AssistantPart {
+            content,
+            opaque: Some("continuation".into()),
+            citations,
+        };
+        let citation = Citation {
+            url: Some("https://example.com".into()),
+            title: None,
+            cited_text: None,
+            span: None,
+        };
+        let reply = AssistantMessage {
+            content: vec![
+                part(
+                    AssistantContent::Reasoning(Reasoning {
+                        summary: vec!["thinking".into()],
+                    }),
+                    vec![],
+                ),
+                part(AssistantContent::Text("plain".into()), vec![]),
+                part(AssistantContent::Text("sourced".into()), vec![citation]),
+                part(AssistantContent::Refusal("not that".into()), vec![]),
+            ],
+        };
+        let parts = reply_parts(reply);
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[0], ReplyPart::Text(t) if t == "plain"));
+        assert!(
+            matches!(&parts[1], ReplyPart::CitedText(c) if c.text == "sourced" && c.citations.len() == 1)
+        );
+        assert!(matches!(&parts[2], ReplyPart::Refusal(t) if t == "not that"));
+    }
+}
