@@ -2,7 +2,7 @@
 package cosmonic:agent@0.4.0;
 
 /// A provider owns the model resources used by its inference interfaces.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 world inference-provider {
     export inference-types;
     export model-admin;
@@ -11,7 +11,7 @@ world inference-provider {
 }
 
 /// A trusted serving component, such as an OpenAI-compatible server.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 world inference-client {
     import inference-types;
     import model-admin;
@@ -20,7 +20,7 @@ world inference-client {
 }
 
 /// A provider that only serves chat.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 world chat-provider {
     export inference-types;
     export model-admin;
@@ -28,7 +28,7 @@ world chat-provider {
 }
 
 /// A provider that only serves embeddings.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 world embeddings-provider {
     export inference-types;
     export model-admin;
@@ -38,7 +38,7 @@ world embeddings-provider {
 /// A sandboxed agent acquires models through workload-scoped aliases.
 /// Model administration, credentials, and network permissions belong to the host.
 /// Notifications require an explicit cosmonic:notifications import and provider permission.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 world agent {
     import inference-types;
     import models;
@@ -48,7 +48,7 @@ world agent {
 }
 
 /// A tool's network and storage permissions belong to its provider component.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 world tool-provider {
     export tools;
 }
