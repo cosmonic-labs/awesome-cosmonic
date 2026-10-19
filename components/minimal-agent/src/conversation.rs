@@ -1,11 +1,11 @@
 //! The conversation as stored in the session's state, its caps, and the
 //! messages the model is given from it.
 
-use crate::bindings::cosmonic::agent::inference_types::{
-    AssistantContent, AssistantMessage, AssistantPart, Message, ToolCall, ToolOutput, ToolResult,
-    UserMessage, UserPart,
+use crate::agent::inference_types::{
+    AssistantContent, AssistantMessage, AssistantPart, Message, ToolArguments, ToolCall,
+    ToolOutput, ToolResult, UserMessage, UserPart,
 };
-use crate::wire::to_json;
+use crate::journal::to_json;
 use serde::{Deserialize, Serialize};
 
 /// Tells the model what it is, so it does not offer to browse or run code.
@@ -56,8 +56,44 @@ impl Turn {
 pub(crate) struct StoredCall {
     pub(crate) id: String,
     pub(crate) name: String,
-    /// JSON text, as the model wrote it.
+    /// The call's input as the model wrote it: JSON text, or raw text for a
+    /// freeform tool.
     pub(crate) arguments: String,
+    /// True when `arguments` is a freeform tool's raw text. Absent in
+    /// conversations stored before freeform tools, which were all JSON.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) freeform: bool,
+}
+
+impl From<ToolCall> for StoredCall {
+    fn from(call: ToolCall) -> Self {
+        let (arguments, freeform) = match call.arguments {
+            ToolArguments::Json(json) => (json, false),
+            ToolArguments::Text(text) => (text, true),
+        };
+        Self {
+            id: call.id,
+            name: call.name,
+            arguments,
+            freeform,
+        }
+    }
+}
+
+impl StoredCall {
+    /// The call as the model made it, to replay in the next request.
+    fn to_call(&self) -> ToolCall {
+        let arguments = if self.freeform {
+            ToolArguments::Text(self.arguments.clone())
+        } else {
+            ToolArguments::Json(self.arguments.clone())
+        };
+        ToolCall {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            arguments,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -95,27 +131,31 @@ impl Conversation {
     }
 }
 
-/// The system prompt and the stored conversation, as model messages.
-pub(crate) fn to_messages(conversation: &Conversation) -> Vec<Message> {
-    let mut messages = vec![Message::System(SYSTEM_PROMPT.into())];
+/// The run's instructions, the system prompt and the stored conversation, as
+/// model messages. A driver's instructions come first, ahead of the agent's
+/// own.
+pub(crate) fn to_messages(conversation: &Conversation, instructions: Option<&str>) -> Vec<Message> {
+    let mut messages: Vec<Message> = instructions
+        .map(|i| Message::System(i.to_string()))
+        .into_iter()
+        .collect();
+    messages.push(Message::System(SYSTEM_PROMPT.into()));
     for turn in &conversation.turns {
         messages.push(match turn.role.as_str() {
             "assistant" => {
                 let text =
                     (!turn.text.is_empty()).then(|| AssistantContent::Text(turn.text.clone()));
-                let calls = turn.calls.iter().map(|c| {
-                    AssistantContent::ToolUse(ToolCall {
-                        id: c.id.clone(),
-                        name: c.name.clone(),
-                        arguments: c.arguments.clone(),
-                    })
-                });
+                let calls = turn
+                    .calls
+                    .iter()
+                    .map(|c| AssistantContent::ToolUse(c.to_call()));
                 let content = text.into_iter().chain(calls);
                 Message::Assistant(AssistantMessage {
                     content: content
                         .map(|content| AssistantPart {
                             content,
                             opaque: None,
+                            citations: vec![],
                         })
                         .collect(),
                 })
@@ -136,9 +176,56 @@ pub(crate) fn to_messages(conversation: &Conversation) -> Vec<Message> {
     messages
 }
 
-pub(crate) fn user_message(text: String) -> Message {
+fn user_message(text: String) -> Message {
     Message::User(UserMessage {
         content: vec![UserPart::Text(text)],
         name: None,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    /// `n` exchanges: a person's message and the reply to it.
+    fn exchanges(n: usize) -> Conversation {
+        let turns = (0..n)
+            .flat_map(|i| {
+                [
+                    Turn::new("user", format!("question {i}")),
+                    Turn::new("assistant", format!("answer {i}")),
+                ]
+            })
+            .collect();
+        Conversation { turns }
+    }
+
+    #[test]
+    fn trim_drops_whole_exchanges_oldest_first() {
+        let mut c = exchanges(30);
+        c.trim();
+        assert_eq!(c.turns.len(), MAX_TURNS);
+        assert_eq!(c.turns[0].role, "user");
+        assert_eq!(c.turns[0].text, "question 10");
+    }
+
+    #[test]
+    fn halve_keeps_the_newest_half() {
+        let mut c = exchanges(4);
+        assert!(c.halve());
+        assert_eq!(c.turns.len(), 4);
+        assert_eq!(c.turns[0].text, "question 2");
+        assert!(!Conversation::default().halve());
+    }
+
+    #[test]
+    fn instructions_come_before_the_system_prompt() {
+        let messages = to_messages(&exchanges(1), Some("Be brief."));
+        assert_eq!(messages.len(), 4);
+        assert!(matches!(&messages[0], Message::System(s) if s == "Be brief."));
+        assert!(matches!(&messages[1], Message::System(s) if s == SYSTEM_PROMPT));
+        assert!(matches!(&messages[2], Message::User(_)));
+        assert!(matches!(&messages[3], Message::Assistant(_)));
+    }
 }

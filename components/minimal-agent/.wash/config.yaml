@@ -2,9 +2,12 @@
 # the `wash` CLI alike.
 version: "0.1.0"
 build:
+  # `wash build` fetches wit/deps first. cosmonic:agent@0.4.0 comes from
+  # wit/cosmonic-agent in this repository (wkg.toml), not from a registry.
   command: cargo build --target wasm32-wasip2 --release
   component_path: target/wasm32-wasip2/release/minimal_agent.wasm
 workload:
   # The agent holds no egress of its own: every model call goes through the
-  # host's cosmonic:agent inference plugin. Explicit [] is deny-all.
+  # host's cosmonic:agent inference plugin. Explicit [] is deny-all. It
+  # exports cosmonic:agent/run and no HTTP handler, so it needs no ingress.
   allowedHosts: []

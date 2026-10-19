@@ -18,6 +18,9 @@ on:
     paths:
       - "components/sandboxed-webhook/**"
       - "components/minimal-agent/**"
+      # minimal-agent builds against this copy until cosmonic:agent 0.4.0 is
+      # published (its wkg.toml override).
+      - "wit/cosmonic-agent/**"
       # The registry map every build's WIT fetch reads (cosmonic:* from ghcr.io).
       - "wit/wkg-registries.toml"
       - "workload-examples/task-manager/**"
@@ -31,6 +34,9 @@ on:
     paths:
       - "components/sandboxed-webhook/**"
       - "components/minimal-agent/**"
+      # minimal-agent builds against this copy until cosmonic:agent 0.4.0 is
+      # published (its wkg.toml override).
+      - "wit/cosmonic-agent/**"
       # The registry map every build's WIT fetch reads (cosmonic:* from ghcr.io).
       - "wit/wkg-registries.toml"
       - "workload-examples/task-manager/**"
@@ -114,7 +120,8 @@ jobs:
           - name: minimal-agent
             path: components/minimal-agent
             image: ghcr.io/cosmonic-labs/components/minimal-agent
-            expect: "export wasi:http/handler"
+            # A host drives it through the typed run; it serves no HTTP.
+            expect: "export cosmonic:agent/run@0.4.0"
 
     defaults:
       run:
