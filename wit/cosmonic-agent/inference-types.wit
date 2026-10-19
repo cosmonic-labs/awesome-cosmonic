@@ -1,7 +1,7 @@
 package cosmonic:agent@0.4.0;
 
 /// Messages, model handles, options, usage, and inference errors.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 interface inference-types {
     /// UTF-8 JSON. Producers emit valid JSON; consumers parse it defensively.
     type json = string;
@@ -18,6 +18,7 @@ interface inference-types {
         describe: async func() -> model-description;
     }
 
+    @since(version = 0.4.0)
     flags supported-operations {
         chat,
         embeddings,
@@ -154,6 +155,7 @@ interface inference-types {
     /// A source the provider says supports some of a text part, such as an
     /// Anthropic citation or an OpenAI url_citation annotation. Untrusted
     /// provider output: render it as text and links, never follow it.
+    @since(version = 0.4.0)
     record citation {
         /// The source's URL, when it has one.
         url: option<string>,
@@ -546,6 +548,7 @@ interface inference-types {
     ///
     /// The grammar steers the model; it is not validation. Freeform input is
     /// untrusted text like any tool input, and the tool must validate it.
+    @since(version = 0.4.0)
     variant tool-input-format {
         /// A JSON object matching `input-schema`. The common case.
         json-schema,
@@ -555,11 +558,13 @@ interface inference-types {
     }
 
     /// A grammar the model's freeform input should match.
+    @since(version = 0.4.0)
     record grammar {
         syntax: grammar-syntax,
         definition: string,
     }
 
+    @since(version = 0.4.0)
     enum grammar-syntax {
         /// A Lark grammar, as OpenAI custom tools take.
         lark,

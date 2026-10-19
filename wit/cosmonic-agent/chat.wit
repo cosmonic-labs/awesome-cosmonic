@@ -1,7 +1,7 @@
 package cosmonic:agent@0.4.0;
 
 /// Streaming inference with a prepared model.
-@since(version = 0.4.0)
+@since(version = 0.3.0)
 interface chat {
     use inference-types.{
         model, message, chat-options, chunk, completion, request-error, generation-error,

@@ -124,8 +124,9 @@ The published 0.3.0 artifact remains unchanged.
 - Treat tool output as possibly truncated. A host may cap a tool's output and
   append a short text note stating the original size.
 - Match `other(string)` in every variant; `run-types` no longer uses
-  `other(option<string>)`. Stable interfaces and worlds carry
-  `@since(version = 0.4.0)`.
+  `other(option<string>)`. Every stable interface, world and type carries
+  `@since` with the version that introduced it: 0.3.0 for what 0.3.0 had,
+  0.4.0 for `tool-types` and the types new in this release.
 - Record an unknown tool outcome or abandoned call as an unresolved operation.
   Retry with the same id and arguments only when trusted configuration authorizes
   repeat detection. Provider annotations cannot authorize replay. A not-dispatched
