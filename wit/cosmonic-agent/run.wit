@@ -7,6 +7,11 @@ package cosmonic:agent@0.4.0;
 /// onto it. Named after `wasi:cli/run`. Unstable: a consumer enables the
 /// `agent-run` feature to see it.
 ///
+/// A run is what a chat interface calls a turn: one message from the person
+/// and everything the agent does to answer it. That is usually many model
+/// calls (turns, in a model provider's terms) with tool calls between them,
+/// recorded as steps, and it ends when the agent has its reply or stops.
+///
 /// The agent needs no ingress: nothing but its driver can reach it. The
 /// session it works in is not named here. It is the agent's
 /// `cosmonic:agent/session` import. The host chooses the session a run works
@@ -18,10 +23,13 @@ package cosmonic:agent@0.4.0;
 /// next run may be served by another instance, or bound to another session.
 /// Everything it needs to continue is in its session.
 ///
-/// One run at a time. The driver holds the lock: it serializes runs for the
-/// session and never calls `run` while one is in progress. The agent checks
-/// too, as a backstop against two drivers on one session, and returns
-/// `busy`.
+/// One run at a time per session, because two runs in one session would
+/// interleave one conversation. The driver holds the lock: it serializes runs
+/// for the session and never calls `run` while one is in progress there. The
+/// agent checks too, as a backstop against two drivers on one session, and
+/// returns `busy`. The rule is about the session, not the instance: an agent
+/// whose host binds a session per conversation may run one run in each of
+/// several sessions at once.
 ///
 /// People and approvals. An agent never receives, answers or enforces an
 /// approval. Approvals happen at the gates the host owns, tool dispatch and
