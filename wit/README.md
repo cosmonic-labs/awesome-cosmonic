@@ -152,16 +152,14 @@ The published 0.3.0 artifact remains unchanged.
   event replaces the last. An agent commits `agent.plan.v1` (reserved in
   `session`) with the same entries before streaming it, so a driver that
   reloads shows the latest plan from the journal.
-- Set `input-format` on every `tool-def` in `inference-types` and
-  `tool-types`: `json-schema` keeps today's behavior, and `freeform` takes plain
-  text, optionally constrained by a `grammar` (`lark` or `regex`), as OpenAI
-  custom tools such as Codex's `apply_patch` do. A freeform tool sets
-  `input-schema` to `{}` and receives `tool-call.arguments` as raw text that is
-  never JSON parsed; the field is now typed `string` with the same encoding.
-  Providers without native support refuse or wrap the tool in a one-string JSON
-  schema and report `option-ignored(tool-input-format)`. The grammar steers the
-  model and is not validation, so tools validate their input. Match
-  `request-option.tool-input-format`.
+- Describe each `tool-def`'s input with `input: tool-input` in
+  `inference-types` and `tool-types`: `json-schema(schema)` keeps today's
+  behavior, and `freeform(grammar)` takes plain text, optionally constrained by
+  a `grammar` (`lark` or `regex`), as OpenAI custom tools such as Codex's
+  `apply_patch` do. Providers without native support refuse or wrap the tool
+  in a one-string JSON schema and report `option-ignored(freeform-tools)`. The
+  grammar steers the model and is not validation, so tools validate their
+  input. Match `request-option.freeform-tools`.
 
 ## Usage
 
