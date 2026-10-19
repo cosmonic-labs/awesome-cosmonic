@@ -26,7 +26,8 @@ pub use cosmonic::agent::{
 };
 use types::{
     AssistantContent, AssistantMessage, AssistantPart, Chunk, ChunkDelta, Completion, FinishReason,
-    GenerationError, Message, RequestError, ToolArguments, ToolCall, ToolInput, Usage,
+    GenerationError, Grammar, GrammarSyntax, Message, RequestError, ToolArguments, ToolCall,
+    ToolInput, Usage,
 };
 
 pub const ALIAS: &str = "default";
@@ -449,7 +450,7 @@ fn user_text(message: &Message) -> Option<String> {
 /// - a tool result: report it back as text;
 /// - its own paused reply: carry on and finish;
 /// - "echo X": a reasoning delta, a text part, and a call to `echo`;
-/// - "shout X": a call to the freeform `shout` with X as its text;
+/// - "shout X": a call to the plain text `shout` with X as its text;
 /// - "pause": a reply that ends `pause-turn`;
 /// - "decline": a refusal part, ending `refusal`;
 /// - "json": a JSON object in a fenced code block;
@@ -696,7 +697,15 @@ impl<T: Send> tools::HostWithStore<T> for HasSelf<State> {
                 "Always fails",
                 ToolInput::JsonSchema(r#"{"type": "object"}"#.into()),
             ),
-            tool_def("shout", "Say the text louder", ToolInput::Freeform(None)),
+            tool_def("shout", "Say the text louder", ToolInput::Text),
+            tool_def(
+                "count",
+                "Count to a number",
+                ToolInput::Grammar(Grammar {
+                    syntax: GrammarSyntax::Regex,
+                    definition: "[0-9]+".into(),
+                }),
+            ),
         ]))
     }
 
