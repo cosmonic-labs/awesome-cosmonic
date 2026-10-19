@@ -46,7 +46,7 @@ interface tool-types {
         title: option<string>,
         description: string,
         /// What the model writes as the call's input: a JSON object matching
-        /// a schema, or freeform text; see `tool-input`.
+        /// a schema, text a grammar constrains, or plain text; see `tool-input`.
         input: tool-input,
         /// JSON Schema for `structured`, where the tool declares one.
         output-schema: option<json>,

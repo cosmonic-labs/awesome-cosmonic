@@ -538,14 +538,16 @@ interface inference-types {
         title: option<string>,
         description: string,
         /// What the model writes as the call's input: a JSON object matching
-        /// a schema, or freeform text.
+        /// a schema, text a grammar constrains, or plain text.
         input: tool-input,
         /// Optional JSON Schema for the result.
         output-schema: option<json>,
     }
 
     /// What a tool takes as input, and so how the model writes a call's
-    /// `arguments`.
+    /// `arguments`. A tool whose input is `grammar` or `text` is a freeform
+    /// tool: the model writes text, and the call carries it as
+    /// `tool-arguments.text`.
     ///
     /// A provider without native freeform tools either refuses or, under
     /// `adapt`, offers the tool as a JSON schema with one string property,
@@ -561,9 +563,10 @@ interface inference-types {
     variant tool-input {
         /// A JSON object matching this JSON Schema. The common case.
         json-schema(json),
-        /// Plain text, constrained by the grammar when one is given, such as
-        /// a patch format. None leaves the text unconstrained.
-        freeform(option<grammar>),
+        /// Text the grammar constrains, such as a patch format.
+        grammar(grammar),
+        /// Plain text, unconstrained.
+        text,
     }
 
     /// A grammar the model's freeform input should match.
