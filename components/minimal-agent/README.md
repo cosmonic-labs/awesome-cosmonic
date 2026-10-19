@@ -123,7 +123,7 @@ The unit tests cover the parts of a run that need no host: how a reply ends a ru
 cargo test
 ```
 
-[`test-host/`](test-host/) drives the built component end to end. It is a small [Wasmtime](https://wasmtime.dev) host that plays the model, the session store and three tools, and starts each run on a fresh instance, so only the session survives from one run to the next, as on Desktop. It checks a run with a tool call, a second run continuing the conversation, a repeated run id, an empty message, a refused model call, a declined reply, a schema, a paused reply, a freeform tool call and cancellation, and prints each run's events and journal as it goes:
+[`test-host/`](test-host/) drives the built component end to end. It is a small [Wasmtime](https://wasmtime.dev) host that plays the model, the session store and four tools (a JSON one, a failing one, a plain text one and a grammar one), and starts each run on a fresh instance, so only the session survives from one run to the next, as on Desktop. It checks a run with a tool call, a second run continuing the conversation, a repeated run id, an empty message, a refused model call, a declined reply, a schema, a paused reply, a freeform tool call and cancellation, and prints each run's events and journal as it goes:
 
 ```shell
 wash build
