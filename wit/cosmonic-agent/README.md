@@ -4,7 +4,9 @@ The interfaces an agent component uses to call models, call tools and keep a
 durable conversation, and the export a host uses to hand it work. This page is
 the design note for the package: how the pieces fit, and what a host, an agent
 or a tool author can rely on. The `.wit` files are the contract; the
-[package README](../README.md) lists the worlds and the 0.4.0 migration.
+[package README](../README.md) lists the worlds, and
+[docs/migrating-to-0.4.md](docs/migrating-to-0.4.md) lists what changed from
+0.3.0.
 
 ## Two sides of an agent
 
