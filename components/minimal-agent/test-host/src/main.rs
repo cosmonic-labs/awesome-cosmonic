@@ -302,7 +302,7 @@ async fn tool_turn(f: &Fixture) -> Result<()> {
     ensure!(host.chats.len() == 2, "{} model calls", host.chats.len());
     let first = &host.chats[0];
     ensure!(
-        first.tools == ["echo", "explode", "shout"],
+        first.tools == ["echo", "explode", "shout", "count"],
         "tools offered: {:?}",
         first.tools
     );
@@ -310,8 +310,9 @@ async fn tool_turn(f: &Fixture) -> Result<()> {
         matches!(&first.inputs[..], [
             ToolInput::JsonSchema(echo),
             ToolInput::JsonSchema(_),
-            ToolInput::Freeform(None),
-        ] if echo.contains("\"required\"")),
+            ToolInput::Text,
+            ToolInput::Grammar(count),
+        ] if echo.contains("\"required\"") && count.definition == "[0-9]+"),
         "tool inputs not passed through: {:?}",
         first.inputs
     );
@@ -564,7 +565,7 @@ async fn cancelled(f: &Fixture) -> Result<()> {
     Ok(())
 }
 
-/// A freeform tool is offered as freeform, and the model's call reaches it
+/// A plain text tool is offered as `text`, and the model's call reaches it
 /// as text, verbatim, and is recorded as a JSON string.
 async fn freeform(f: &Fixture) -> Result<()> {
     let from = f.host().entries.len();
