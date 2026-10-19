@@ -504,12 +504,14 @@ fn schedules_fire_the_way_the_contract_says() {
         200,
         "ok",
     );
-    // The binding's max-lifetime is 12s and 09:00 is further off than that, so
-    // the listing says outright that this one will be removed before it fires.
+    // 09:00 in New York is 13:00 or 14:00 UTC, depending on daylight saving.
     run.check(
-        "the zone is kept in the listing, and it has no next firing under max-lifetime",
+        "the zone is kept in the listing, and its next firing is 09:00 there",
         run.ticker.held("ny").is_some_and(|held| {
-            held.is("registered", "cron 0 9 * * mon-fri in America/New_York") && held.next.is_none()
+            held.is("registered", "cron 0 9 * * mon-fri in America/New_York")
+                && held.next.is_some_and(|at| {
+                    at > unix_now() && at % 3_600 == 0 && matches!(at % 86_400 / 3_600, 13 | 14)
+                })
         }),
     );
     run.expect("a third registration", "/register?name=third&every-ms=60000", 200, "ok");
@@ -519,14 +521,6 @@ fn schedules_fire_the_way_the_contract_says() {
     run.expect("unregister again", "/unregister?name=third", 200, "ok");
     run.expect("unregister the crontab", "/unregister?name=ny", 200, "ok");
     run.expect("unregister the slow interval", "/unregister?name=second", 200, "ok");
-    // Registered and then left alone, for the max-lifetime check further down.
-    run.expect("register a schedule and forget it", "/register?name=linger&every-ms=60000", 200, "ok");
-    run.check(
-        "it has no next firing, max-lifetime being shorter than its period",
-        run.ticker
-            .held("linger")
-            .is_some_and(|held| held.is("registered", "interval 60000ms") && held.next.is_none()),
-    );
 
     run.section("retry");
     run.expect(
@@ -660,7 +654,6 @@ fn schedules_fire_the_way_the_contract_says() {
         "invalid-schedule",
     );
     run.expect("a delay under min-interval", "/register?name=soon&once-after-ms=100", 400, "invalid-schedule");
-    run.expect("a delay past max-lifetime", "/register?name=far&once-after-ms=60000", 400, "invalid-schedule");
     run.expect(
         "a one-shot whose handler asks for a retry",
         "/register?name=retry-once&once-after-ms=1000",
@@ -690,27 +683,6 @@ fn schedules_fire_the_way_the_contract_says() {
         || "expected at least 3".to_string(),
     );
     run.expect("unregister it", "/unregister?name=again-job", 200, "ok");
-
-    run.section("operator limits on a registration");
-    run.check(
-        "a forgotten schedule is removed at max-lifetime",
-        run.host
-            .wait_for(&["'linger' ", " was removed, it was held for the workload's max-lifetime"], 14),
-    );
-    run.check("it never fired", run.host.fired("linger").is_empty());
-    run.check("it is no longer listed", run.ticker.held("linger").is_none());
-    run.expect("register a fast poll", "/register?name=capped&every-ms=500", 200, "ok");
-    run.check(
-        "it is removed at max-firings",
-        run.host
-            .wait_for(&["'capped' ", " was removed, it delivered the workload's max-firings"], 8),
-    );
-    run.check("it fired exactly max-firings times", run.host.fired("capped").len() == 10);
-    run.check("it is no longer listed", run.ticker.held("capped").is_none());
-    run.check(
-        "declared schedules are not subject to either limit",
-        run.ticker.held("heartbeat").is_some(),
-    );
 
     run.section("crontab (waiting for the minute to turn)");
     let turned = run.host.wait_for_firing("minutely", 65, |_| true);

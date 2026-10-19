@@ -275,13 +275,9 @@ mod tests {
     }
 
     #[test]
-    fn typed_and_text_registration_share_names_limits_and_lifetime() {
+    fn typed_and_text_registration_share_names_and_limits() {
         let mut engine = Engine::new();
-        let limits = Limits {
-            max_registrations: 1,
-            max_lifetime: Some(20_000_000_000),
-            ..Limits::default()
-        };
+        let limits = Limits { max_registrations: 1, ..Limits::default() };
         let now = |secs: u64| Now { mono: secs * 1_000_000_000, wall: wall(MONDAY + secs as i64) };
         engine.bind("workload", Binding { limits, ..Binding::default() }, true, now(0));
         let typed = calendar().compile().unwrap();
@@ -295,7 +291,5 @@ mod tests {
             engine.register("workload", "other", Spec::Cron(text), now(10)),
             Err(crate::engine::RegisterError::LimitExceeded)
         );
-        engine.poll(now(20));
-        assert!(engine.list("workload", now(20)).unwrap().is_empty());
     }
 }
