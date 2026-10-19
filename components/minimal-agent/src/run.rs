@@ -71,11 +71,11 @@ pub(crate) fn validate(message: UserMessage, options: RunOptions) -> Result<Requ
         return Err("the message has no text".into());
     }
     // A URL would have the host fetch on the agent's behalf, which this agent
-    // does not ask for. Bytes and host-issued blobs are passed on as they are.
+    // does not ask for. Bytes and host-stored ids are passed on as they are.
     if message.content.iter().any(
         |p| matches!(p, UserPart::Attachment(a) if matches!(a.source, AttachmentSource::Url(_))),
     ) {
-        return Err("attachments are taken as bytes or blobs, not URLs".into());
+        return Err("attachments are taken as bytes or stored ids, not URLs".into());
     }
     let max_steps = match options.max_steps {
         None => DEFAULT_MAX_STEPS,
@@ -184,7 +184,7 @@ mod tests {
         m.content.push(UserPart::Attachment(Attachment {
             media_type: "image/png".into(),
             source,
-            name: Some("photo.png".into()),
+            display_name: Some("photo.png".into()),
         }));
         m
     }
@@ -211,11 +211,11 @@ mod tests {
     }
 
     #[test]
-    fn attachments_are_bytes_or_blobs_not_urls() {
+    fn attachments_are_bytes_or_stored_ids_not_urls() {
         let url = with_attachment(AttachmentSource::Url("https://example.com/a.png".into()));
         assert!(validate(url, options("r1")).is_err());
-        let blob = with_attachment(AttachmentSource::Blob("blob-1".into()));
-        assert!(validate(blob, options("r1")).is_ok());
+        let stored = with_attachment(AttachmentSource::Stored("stored-1".into()));
+        assert!(validate(stored, options("r1")).is_ok());
         let bytes = with_attachment(AttachmentSource::Bytes(vec![0]));
         assert!(validate(bytes, options("r1")).is_ok());
     }

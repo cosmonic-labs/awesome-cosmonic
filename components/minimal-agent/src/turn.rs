@@ -397,14 +397,7 @@ async fn work(events: &mut Events, req: &Request, acc: &mut Accepted) -> Result<
                 Called::Gone => return Err(Failure::Cancelled),
             }
         }
-        let calls = asked
-            .into_iter()
-            .map(|c| StoredCall {
-                id: c.id,
-                name: c.name,
-                arguments: c.arguments,
-            })
-            .collect();
+        let calls = asked.into_iter().map(StoredCall::from).collect();
         turns.push(Turn {
             calls,
             ..Turn::new("assistant", text)
@@ -543,7 +536,9 @@ async fn conclude(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::agent::inference_types::{AssistantPart, Attachment, AttachmentSource, ToolCall};
+    use crate::agent::inference_types::{
+        AssistantPart, Attachment, AttachmentSource, ToolArguments, ToolCall,
+    };
 
     fn message(parts: Vec<AssistantContent>) -> AssistantMessage {
         AssistantMessage {
@@ -562,7 +557,7 @@ mod tests {
         AssistantContent::ToolUse(ToolCall {
             id: "c1".into(),
             name: "echo".into(),
-            arguments: "{}".into(),
+            arguments: ToolArguments::Json("{}".into()),
         })
     }
 
@@ -612,7 +607,7 @@ mod tests {
                 UserPart::Attachment(Attachment {
                     media_type: "image/png".into(),
                     source: AttachmentSource::Bytes(vec![1, 2, 3]),
-                    name: None,
+                    display_name: None,
                 }),
             ],
             name: None,

@@ -21,7 +21,7 @@ use wasmtime_wasi::WasiCtxBuilder;
 use host::run_types::{
     Finish, ReplyPart, RunError, RunEvent, RunOptions, RunOutcome, StartError, StepContent,
 };
-use host::types::{Effort, Message, UserMessage, UserPart};
+use host::types::{Effort, Message, ToolArguments, ToolInput, UserMessage, UserPart};
 use host::{MinimalAgent, Shared, State, lock};
 
 /// Reads a run's events; with a limit, drops the stream after that many,
@@ -302,9 +302,18 @@ async fn tool_turn(f: &Fixture) -> Result<()> {
     ensure!(host.chats.len() == 2, "{} model calls", host.chats.len());
     let first = &host.chats[0];
     ensure!(
-        first.tools == ["echo", "explode"],
+        first.tools == ["echo", "explode", "shout"],
         "tools offered: {:?}",
         first.tools
+    );
+    ensure!(
+        matches!(&first.inputs[..], [
+            ToolInput::JsonSchema(echo),
+            ToolInput::JsonSchema(_),
+            ToolInput::Freeform(None),
+        ] if echo.contains("\"required\"")),
+        "tool inputs not passed through: {:?}",
+        first.inputs
     );
     ensure!(
         matches!(&first.messages[0], Message::System(s) if s == "Be brief."),
@@ -555,13 +564,39 @@ async fn cancelled(f: &Fixture) -> Result<()> {
     Ok(())
 }
 
+/// A freeform tool is offered as freeform, and the model's call reaches it
+/// as text, verbatim, and is recorded as a JSON string.
+async fn freeform(f: &Fixture) -> Result<()> {
+    let from = f.host().entries.len();
+    let (_, outcome) = started(f.run(Ask::new("r-shout", "shout quiet {words}")).await?)?;
+    ensure!(
+        reply_text(&outcome) == "The tool said: QUIET {WORDS}",
+        "reply: {:?}",
+        outcome.reply
+    );
+    let host = f.host();
+    let call = host.tool_calls.last().context("no tool call")?;
+    ensure!(
+        call.name == "shout"
+            && matches!(&call.arguments, ToolArguments::Text(t) if t == "quiet {words}"),
+        "tool call: {call:?}"
+    );
+    let op = host.entries[from..]
+        .iter()
+        .map(|e| e.json())
+        .find(|e| e["op"] == "call-shout")
+        .context("no op entry for the call")?;
+    ensure!(op["arguments"] == "quiet {words}", "{op}");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "../target/wasm32-wasip2/release/minimal_agent.wasm".into());
     let f = Fixture::new(&path)?;
-    let checks: [(&str, _); 9] = [
+    let checks: [(&str, _); 10] = [
         ("a run with a tool call", tool_turn(&f).await),
         ("the next run continues", second_turn(&f).await),
         ("a repeated run id is a duplicate", duplicate(&f).await),
@@ -570,6 +605,7 @@ async fn main() -> Result<()> {
         ("a declined reply finishes refusal", declined(&f).await),
         ("a schema gives a structured reply", schema(&f).await),
         ("a paused reply is continued", paused(&f).await),
+        ("a freeform tool gets its text", freeform(&f).await),
         ("dropping the events cancels", cancelled(&f).await),
     ];
     let mut failed = 0;

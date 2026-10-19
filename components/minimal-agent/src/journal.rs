@@ -1,6 +1,7 @@
 //! The session journal: the entries the session protocol defines, this
 //! run's conditional commits, and recovery after a restart.
 
+use crate::agent::inference_types::ToolArguments;
 use crate::agent::session::{
     self, CommitOptions, CommitResult, Entry, JournalEnd, NewEntry, Snapshot, StateCondition,
 };
@@ -345,9 +346,18 @@ pub(crate) fn step<'a>(role: &'a str, text: &'a str, run: Option<&'a str>) -> St
     }
 }
 
+/// A tool call's input for its op entry: the JSON arguments as a JSON value,
+/// and a freeform tool's text as a JSON string.
+pub(crate) fn arguments_value(arguments: &ToolArguments) -> Box<RawValue> {
+    match arguments {
+        ToolArguments::Json(json) => json_value(json),
+        ToolArguments::Text(text) => serde_json::value::to_raw_value(text).unwrap_or_default(),
+    }
+}
+
 /// The model's tool arguments as a JSON value, or as a JSON string when they
 /// are not valid JSON, so the journal entry is always well-formed.
-pub(crate) fn json_value(text: &str) -> Box<RawValue> {
+fn json_value(text: &str) -> Box<RawValue> {
     RawValue::from_string(text.to_string())
         .or_else(|_| serde_json::value::to_raw_value(text))
         .unwrap_or_default()
