@@ -83,11 +83,19 @@ interface inference-types {
         id: string,
         /// The name advertised in the request's tool list.
         name: string,
-        /// The call's input, read as the named tool's `input` says: a
-        /// JSON object for `json-schema` tools, or the model's raw text,
-        /// verbatim and never JSON parsed, for `freeform` tools. Both are
-        /// model-generated and untrusted; parse and validate defensively.
-        arguments: string,
+        /// The call's input, tagged by the named tool's `input`. Model
+        /// generated and untrusted; parse and validate defensively.
+        arguments: tool-arguments,
+    }
+
+    /// A tool call's input as the model wrote it.
+    @since(version = 0.4.0)
+    variant tool-arguments {
+        /// A JSON object, for a `json-schema` tool.
+        json(json),
+        /// The model's raw text, verbatim and never JSON parsed, for a
+        /// `freeform` tool.
+        text(string),
     }
 
     /// Text or attachments returned by a tool.
@@ -339,9 +347,10 @@ interface inference-types {
         model: string,
     }
 
-    /// Incremental tool-call fields. arguments-delta is a fragment of
-    /// `tool-call.arguments`: JSON for `json-schema` tools, raw text for
-    /// `freeform` tools.
+    /// Incremental tool-call fields. arguments-delta is a fragment of the
+    /// call's input as the model writes it: JSON text for a `json-schema`
+    /// tool, raw text for a `freeform` tool. The assembled call carries it as
+    /// `tool-arguments`.
     record tool-call-delta {
         /// Zero-based call index in opening order. Join interleaved fragments by this id.
         index: u32,

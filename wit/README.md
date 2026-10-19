@@ -156,7 +156,9 @@ The published 0.3.0 artifact remains unchanged.
   `inference-types` and `tool-types`: `json-schema(schema)` keeps today's
   behavior, and `freeform(grammar)` takes plain text, optionally constrained by
   a `grammar` (`lark` or `regex`), as OpenAI custom tools such as Codex's
-  `apply_patch` do. Providers without native support refuse or wrap the tool
+  `apply_patch` do. A call's `arguments` are a `tool-arguments` variant:
+  `json(object)` for a JSON Schema tool, `text(raw)` for a freeform one, never
+  JSON parsed. Providers without native support refuse or wrap the tool
   in a one-string JSON schema and report `option-ignored(freeform-tools)`. The
   grammar steers the model and is not validation, so tools validate their
   input. Match `request-option.freeform-tools`.
