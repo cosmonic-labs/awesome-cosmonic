@@ -1,0 +1,22 @@
+[package]
+name = "minimal-agent-test-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Scripted end-to-end checks for minimal-agent's cosmonic:agent/run export."
+license = "Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+# The async component runtime. 48 or newer runs WASI 0.3 components.
+wasmtime = { version = "=49.0.2", default-features = false, features = ["anyhow", "component-model-async", "cranelift", "std"] }
+wasmtime-wasi = { version = "=49.0.2", default-features = false, features = ["p2", "p3"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "time", "sync"] }
+serde_json = "1"
+
+# Not part of the component's crate.
+[workspace]
+
+[profile.dev]
+opt-level = 1
+debug = 0
