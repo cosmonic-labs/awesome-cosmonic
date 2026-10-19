@@ -1,13 +1,11 @@
 //! Error messages a person can read, for every error the agent reports.
 
-use crate::bindings::cosmonic::agent::inference_types::{
+use crate::agent::inference_types::{
     ContextOverflow, GenerationError, Quota, RateLimit, RequestError, SizeLimit,
 };
-use crate::bindings::cosmonic::agent::models::OpenError;
-use crate::bindings::cosmonic::agent::session;
-use crate::bindings::cosmonic::agent::tool_types::{
-    CallError, DispatchError, ListError, OutcomeError,
-};
+use crate::agent::models::OpenError;
+use crate::agent::session;
+use crate::agent::tool_types::{CallError, DispatchError, ListError, OutcomeError};
 
 /// Error messages a person can read. The generated types implement `Display`
 /// and `Debug` too, but both print Rust syntax, and the formatting code behind

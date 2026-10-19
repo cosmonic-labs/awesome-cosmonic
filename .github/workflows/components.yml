@@ -120,7 +120,8 @@ jobs:
           - name: minimal-agent
             path: components/minimal-agent
             image: ghcr.io/cosmonic-labs/components/minimal-agent
-            expect: "export wasi:http/handler"
+            # A host drives it through the typed run; it serves no HTTP.
+            expect: "export cosmonic:agent/run@0.4.0"
 
     defaults:
       run:

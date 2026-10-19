@@ -1,21 +1,28 @@
 package cosmonic:minimal-agent;
 
-// Every cosmonic:agent@0.4.0 interface this agent calls: the model by alias
-// (inference-types, models, chat), the tools the workload grants (tools), and
-// the conversation (session). That is the same set as the
-// `cosmonic:agent/agent` world, named one by one so the list of capabilities an
-// operator reviews reads here at a glance.
+// The interfaces this agent calls, and the one it serves.
+//
+// Imports: every cosmonic:agent@0.4.0 interface the agent calls, the model by
+// alias (inference-types, models, chat), the tools the workload grants
+// (tools), and the conversation (session). That is the same set as the
+// `cosmonic:agent/agent` world, named one by one so the list of capabilities
+// an operator reviews reads here at a glance.
+//
+// Export: `cosmonic:agent/run@0.4.0` (unstable, feature `agent-run`), the
+// typed run a host drives the agent through: a message in, events while the
+// agent works, an outcome at the end. There is no HTTP handler: the agent
+// needs no ingress, and nothing but its driver can reach it. This is the
+// `cosmonic:agent/runnable-agent` world, spelled out.
 //
 // cosmonic:agent@0.4.0 is not published yet: wkg.toml points it at
 // wit/cosmonic-agent at the root of this repository, and `wash wit fetch`
 // (which `wash build` runs) copies it into the generated, ignored wit/deps.
-//
-// wasi:http/handler@0.3.0 is exported through the `wasip3` crate, which
-// carries its own WIT, so it is not named here.
 world minimal-agent {
   import cosmonic:agent/inference-types@0.4.0;
   import cosmonic:agent/models@0.4.0;
   import cosmonic:agent/chat@0.4.0;
   import cosmonic:agent/session@0.4.0;
   import cosmonic:agent/tools@0.4.0;
+
+  export cosmonic:agent/run@0.4.0;
 }
