@@ -89,14 +89,10 @@ The host matches a `hostInterfaces` entry against one component at a time, so th
 | `timezone` | IANA zone that every `schedule.*` in the entry is read in. | UTC |
 | `max-registrations` | Schedules the workload may hold through `scheduler.register`. Declared schedules do not count. | `32` |
 | `min-interval` | Shortest interval period and shortest `once-after` delay the workload may use. Cannot be set below `10ms`. | `1s` |
-| `max-lifetime` | How long a registered schedule is held before the plugin removes it. | no limit |
-| `max-firings` | How many firings a registered schedule delivers before the plugin removes it. Retries are not counted. | no limit |
 | `retry.max-attempts` | Deliveries of one firing when the handler keeps answering `retry`, counting the first. | `3` |
 | `retry.backoff` | Delay before the first redelivery. Doubles for each one after. | `1s` |
 
 An unknown key or an unreadable value fails the bind, and the workload does not deploy. So does an entry that declares schedules or grants `scheduler` without listing `handler`. If a workload is bound with several `cosmonic:cron` entries, each `timezone` covers its own entry's `schedule.*` keys, and each of the other keys may be set by only one entry.
-
-`max-lifetime` and `max-firings` are the operator's bound on a schedule that a component registers and then stops tending. They never apply to declared schedules. Registering a name again with the schedule it already has does not reset either one. A schedule removed this way is not announced to the workload; the plugin logs it, and it is gone from `list-registrations`.
 
 ### What the plugin guarantees
 
@@ -107,14 +103,14 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 - A handler that answers `retry` gets the same firing again, with `attempt` one higher, until `retry.max-attempts`, or until the schedule's next firing is due or came due while the handler was running. A handler that answers `failed`, traps or times out is not called again for that firing.
 - An interval is a fixed rate on the monotonic clock. A late wake-up does not shift later firings.
 - A crontab firing's `scheduled-at` is the instant the expression matched, not the time the handler ran.
-- `list-registrations` gives each schedule's `next` firing as of the call, so a component need not parse a crontab to say when it runs. For a crontab or `once-at` schedule it is the `scheduled-at` that firing will carry. For an interval or `once-after` schedule it is the monotonic mark read off the system clock at that moment. It is `none` for a one-shot whose firing is already being handled, and for a registered schedule that `max-lifetime` or `max-firings` will end before it fires again. While a handler runs past its period, `next` is the occurrence after the ones being skipped.
-- A schedule that fires once is removed when its firing has been handled or given up on. It is retried like any other firing, with nothing to cut the retries short. An instant that has already passed is refused, as is one the workload's `max-lifetime` would end first. Its handler may register the same name again to be called once more.
-- If a bound workload is bound again, registered schedules the new binding does not permit are removed: all of them if `scheduler` is no longer granted, any interval below a raised `min-interval`, the newest beyond a lowered `max-registrations`, and any that have already fired a lowered `max-firings` times.
+- `list-registrations` gives each schedule's `next` firing as of the call, so a component need not parse a crontab to say when it runs. For a crontab or `once-at` schedule it is the `scheduled-at` that firing will carry. For an interval or `once-after` schedule it is the monotonic mark read off the system clock at that moment. It is `none` for a one-shot whose firing is already being handled. While a handler runs past its period, `next` is the occurrence after the ones being skipped.
+- A schedule that fires once is removed when its firing has been handled or given up on. It is retried like any other firing, with nothing to cut the retries short. An instant that has already passed is refused. Its handler may register the same name again to be called once more.
+- If a bound workload is bound again, registered schedules the new binding does not permit are removed: all of them if `scheduler` is no longer granted, any interval below a raised `min-interval`, and the newest beyond a lowered `max-registrations`. The workload is not told; the plugin logs each one, and it is gone from `list-registrations`.
 - `missed` is a lower bound. It counts firings skipped behind a running handler or an unreachable workload. It does not count what came due while the plugin itself was down: schedules are rebuilt from the present after a restart.
 
 ### Limits of this implementation
 
-- **Registered schedules live in memory.** If the plugin restarts, the host replays each workload's bind, which rebuilds the declared schedules, but schedules made with `scheduler.register` are gone. Register again when the component starts; registering a schedule that is already held changes nothing.
+- **Registered schedules live in memory.** If the plugin restarts, the host replays each workload's bind, which rebuilds the declared schedules, but schedules made with `scheduler.register` are gone. Register again when the component starts; registering a schedule that is already held changes nothing. A workload that may not be started for a while after a restart can declare an `interval` and register its schedules again from that handler.
 - **No coordination between hosts.** Each host's plugin schedules the workloads bound on that host. A workload running on three hosts is called three times per firing.
 - **Crontab parsing is [croner](https://docs.rs/croner) 4**, restricted to five fields. Beyond what `cosmonic:cron` promises it also accepts `@hourly`-style nicknames, `?` in a day field, `7` for Sunday, and the `L`, `#` and `W` modifiers. An expression that uses any of them may be refused, or read differently, by another implementer.
 - **Daylight saving is croner's rule**, which `cosmonic:cron` leaves to the implementer. A schedule at a fixed time of day fires exactly once on every day, including the two on which the clocks change: a local time that is skipped fires at the first moment after the gap (`30 2 * * *` fires at 03:00), and one that occurs twice fires the first time only. A schedule that runs through the hour, such as `*/30 * * * *`, keeps its rate in elapsed time: nothing is added for the skipped hour, and the repeated hour is run through twice. Unit tests hold the parser to this.
@@ -181,7 +177,7 @@ The schedule logic has no dependency on a clock or on the WIT bindings, so its u
 cargo test
 ```
 
-The end-to-end test, [`tests/e2e.rs`](tests/e2e.rs), builds the plugin and the ticker workload, loads both into `wash dev`, and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, one-shot schedules, the `next` each listing gives, `max-lifetime` and `max-firings`, and a crontab firing. It is ignored by a plain `cargo test`, because it needs the `wash` described under [Run](#run) and takes between 40 seconds and a minute and a half, depending on how soon the next minute starts:
+The end-to-end test, [`tests/e2e.rs`](tests/e2e.rs), builds the plugin and the ticker workload, loads both into `wash dev`, and checks declared and registered schedules, every refusal, the registration limit, retry, failure, overlap, a handler that traps, one-shot schedules, the `next` each listing gives, and a crontab firing. It is ignored by a plain `cargo test`, because it needs the `wash` described under [Run](#run) and takes between 40 seconds and a minute and a half, depending on how soon the next minute starts:
 
 ```sh
 WASH=/path/to/wash-with-plugins cargo e2e

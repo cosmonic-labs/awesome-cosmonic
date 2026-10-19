@@ -374,8 +374,6 @@ fn log_ended() {
             // A one-shot doing what it was registered to do is not news.
             EndReason::Fired => continue,
             EndReason::Undelivered => "was dropped, the workload was not running when it came due",
-            EndReason::MaxLifetime => "was removed, it was held for the workload's max-lifetime",
-            EndReason::MaxFirings => "was removed, it delivered the workload's max-firings",
             EndReason::Rebound => "was removed, the workload's new binding does not permit it",
         };
         log(format!("'{}' of workload {} {why}", ended.name, ended.workload));

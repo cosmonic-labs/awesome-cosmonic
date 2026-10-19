@@ -17,7 +17,7 @@ package cosmonic:cron@0.1.0;
 ///
 /// - The caller unregisters them.
 /// - A one-shot firing completes or exhausts its retries.
-/// - The implementer enforces a lifetime or firing limit, without notifying the
+/// - A change to the workload's grant no longer permits them, without notifying the
 ///   workload.
 /// - The caller's workload stops.
 ///
@@ -33,11 +33,11 @@ interface scheduler {
     /// Replacing a schedule takes effect immediately and restarts an `interval` period,
     /// but waits for any running handler for the same name to finish.
     ///
-    /// Registering an identical schedule preserves its timing and lifetime limits, so
-    /// components can safely register on every startup.
+    /// Registering an identical schedule preserves its timing, so components can
+    /// safely register on every startup.
     ///
-    /// A schedule whose last firing is already being handled counts as spent; its
-    /// handler can register the same name and delay for another `once-after` firing.
+    /// A one-shot whose firing is already being handled counts as spent; its handler
+    /// can register the same name and delay for another `once-after` firing.
     ///
     /// The implementer validates the schedule before returning `ok`.
     @since(version = 0.1.0)

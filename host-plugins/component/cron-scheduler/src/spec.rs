@@ -291,10 +291,6 @@ pub struct Limits {
     pub retry_max_attempts: u32,
     /// Initial retry delay in nanoseconds, doubling with each redelivery.
     pub retry_backoff: u64,
-    /// Maximum registration lifetime in nanoseconds, or `None` for no lifetime limit.
-    pub max_lifetime: Option<u64>,
-    /// Maximum firings before registration removal, or `None` for no firing limit.
-    pub max_firings: Option<u32>,
 }
 
 impl Default for Limits {
@@ -304,8 +300,6 @@ impl Default for Limits {
             min_interval: NANOS_PER_SEC,
             retry_max_attempts: 3,
             retry_backoff: NANOS_PER_SEC,
-            max_lifetime: None,
-            max_firings: None,
         }
     }
 }
@@ -447,18 +441,11 @@ impl Limits {
             }
             "retry.max-attempts" => self.retry_max_attempts = count(1)?,
             "retry.backoff" => self.retry_backoff = duration()?,
-            "max-lifetime" => {
-                self.max_lifetime = match duration()? {
-                    0 => return Err("max-lifetime: cannot be zero".to_string()),
-                    lifetime => Some(lifetime),
-                };
-            }
-            "max-firings" => self.max_firings = Some(count(1)?),
             other => {
                 return Err(format!(
                     "unknown key '{other}'; expected schedule.<name>, interval.<name>, \
-                     timezone, max-registrations, min-interval, max-lifetime, \
-                     max-firings, retry.max-attempts or retry.backoff"
+                     timezone, max-registrations, min-interval, retry.max-attempts \
+                     or retry.backoff"
                 ));
             }
         }
@@ -715,8 +702,6 @@ mod tests {
             ("min-interval", "5s"),
             ("retry.max-attempts", "5"),
             ("retry.backoff", "250ms"),
-            ("max-lifetime", "24h"),
-            ("max-firings", "500"),
         ])
         .unwrap();
         assert_eq!(
@@ -731,8 +716,6 @@ mod tests {
                 min_interval: 5 * NANOS_PER_SEC,
                 retry_max_attempts: 5,
                 retry_backoff: 250 * NANOS_PER_MILLI,
-                max_lifetime: Some(86_400 * NANOS_PER_SEC),
-                max_firings: Some(500),
             }
         );
     }
@@ -780,19 +763,19 @@ mod tests {
         // the second.
         let binding = Binding::parse_entries([
             vec![("interval.fast", "100ms")],
-            vec![("min-interval", "50ms"), ("max-firings", "7")],
+            vec![("min-interval", "50ms"), ("retry.max-attempts", "7")],
         ])
         .unwrap();
         assert_eq!(binding.declared.get("fast"), Some(&Spec::Interval(100 * NANOS_PER_MILLI)));
-        assert_eq!(binding.limits.max_firings, Some(7));
+        assert_eq!(binding.limits.retry_max_attempts, 7);
     }
 
     #[test]
     fn entries_may_not_disagree() {
         for (entries, expect) in [
             (
-                [vec![("max-firings", "5")], vec![("max-firings", "9")]],
-                "max-firings is set by more than one",
+                [vec![("retry.max-attempts", "5")], vec![("retry.max-attempts", "9")]],
+                "retry.max-attempts is set by more than one",
             ),
             (
                 [vec![("schedule.a", "0 2 * * *")], vec![("interval.a", "30s")]],
@@ -824,9 +807,6 @@ mod tests {
             (vec![("timezone", "Nowhere/Land"), ("schedule.a", "0 2 * * *")], "unknown time zone"),
             (vec![("min-interval", "1ms")], "below"),
             (vec![("retry.max-attempts", "0")], "at least 1"),
-            (vec![("max-lifetime", "0s")], "cannot be zero"),
-            (vec![("max-lifetime", "forever")], "max-lifetime"),
-            (vec![("max-firings", "0")], "at least 1"),
             (vec![("max-registrations", "many")], "not a count"),
         ] {
             let err = Binding::parse(config.clone()).unwrap_err();

@@ -66,19 +66,11 @@ world scheduler-client {
 ///     config:
 ///       max-registrations: "8"
 ///       min-interval: 5s
-///       max-lifetime: 24h
-///       max-firings: "500"
 /// ```
 ///
 /// - `max-registrations` limits concurrent registrations, excluding declared schedules.
 /// - `min-interval` sets the minimum `interval` period and `once-after` delay,
 ///   including declared intervals.
-/// - `max-lifetime` removes a registration after this duration, even if it never fired.
-/// - `max-firings` removes a registration after this many firings, excluding retries.
-///
-/// Lifetime and firing limits apply only to registered schedules.
-/// Registering an identical schedule preserves these limits; registering after
-/// removal starts them afresh.
 ///
 /// ## What the provider does with a binding
 ///
@@ -94,8 +86,6 @@ world scheduler-client {
 /// - Revoking `scheduler` removes all registrations.
 /// - Raising `min-interval` removes shorter schedules.
 /// - Lowering `max-registrations` removes the newest excess registrations.
-/// - Lowering `max-firings` removes schedules already at the limit.
-/// - `max-lifetime` restarts from the bind without extending existing deadlines.
 ///
 /// ## What a declared schedule guarantees
 ///

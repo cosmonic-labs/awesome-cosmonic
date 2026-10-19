@@ -178,8 +178,7 @@ interface types {
         /// The next due time as forecast by the implementer at the time of the call, or
         /// `none` if no firing remains.
         ///
-        /// A one-shot already being handled has no next firing, nor does a registration
-        /// that will end before its next due time.
+        /// A one-shot already being handled has no next firing.
         /// Use this forecast rather than computing one locally, since cron rules,
         /// daylight saving behavior, and clock readings depend on the implementer.
         ///
@@ -231,8 +230,7 @@ interface types {
         /// An invalid or impossible schedule, with diagnostic details.
         ///
         /// Causes include a malformed expression, unknown time zone, zero or undersized
-        /// duration, instant at or before registration time, or one-shot due after the
-        /// registration ends.
+        /// duration, or instant at or before registration time.
         invalid-schedule(string),
         /// An unsupported schedule kind, with diagnostic details.
         unsupported(string),
