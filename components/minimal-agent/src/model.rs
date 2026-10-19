@@ -89,7 +89,8 @@ pub(crate) fn text_of(message: &AssistantMessage) -> String {
         .content
         .iter()
         .filter_map(|part| match &part.content {
-            AssistantContent::Text(text) => Some(text.as_str()),
+            // A refusal is shown as the model's text, never as an answer.
+            AssistantContent::Text(text) | AssistantContent::Refusal(text) => Some(text.as_str()),
             _ => None,
         })
         .collect()
@@ -114,12 +115,14 @@ pub(crate) fn options(offered: &[ToolDef], last: bool) -> ChatOptions {
         response_format: ResponseFormat::Text,
         tools: if last { vec![] } else { offered.to_vec() },
         tool_choice: last.then_some(ToolChoice::None),
+        parallel_tool_calls: None,
         thinking: None,
         effort: None,
         meta: RequestMeta {
             trace_parent: None,
             deadline_ms: None,
             cache_key: None,
+            cache_points: vec![],
             labels: vec![],
         },
         on_unrepresentable: UnrepresentablePolicy::Adapt,

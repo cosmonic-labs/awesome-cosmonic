@@ -1,0 +1,5 @@
+# cosmonic:agent@0.4.0 is not published yet, so `wash wit fetch` (and
+# `wash build`, which runs it) reads it from this repository instead of
+# ghcr.io. Remove the override once 0.4.0 is published.
+[overrides]
+"cosmonic:agent" = { path = "../../wit/cosmonic-agent" }

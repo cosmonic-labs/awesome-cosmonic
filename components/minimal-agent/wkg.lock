@@ -3,10 +3,10 @@
 version = 1
 
 [[packages]]
-name = "cosmonic:agent"
-registry = "ghcr.io"
+name = "wasi:clocks"
+registry = "wasi.dev"
 
 [[packages.versions]]
 requirement = "=0.3.0"
 version = "0.3.0"
-digest = "sha256:fc598fb70a04437bf742883d2c06af91c9c0ec173c34b490459368b50a253983"
+digest = "sha256:59e1f4079e64ada450e19ffc9d08854c904e356ed8cc1fda36ff4fe150264db2"
