@@ -10,7 +10,7 @@ use crate::conversation::StoredResult;
 use crate::describe::Describe;
 use crate::events::Events;
 use crate::journal::{
-    Journal, OP_KIND, OP_RESULT_KIND, Op, OpResult, STEP_KIND, Step, entry, json_value,
+    Journal, OP_KIND, OP_RESULT_KIND, Op, OpResult, STEP_KIND, Step, arguments_value, entry,
 };
 
 /// What the host offers, described to the model as the provider describes
@@ -24,8 +24,7 @@ pub(crate) async fn offered_tools() -> Result<Vec<ToolDef>, ListError> {
             name: t.name,
             title: t.title,
             description: t.description,
-            input_schema: t.input_schema,
-            input_format: t.input_format,
+            input: t.input,
             output_schema: t.output_schema,
         })
         .collect())
@@ -52,7 +51,7 @@ pub(crate) async fn call_tool(
         op: &call.id,
         target: "tool",
         name: &call.name,
-        arguments: Some(json_value(&call.arguments)),
+        arguments: Some(arguments_value(&call.arguments)),
     };
     if journal.append(vec![entry(OP_KIND, &op)]).await.is_err() {
         return Called::Superseded;

@@ -2,8 +2,8 @@
 //! messages the model is given from it.
 
 use crate::agent::inference_types::{
-    AssistantContent, AssistantMessage, AssistantPart, Message, ToolCall, ToolOutput, ToolResult,
-    UserMessage, UserPart,
+    AssistantContent, AssistantMessage, AssistantPart, Message, ToolArguments, ToolCall,
+    ToolOutput, ToolResult, UserMessage, UserPart,
 };
 use crate::journal::to_json;
 use serde::{Deserialize, Serialize};
@@ -56,8 +56,44 @@ impl Turn {
 pub(crate) struct StoredCall {
     pub(crate) id: String,
     pub(crate) name: String,
-    /// JSON text, as the model wrote it.
+    /// The call's input as the model wrote it: JSON text, or raw text for a
+    /// freeform tool.
     pub(crate) arguments: String,
+    /// True when `arguments` is a freeform tool's raw text. Absent in
+    /// conversations stored before freeform tools, which were all JSON.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) freeform: bool,
+}
+
+impl From<ToolCall> for StoredCall {
+    fn from(call: ToolCall) -> Self {
+        let (arguments, freeform) = match call.arguments {
+            ToolArguments::Json(json) => (json, false),
+            ToolArguments::Text(text) => (text, true),
+        };
+        Self {
+            id: call.id,
+            name: call.name,
+            arguments,
+            freeform,
+        }
+    }
+}
+
+impl StoredCall {
+    /// The call as the model made it, to replay in the next request.
+    fn to_call(&self) -> ToolCall {
+        let arguments = if self.freeform {
+            ToolArguments::Text(self.arguments.clone())
+        } else {
+            ToolArguments::Json(self.arguments.clone())
+        };
+        ToolCall {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            arguments,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -109,13 +145,10 @@ pub(crate) fn to_messages(conversation: &Conversation, instructions: Option<&str
             "assistant" => {
                 let text =
                     (!turn.text.is_empty()).then(|| AssistantContent::Text(turn.text.clone()));
-                let calls = turn.calls.iter().map(|c| {
-                    AssistantContent::ToolUse(ToolCall {
-                        id: c.id.clone(),
-                        name: c.name.clone(),
-                        arguments: c.arguments.clone(),
-                    })
-                });
+                let calls = turn
+                    .calls
+                    .iter()
+                    .map(|c| AssistantContent::ToolUse(c.to_call()));
                 let content = text.into_iter().chain(calls);
                 Message::Assistant(AssistantMessage {
                     content: content

@@ -26,7 +26,7 @@ pub use cosmonic::agent::{
 };
 use types::{
     AssistantContent, AssistantMessage, AssistantPart, Chunk, ChunkDelta, Completion, FinishReason,
-    GenerationError, Message, RequestError, ToolCall, Usage,
+    GenerationError, Message, RequestError, ToolArguments, ToolCall, ToolInput, Usage,
 };
 
 pub const ALIAS: &str = "default";
@@ -59,6 +59,8 @@ pub struct StoredState {
 pub struct ChatRecord {
     pub messages: Vec<Message>,
     pub tools: Vec<String>,
+    /// Each offered tool's input, in the order of `tools`.
+    pub inputs: Vec<ToolInput>,
     pub effort: Option<types::Effort>,
 }
 
@@ -447,6 +449,7 @@ fn user_text(message: &Message) -> Option<String> {
 /// - a tool result: report it back as text;
 /// - its own paused reply: carry on and finish;
 /// - "echo X": a reasoning delta, a text part, and a call to `echo`;
+/// - "shout X": a call to the freeform `shout` with X as its text;
 /// - "pause": a reply that ends `pause-turn`;
 /// - "decline": a refusal part, ending `refusal`;
 /// - "json": a JSON object in a fenced code block;
@@ -474,7 +477,7 @@ fn script(messages: &[Message]) -> Script {
         let call = ToolCall {
             id: "call-1".into(),
             name: "echo".into(),
-            arguments: serde_json::json!({ "text": rest }).to_string(),
+            arguments: ToolArguments::Json(serde_json::json!({ "text": rest }).to_string()),
         };
         return Script::Reply {
             chunks: vec![
@@ -486,6 +489,20 @@ fn script(messages: &[Message]) -> Script {
                     part(AssistantContent::Text("Using the tool.".into())),
                     part(AssistantContent::ToolUse(call)),
                 ],
+                FinishReason::ToolCalls,
+            )),
+        };
+    }
+    if let Some(rest) = text.strip_prefix("shout ") {
+        let call = ToolCall {
+            id: "call-shout".into(),
+            name: "shout".into(),
+            arguments: ToolArguments::Text(rest.into()),
+        };
+        return Script::Reply {
+            chunks: vec![],
+            outcome: Ok(completion(
+                vec![part(AssistantContent::ToolUse(call))],
                 FinishReason::ToolCalls,
             )),
         };
@@ -555,6 +572,7 @@ impl<T: Send> chat::HostWithStore<T> for HasSelf<State> {
         lock(&host).chats.push(ChatRecord {
             messages: messages.clone(),
             tools: options.tools.iter().map(|t| t.name.clone()).collect(),
+            inputs: options.tools.iter().map(|t| t.input.clone()).collect(),
             effort: options.effort,
         });
         let (chunks, outcome) = match script(&messages) {
@@ -644,13 +662,12 @@ impl<T: Send> session::HostWithStore<T> for HasSelf<State> {
 
 impl tools::Host for State {}
 
-fn tool_def(name: &str, description: &str, schema: &str) -> tools::ToolDef {
+fn tool_def(name: &str, description: &str, input: ToolInput) -> tools::ToolDef {
     tool_types::ToolDef {
         name: name.into(),
         title: None,
         description: description.into(),
-        input_schema: schema.into(),
-        input_format: types::ToolInputFormat::JsonSchema,
+        input,
         output_schema: None,
         annotations: tool_types::ToolAnnotations {
             read_only: Some(true),
@@ -670,9 +687,16 @@ impl<T: Send> tools::HostWithStore<T> for HasSelf<State> {
             tool_def(
                 "echo",
                 "Echo the text back",
-                r#"{"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}"#,
+                ToolInput::JsonSchema(
+                    r#"{"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}"#.into(),
+                ),
             ),
-            tool_def("explode", "Always fails", r#"{"type": "object"}"#),
+            tool_def(
+                "explode",
+                "Always fails",
+                ToolInput::JsonSchema(r#"{"type": "object"}"#.into()),
+            ),
+            tool_def("shout", "Say the text louder", ToolInput::Freeform(None)),
         ]))
     }
 
@@ -681,15 +705,24 @@ impl<T: Send> tools::HostWithStore<T> for HasSelf<State> {
         request: ToolCall,
     ) -> wasmtime::Result<Result<tools::ToolResponse, tools::CallError>> {
         store.with(|mut s| lock(&s.get().host).tool_calls.push(request.clone()));
-        let arguments: serde_json::Value =
-            serde_json::from_str(&request.arguments).unwrap_or_default();
-        let (text, is_error) = match request.name.as_str() {
-            "echo" => (
-                arguments["text"].as_str().unwrap_or_default().to_string(),
-                false,
-            ),
-            "explode" => ("the tool exploded".to_string(), true),
-            other => {
+        let (text, is_error) = match (request.name.as_str(), &request.arguments) {
+            ("echo", ToolArguments::Json(json)) => {
+                let arguments: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+                (
+                    arguments["text"].as_str().unwrap_or_default().to_string(),
+                    false,
+                )
+            }
+            ("shout", ToolArguments::Text(text)) => (text.to_uppercase(), false),
+            ("echo" | "shout", other) => {
+                return Ok(Err(tool_types::CallError::NotDispatched(
+                    tool_types::DispatchError::InvalidArguments(format!(
+                        "wrong kind of arguments: {other:?}"
+                    )),
+                )));
+            }
+            ("explode", _) => ("the tool exploded".to_string(), true),
+            (other, _) => {
                 return Ok(Err(tool_types::CallError::NotDispatched(
                     tool_types::DispatchError::UnknownTool(other.to_string()),
                 )));
