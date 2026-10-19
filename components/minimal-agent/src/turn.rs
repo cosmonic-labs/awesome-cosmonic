@@ -538,3 +538,85 @@ async fn conclude(
         .await;
     Err(failure)
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::agent::inference_types::{AssistantPart, Attachment, AttachmentSource, ToolCall};
+
+    fn message(parts: Vec<AssistantContent>) -> AssistantMessage {
+        AssistantMessage {
+            content: parts
+                .into_iter()
+                .map(|content| AssistantPart {
+                    content,
+                    opaque: None,
+                    citations: vec![],
+                })
+                .collect(),
+        }
+    }
+
+    fn call() -> AssistantContent {
+        AssistantContent::ToolUse(ToolCall {
+            id: "c1".into(),
+            name: "echo".into(),
+            arguments: "{}".into(),
+        })
+    }
+
+    #[test]
+    fn a_reply_with_no_tool_calls_is_done() {
+        let m = message(vec![AssistantContent::Text("hi".into())]);
+        assert_eq!(reply_finish(&FinishReason::Stop, &m), Some(Finish::Done));
+    }
+
+    #[test]
+    fn a_reply_with_tool_calls_goes_on() {
+        let m = message(vec![AssistantContent::Text("using".into()), call()]);
+        assert_eq!(reply_finish(&FinishReason::ToolCalls, &m), None);
+    }
+
+    #[test]
+    fn a_refusal_or_filter_ends_the_run_whatever_it_asks_for() {
+        let asks = message(vec![call()]);
+        assert_eq!(
+            reply_finish(&FinishReason::Refusal, &asks),
+            Some(Finish::Refusal)
+        );
+        assert_eq!(
+            reply_finish(&FinishReason::ContentFilter, &asks),
+            Some(Finish::ContentFilter)
+        );
+        let refused = message(vec![AssistantContent::Refusal("no".into()), call()]);
+        assert_eq!(
+            reply_finish(&FinishReason::Stop, &refused),
+            Some(Finish::Refusal)
+        );
+    }
+
+    #[test]
+    fn structured_takes_off_a_code_fence() {
+        assert_eq!(structured(" {\"a\": 1} ").unwrap(), "{\"a\": 1}");
+        assert_eq!(structured("```json\n[1, 2]\n```").unwrap(), "[1, 2]");
+        assert_eq!(structured("```\ntrue\n```").unwrap(), "true");
+        assert!(structured("Sure! {\"a\": 1}").is_err());
+    }
+
+    #[test]
+    fn an_attachment_is_named_not_copied() {
+        let m = UserMessage {
+            content: vec![
+                UserPart::Text("look".into()),
+                UserPart::Attachment(Attachment {
+                    media_type: "image/png".into(),
+                    source: AttachmentSource::Bytes(vec![1, 2, 3]),
+                    name: None,
+                }),
+            ],
+            name: None,
+        };
+        assert_eq!(user_text(&m), "look\n[image/png attachment]");
+    }
+}

@@ -149,3 +149,50 @@ fn user_message(text: String) -> Message {
         name: None,
     })
 }
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    /// `n` exchanges: a person's message and the reply to it.
+    fn exchanges(n: usize) -> Conversation {
+        let turns = (0..n)
+            .flat_map(|i| {
+                [
+                    Turn::new("user", format!("question {i}")),
+                    Turn::new("assistant", format!("answer {i}")),
+                ]
+            })
+            .collect();
+        Conversation { turns }
+    }
+
+    #[test]
+    fn trim_drops_whole_exchanges_oldest_first() {
+        let mut c = exchanges(30);
+        c.trim();
+        assert_eq!(c.turns.len(), MAX_TURNS);
+        assert_eq!(c.turns[0].role, "user");
+        assert_eq!(c.turns[0].text, "question 10");
+    }
+
+    #[test]
+    fn halve_keeps_the_newest_half() {
+        let mut c = exchanges(4);
+        assert!(c.halve());
+        assert_eq!(c.turns.len(), 4);
+        assert_eq!(c.turns[0].text, "question 2");
+        assert!(!Conversation::default().halve());
+    }
+
+    #[test]
+    fn instructions_come_before_the_system_prompt() {
+        let messages = to_messages(&exchanges(1), Some("Be brief."));
+        assert_eq!(messages.len(), 4);
+        assert!(matches!(&messages[0], Message::System(s) if s == "Be brief."));
+        assert!(matches!(&messages[1], Message::System(s) if s == SYSTEM_PROMPT));
+        assert!(matches!(&messages[2], Message::User(_)));
+        assert!(matches!(&messages[3], Message::Assistant(_)));
+    }
+}
