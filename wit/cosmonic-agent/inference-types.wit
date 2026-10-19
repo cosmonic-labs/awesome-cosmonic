@@ -55,10 +55,10 @@ interface inference-types {
         /// The provider must support this type or report an adaptation.
         media-type: media-type,
         source: attachment-source,
-        /// A display filename, such as `report.pdf`. Untrusted text supplied
-        /// by whoever made the attachment: render it as text, never use it as
-        /// a path, and never infer the media type from it.
-        name: option<string>,
+        /// A filename shown to people, such as `report.pdf`. Untrusted text
+        /// supplied by whoever made the attachment: render it as text, never
+        /// use it as a path, and never infer the media type from it.
+        display-name: option<string>,
     }
 
     variant attachment-source {
@@ -68,13 +68,13 @@ interface inference-types {
         /// The host checks egress before fetching or forwarding the URL, and
         /// rejects fetched content whose media type differs from the declaration.
         url(string),
-        /// An opaque id the host issued for content it stores, sealed to the
-        /// session it was issued in. Agents keep it and pass it through
-        /// unchanged; the host resolves it to the bytes when it calls a model.
-        /// When a blob id exists, agents must not persist the bytes, in the
-        /// session or anywhere else. An id from another session, or one the
-        /// host no longer holds, is refused before any model is called.
-        blob(string),
+        /// An opaque id for content the host stores, issued by the host and
+        /// sealed to the session it was issued in. Agents keep it and pass it
+        /// through unchanged; the host resolves it to the bytes when it calls a
+        /// model. When a stored id exists, agents must not persist the bytes,
+        /// in the session or anywhere else. An id from another session, or one
+        /// the host no longer holds, is refused before any model is called.
+        stored(string),
     }
 
     /// A function call requested by the model.
