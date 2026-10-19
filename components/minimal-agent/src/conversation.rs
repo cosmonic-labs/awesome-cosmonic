@@ -116,6 +116,7 @@ pub(crate) fn to_messages(conversation: &Conversation) -> Vec<Message> {
                         .map(|content| AssistantPart {
                             content,
                             opaque: None,
+                            citations: vec![],
                         })
                         .collect(),
                 })

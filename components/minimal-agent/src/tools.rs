@@ -4,7 +4,8 @@
 use crate::bindings::cosmonic::agent::inference_types::{
     AssistantContent, AssistantMessage, Attachment, ToolCall, ToolDef, ToolOutput, ToolResult,
 };
-use crate::bindings::cosmonic::agent::tools::{self, CallError};
+use crate::bindings::cosmonic::agent::tool_types::{CallError, ListError};
+use crate::bindings::cosmonic::agent::tools;
 use crate::conversation::StoredResult;
 use crate::describe::Describe;
 use crate::journal::{
@@ -13,20 +14,22 @@ use crate::journal::{
 use crate::wire::{Line, send};
 use wasip3::wit_bindgen::StreamWriter;
 
-/// What the workload's tool provider offers, described to the model as the
-/// provider describes it. None when the workload grants no tools.
-pub(crate) async fn offered_tools() -> Vec<ToolDef> {
-    tools::list()
-        .await
+/// What the host offers, described to the model as the provider describes
+/// it. Empty when the workload grants no tools; an error when listing failed,
+/// which the turn records before it carries on without tools.
+pub(crate) async fn offered_tools() -> Result<Vec<ToolDef>, ListError> {
+    Ok(tools::list()
+        .await?
         .into_iter()
         .map(|t| ToolDef {
             name: t.name,
             title: t.title,
             description: t.description,
             input_schema: t.input_schema,
+            input_format: t.input_format,
             output_schema: t.output_schema,
         })
-        .collect()
+        .collect())
 }
 
 /// Make one tool call the model asked for, recorded around the dispatch: the
@@ -47,13 +50,14 @@ pub(crate) async fn call_tool(
     let (output, is_error, outcome) = match tools::call(call.clone()).await {
         Ok(r) if r.is_error => (r.output, true, "failed"),
         Ok(r) => (r.output, false, "succeeded"),
-        // Cut off before it returned: it was made, and whether it took effect
-        // is not known.
-        Err(e @ (CallError::Cancelled | CallError::TimedOut)) => {
+        // Not made: the model gets the reason, so it can try again.
+        Err(e @ CallError::NotDispatched(_)) => {
+            (vec![ToolOutput::Text(e.describe())], true, "failed")
+        }
+        // Made, or perhaps made, and whether it took effect is not known.
+        Err(e @ CallError::OutcomeUnknown(_)) => {
             (vec![ToolOutput::Text(e.describe())], true, "unresolved")
         }
-        // Not dispatched. The model gets the reason, so it can try again.
-        Err(e) => (vec![ToolOutput::Text(e.describe())], true, "failed"),
     };
     let text = output_text(&output);
     let names = [call.name.as_str()];
