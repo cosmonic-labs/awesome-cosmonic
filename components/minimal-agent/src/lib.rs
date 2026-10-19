@@ -1,57 +1,50 @@
 //! A minimal sandboxed agent on `cosmonic:agent@0.4.0`.
 //!
-//! `POST /task` with `{"task": "..."}` runs one turn: the model the host
-//! resolves for the alias `default` answers, calling the tools the workload
-//! grants as often as it needs to, and the reply streams back as NDJSON. The
-//! turn is recorded in the workload's session so the next request continues
-//! the same conversation. `GET /history` returns the steps recorded so far.
-//! Both follow the protocol the Cosmonic Desktop Agents view speaks.
+//! A host hands the agent a run through the typed `cosmonic:agent/run`
+//! export: one message from the person. The model the host resolves for the
+//! alias `default` answers, calling the tools the workload grants as often as
+//! it needs to, and the run streams its progress as events, then resolves to
+//! an outcome. Everything is recorded in the workload's session, so the next
+//! run continues the same conversation.
 //!
-//! The component names no endpoint, holds no key and opens no connection: the
-//! model, the credential, the tools and the session store all belong to the
-//! host.
+//! The component names no endpoint, holds no key, opens no connection and
+//! serves no HTTP: the model, the credential, the tools and the session store
+//! all belong to the host, and only the host can start a run.
 //!
-//! This file is the HTTP export and its routes. The rest, by responsibility:
+//! This file is the bindings and the export. The rest, by responsibility:
 //!
-//! - `turn`: a turn and its tool loop. Start reading here.
+//! - `turn`: a run and its tool loop. Start reading here.
+//! - `run`: the `run` export: checking what the driver sent, and the outcome.
+//! - `events`: what a run streams while it works, and its counters.
 //! - `model`: one model call, streamed.
 //! - `tools`: listing the workload's tools and making a call.
-//! - `journal`: the session protocol's entries, conditional commits,
-//!   recovery after a restart, and `/history`.
+//! - `journal`: the session protocol's entries, conditional commits, and
+//!   recovery after a restart.
 //! - `conversation`: the stored conversation and its caps.
-//! - `wire`: request parsing, responses, and the NDJSON lines.
 //! - `describe`: error messages a person can read.
 
+// The generated export glue is unsafe by nature; the rest of the crate is not.
+#[allow(unsafe_code)]
 mod bindings {
     wit_bindgen::generate!({
         path: "wit",
         world: "minimal-agent",
+        // `run` and its types are unstable in cosmonic:agent@0.4.0.
+        features: ["agent-run"],
         generate_all,
     });
+
+    use crate::run::Runner;
+    export!(Runner);
 }
+
+pub(crate) use bindings::cosmonic::agent;
 
 mod conversation;
 mod describe;
+mod events;
 mod journal;
 mod model;
+mod run;
 mod tools;
 mod turn;
-mod wire;
-
-use wasip3::http::types::{ErrorCode, Method, Request, Response};
-use wire::{USAGE, respond};
-
-struct Agent;
-
-impl wasip3::exports::http::handler::Guest for Agent {
-    async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        let path = request.get_path_with_query().unwrap_or_default();
-        Ok(match (request.get_method(), path.as_str()) {
-            (Method::Get, "/history") => journal::history().await,
-            (Method::Post, "/task") => turn::run_task(request).await,
-            _ => respond(404, "text/plain; charset=utf-8", USAGE.into()),
-        })
-    }
-}
-
-wasip3::http::service::export!(Agent);

@@ -1,22 +1,21 @@
-//! The workload's tools: what the provider offers, making a call the model
-//! asks for, and its output as text.
+//! The workload's tools: what the host offers, making a call the model asks
+//! for, and its output as text.
 
-use crate::bindings::cosmonic::agent::inference_types::{
+use crate::agent::inference_types::{
     AssistantContent, AssistantMessage, Attachment, ToolCall, ToolDef, ToolOutput, ToolResult,
 };
-use crate::bindings::cosmonic::agent::tool_types::{CallError, ListError};
-use crate::bindings::cosmonic::agent::tools;
+use crate::agent::tool_types::{CallError, ListError};
+use crate::agent::tools;
 use crate::conversation::StoredResult;
 use crate::describe::Describe;
+use crate::events::Events;
 use crate::journal::{
     Journal, OP_KIND, OP_RESULT_KIND, Op, OpResult, STEP_KIND, Step, entry, json_value,
 };
-use crate::wire::{Line, send};
-use wasip3::wit_bindgen::StreamWriter;
 
 /// What the host offers, described to the model as the provider describes
 /// it. Empty when the workload grants no tools; an error when listing failed,
-/// which the turn records before it carries on without tools.
+/// which the run records before it carries on without tools.
 pub(crate) async fn offered_tools() -> Result<Vec<ToolDef>, ListError> {
     Ok(tools::list()
         .await?
@@ -32,20 +31,32 @@ pub(crate) async fn offered_tools() -> Result<Vec<ToolDef>, ListError> {
         .collect())
 }
 
+/// How one tool call ended, for the run.
+pub(crate) enum Called {
+    Done(ToolResult),
+    /// The journal moved on under this run; it stops before the next call.
+    Superseded,
+    /// The driver dropped the event stream after the call returned.
+    Gone,
+}
+
 /// Make one tool call the model asked for, recorded around the dispatch: the
 /// op before, so a restart knows it may have happened, and the result after.
 pub(crate) async fn call_tool(
-    body: &mut StreamWriter<u8>,
+    events: &mut Events,
     journal: &mut Journal,
     call: &ToolCall,
-) -> Result<ToolResult, String> {
+    run: &str,
+) -> Called {
     let op = Op {
         op: &call.id,
         target: "tool",
         name: &call.name,
         arguments: Some(json_value(&call.arguments)),
     };
-    journal.append(vec![entry(OP_KIND, &op)]).await?;
+    if journal.append(vec![entry(OP_KIND, &op)]).await.is_err() {
+        return Called::Superseded;
+    }
 
     let (output, is_error, outcome) = match tools::call(call.clone()).await {
         Ok(r) if r.is_error => (r.output, true, "failed"),
@@ -66,6 +77,7 @@ pub(crate) async fn call_tool(
         text: &text,
         blocks: &["toolResponse"],
         tools: &names,
+        run: Some(run),
     };
     let entries = vec![
         entry(
@@ -77,15 +89,16 @@ pub(crate) async fn call_tool(
         ),
         entry(STEP_KIND, &response),
     ];
-    journal.record(entries).await;
-    if !send(body, &Line::Step(&response)).await {
-        return Err("the client disconnected".into());
-    }
-    Ok(ToolResult {
+    let seq = journal.record(entries).await;
+    let result = ToolResult {
         call_id: call.id.clone(),
         output,
         is_error,
-    })
+    };
+    if !events.tools(vec![result.clone()], seq).await {
+        return Called::Gone;
+    }
+    Called::Done(result)
 }
 
 /// The tool calls in a reply, in order.
