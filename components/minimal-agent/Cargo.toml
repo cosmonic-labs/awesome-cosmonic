@@ -1,7 +1,7 @@
 [package]
 name = "minimal-agent"
 edition = "2024"
-version = "0.2.0"
+version = "0.3.0"
 # The p3 component-type section needs the wasm-component-ld bundled with Rust
 # 1.94 or newer.
 rust-version = "1.94"
