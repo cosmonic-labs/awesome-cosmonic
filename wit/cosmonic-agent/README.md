@@ -57,9 +57,9 @@ agent can't fake one. When nobody is there to answer, a run ends
 
 ### What an agent sees
 
-`tools.list` returns `tool-def`s: a name, a description, and either a JSON
-Schema for the arguments (`input-format: json-schema`) or `freeform` text
-input, optionally constrained by a grammar. `tools.call` takes the model's
+`tools.list` returns `tool-def`s: a name, a description, and an `input`
+that is either a JSON Schema for the arguments (`json-schema`) or `freeform`
+text, optionally constrained by a grammar. `tools.call` takes the model's
 `tool-call` as it came, JSON arguments or raw text, and returns a
 `tool-response` with text and attachments, optional structured output, and
 `is-error` for a call that ran and failed.
