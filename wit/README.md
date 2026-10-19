@@ -131,10 +131,11 @@ The published 0.3.0 artifact remains unchanged.
   Retry with the same id and arguments only when trusted configuration authorizes
   repeat detection. Provider annotations cannot authorize replay. A not-dispatched
   result describes this attempt and does not erase effects from earlier attempts.
-- Match `attachment-source.blob`: an opaque, session-sealed id for content the
-  host stores. Pass it through unchanged and never persist the bytes behind it.
-- Set or ignore `attachment.name`, an optional display filename. It is untrusted
-  text, never a path.
+- Match `attachment-source.stored`: an opaque, session-sealed id for content
+  the host stores. Pass it through unchanged and never persist the bytes behind
+  it.
+- Set or ignore `attachment.display-name`, an optional filename shown to
+  people. It is untrusted text, never a path.
 - Match the new `finish-reason` cases `refusal`, `content-filter` and
   `pause-turn`. On `pause-turn`, append the message and call again.
 - Match `assistant-content.refusal`, the model's reason for declining. Show it
