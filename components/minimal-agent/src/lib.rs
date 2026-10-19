@@ -1,4 +1,4 @@
-//! A minimal sandboxed agent on `cosmonic:agent@0.3.0`.
+//! A minimal sandboxed agent on `cosmonic:agent@0.4.0`.
 //!
 //! `POST /task` with `{"task": "..."}` runs one turn: the model the host
 //! resolves for the alias `default` answers, calling the tools the workload

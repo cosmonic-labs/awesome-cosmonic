@@ -1,17 +1,21 @@
 package cosmonic:minimal-agent;
 
-// Every cosmonic:agent@0.3.0 interface this agent calls: the model by alias
+// Every cosmonic:agent@0.4.0 interface this agent calls: the model by alias
 // (inference-types, models, chat), the tools the workload grants (tools), and
-// the conversation (session). That is the same set as the published
+// the conversation (session). That is the same set as the
 // `cosmonic:agent/agent` world, named one by one so the list of capabilities an
 // operator reviews reads here at a glance.
+//
+// cosmonic:agent@0.4.0 is not published yet: wkg.toml points it at
+// wit/cosmonic-agent at the root of this repository, and `wash wit fetch`
+// (which `wash build` runs) copies it into the generated, ignored wit/deps.
 //
 // wasi:http/handler@0.3.0 is exported through the `wasip3` crate, which
 // carries its own WIT, so it is not named here.
 world minimal-agent {
-  import cosmonic:agent/inference-types@0.3.0;
-  import cosmonic:agent/models@0.3.0;
-  import cosmonic:agent/chat@0.3.0;
-  import cosmonic:agent/session@0.3.0;
-  import cosmonic:agent/tools@0.3.0;
+  import cosmonic:agent/inference-types@0.4.0;
+  import cosmonic:agent/models@0.4.0;
+  import cosmonic:agent/chat@0.4.0;
+  import cosmonic:agent/session@0.4.0;
+  import cosmonic:agent/tools@0.4.0;
 }

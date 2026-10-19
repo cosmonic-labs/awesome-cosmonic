@@ -1,7 +1,7 @@
 //! A turn: start it from a `/task` request, then run the tool loop. `run`
 //! is the loop: call the model, make the tool calls it asks for, repeat.
 
-use crate::bindings::cosmonic::agent::inference_types::{Message, ToolCall};
+use crate::bindings::cosmonic::agent::inference_types::{FinishReason, Message, ToolCall};
 use crate::bindings::cosmonic::agent::models;
 use crate::bindings::cosmonic::agent::session::{self, Snapshot};
 use crate::conversation::{Conversation, StoredCall, Turn, to_messages, user_message};
@@ -138,7 +138,20 @@ async fn run(
     let model = models::open(MODEL_ALIAS.to_string())
         .await
         .map_err(|e| format!("no model for the alias {MODEL_ALIAS}: {}", e.describe()))?;
-    let offered = offered_tools().await;
+    let offered = match offered_tools().await {
+        Ok(tools) => tools,
+        // Recorded for the person, and the turn goes on without tools.
+        Err(e) => {
+            let text = format!(
+                "listing the tools failed, so this turn has none: {}",
+                e.describe()
+            );
+            let error = step("error", &text);
+            journal.record(vec![entry(STEP_KIND, &error)]).await;
+            send(body, &Line::Step(&error)).await;
+            Vec::new()
+        }
+    };
 
     // This turn's messages as the model sees them, assistant messages exactly
     // as returned and tool results with their attachments, and as stored.
@@ -183,6 +196,13 @@ async fn run(
         finished.output_tokens += usage.completion_tokens.unwrap_or(0);
         finished.resolved = completion.model.clone();
         let text = text_of(&completion.message);
+        // The provider paused a long turn: hand the reply back unchanged and
+        // call again, so the model can carry on.
+        if matches!(completion.finish_reason, FinishReason::PauseTurn) && !last {
+            turns.push(Turn::new("assistant", text));
+            live.push(Message::Assistant(completion.message));
+            continue;
+        }
         // The last call offers no tools; a request made anyway is dropped.
         let calls: Vec<ToolCall> = match last {
             true => Vec::new(),
