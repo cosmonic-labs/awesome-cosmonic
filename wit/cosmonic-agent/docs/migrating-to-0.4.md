@@ -1,11 +1,11 @@
-# Migrating to cosmonic:agent 0.4.0
+# Migrating to cosmonic:agent 0.4
 
 0.4.0 is a breaking release. It adds typed chat interruption and tool dispatch
 outcomes, moves the tool records into `tool-types`, reshapes tool input and
 arguments, carries citations and refusals, and adds the unstable `run` and
 `compact` exports behind `agent-run`. Update imports from
-`cosmonic:agent@0.3.0` to `cosmonic:agent@0.4.0`. The published 0.3.0 artifact
-remains unchanged.
+`cosmonic:agent@0.3.0` to `cosmonic:agent@0.4.1`, which corrects 0.4.0's docs
+without changing its types. The published 0.3.0 artifact remains unchanged.
 
 - Rename `inference-types.capabilities` and `model-description.capabilities` to
   `supported-operations`. The flags remain `chat` and `embeddings`.

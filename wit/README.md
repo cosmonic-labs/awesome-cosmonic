@@ -73,7 +73,7 @@ Supported options can still reject values outside their range. If an option or
 message part cannot be represented, `on-unrepresentable` controls refusal or
 reported adaptation. Providers must not silently discard unsupported features.
 
-## Agent 0.4.0 migration
+## Agent 0.4 migration
 
 What changed from 0.3.0 and what a consumer updates:
 [`cosmonic-agent/docs/migrating-to-0.4.md`](cosmonic-agent/docs/migrating-to-0.4.md).
