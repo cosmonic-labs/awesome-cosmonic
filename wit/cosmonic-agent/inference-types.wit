@@ -1,7 +1,7 @@
 package cosmonic:agent@0.4.0;
 
 /// Messages, model handles, options, usage, and inference errors.
-@since(version = 0.3.0)
+@since(version = 0.4.0)
 interface inference-types {
     /// UTF-8 JSON. Producers emit valid JSON; consumers parse it defensively.
     type json = string;

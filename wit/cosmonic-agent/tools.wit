@@ -3,7 +3,7 @@ package cosmonic:agent@0.4.0;
 /// Tool discovery and calls. The same interface is imported by an agent and
 /// exported by a tool provider, so a provider links directly to an agent or
 /// sits behind a host that lists and dispatches across several providers.
-@since(version = 0.3.0)
+@since(version = 0.4.0)
 interface tools {
     use inference-types.{tool-call};
     use tool-types.{tool-def, tool-response, call-error, list-error};
