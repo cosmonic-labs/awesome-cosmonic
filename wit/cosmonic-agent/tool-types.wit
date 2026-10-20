@@ -41,6 +41,8 @@ interface tool-types {
 
     /// Tool name, description, and input offered to the model.
     record tool-def {
+        /// The model's selection key. `find_tools` and `load_tools` are reserved
+        /// for a host's own discovery tools; a provider never uses them.
         name: string,
         /// Display label; name is the model's selection key.
         title: option<string>,
