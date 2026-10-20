@@ -255,8 +255,10 @@ interface inference-types {
         cache-key: option<string>,
         /// Cache the prompt prefix ending at each of these parts, as Anthropic's
         /// cache_control breakpoints do. Tools and system text come first in the
-        /// prefix. Providers that cache automatically, or cannot place this
-        /// many breakpoints, use what they can.
+        /// prefix, so a breakpoint on the system text also covers the tools;
+        /// there is no breakpoint after the tools alone. Providers that cache
+        /// automatically, or cannot place this many breakpoints, use what they
+        /// can.
         cache-points: list<part-ref>,
         /// Key-value labels for metering and logs. Not sent to a provider.
         labels: list<tuple<string, string>>,
