@@ -66,9 +66,10 @@ a JSON Schema for the arguments (`json-schema`), text a grammar constrains
 `tool-response` with text and attachments, optional structured output, and
 `is-error` for a call that ran and failed.
 
-The agent relays what the model produced, and models produce JSON, so this
-boundary is JSON. The agent doesn't need to know any tool's types at build
-time, and the host checks every call against the tool's own definition.
+The agent relays what the model produced, JSON or text, so this boundary is
+untyped. The agent doesn't need to know any tool's types at build time. The
+host checks JSON arguments against the tool's schema; a grammar steers the
+model but is not checked, so a tool validates its own text input.
 
 Errors say what is known. `not-dispatched` means this attempt had no effect;
 `outcome-unknown` means it may have. `tools.list` fails with `list-error`

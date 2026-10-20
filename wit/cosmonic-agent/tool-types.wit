@@ -39,7 +39,7 @@ interface tool-types {
         other(string),
     }
 
-    /// Tool name, description, and argument schema offered to the model.
+    /// Tool name, description, and input offered to the model.
     record tool-def {
         name: string,
         /// Display label; name is the model's selection key.

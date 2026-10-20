@@ -37,8 +37,8 @@ reports unsupported models there.
 message in, the agent's loop of model and tool calls, a final reply out. It
 streams text deltas and whole steps while the agent works, then resolves to an
 outcome or a typed error. It replaces the `POST /task` HTTP convention as the
-contract between an agent and whatever drives it. `run`, `run-types` and the
-two worlds that use them are marked `@unstable(feature = agent-run)`: a
+contract between an agent and whatever drives it. `run`, `compact`, `run-types` and
+the four worlds that use them are marked `@unstable(feature = agent-run)`: a
 consumer enables that feature to see them. The design note for the package,
 including how tools and typed tools work, is
 [`cosmonic-agent/README.md`](cosmonic-agent/README.md).
