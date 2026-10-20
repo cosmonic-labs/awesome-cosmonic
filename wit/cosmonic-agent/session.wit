@@ -36,7 +36,7 @@ package cosmonic:agent@0.4.0;
 /// - agent.context-reset.v1: {} when unreadable saved state requires fresh context.
 /// - agent.run.v1: run, the run id, in the commit that opens a run of the
 ///   `run` interface, with the person's message; that commit's commit-id is
-///   run:<run-id>. An agent.step.v1 written by a run may carry run as well.
+///   run:<run-id>. Every agent.step.v1 written by a run carries run as well.
 /// - agent.run-result.v1: run, and outcome (done, failed, or cancelled) with
 ///   finish or error, in the commit that ends the run. finish input-required
 ///   means the run stopped for a person's answer, which starts the next run.
