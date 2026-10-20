@@ -94,7 +94,7 @@ interface inference-types {
         /// A JSON object, for a `json-schema` tool.
         json(json),
         /// The model's raw text, verbatim and never JSON parsed, for a
-        /// `freeform` tool.
+        /// `grammar` or `text` tool.
         text(string),
     }
 
@@ -350,7 +350,7 @@ interface inference-types {
 
     /// Incremental tool-call fields. arguments-delta is a fragment of the
     /// call's input as the model writes it: JSON text for a `json-schema`
-    /// tool, raw text for a `freeform` tool. The assembled call carries it as
+    /// tool, raw text for a `grammar` or `text` tool. The assembled call carries it as
     /// `tool-arguments`.
     record tool-call-delta {
         /// Zero-based call index in opening order. Join interleaved fragments by this id.
@@ -405,8 +405,8 @@ interface inference-types {
         tools,
         tool-choice,
         parallel-tool-calls,
-        /// `freeform` tool input or a grammar syntax. In `supported-options` it
-        /// advertises native freeform tools.
+        /// `grammar` or `text` tool input, or a grammar syntax. In
+        /// `supported-options` it advertises native freeform tools.
         freeform-tools,
         response-format,
         thinking,
