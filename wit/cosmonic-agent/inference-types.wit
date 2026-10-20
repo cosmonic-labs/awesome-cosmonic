@@ -173,7 +173,8 @@ interface inference-types {
         /// The quoted source text, when the provider returns it.
         cited-text: option<string>,
         /// UTF-8 byte offsets, start inclusive and end exclusive, of the text
-        /// this source supports. None means the whole part.
+        /// this source supports. None means the whole part. Providers convert
+        /// character indices, such as OpenAI's, to byte offsets.
         span: option<tuple<u32, u32>>,
     }
 
