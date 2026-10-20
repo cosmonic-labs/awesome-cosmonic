@@ -125,8 +125,7 @@ interface inference-types {
     /// Return continuation data unmodified: complete provider blocks in
     /// assistant-content.other, and modeled parts' data in assistant-part.opaque.
     ///
-    ///
-    /// Signed or encrypted reasoning that must be replayed, such as Anthropic    
+    /// Signed or encrypted reasoning that must be replayed, such as Anthropic
     /// thinking signatures and OpenAI encrypted reasoning items, travels in
     /// opaque. Redacted reasoning, such as Anthropic redacted_thinking, is a
     /// reasoning part with an empty summary and its data in opaque.
