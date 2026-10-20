@@ -1,11 +1,11 @@
 package cosmonic:agent@0.4.0;
 
 /// An agent may be handed runs. Exported by an agent and called by whatever
-/// drives it: a host (Cosmonic Desktop's daemon; a Cosmonic Control trigger
-/// that starts a run from an HTTP request or a message), the implementer of
-/// `spawn` for a spawned child, or a component that adapts another protocol
-/// onto it. Named after `wasi:cli/run`. Unstable: a consumer enables the
-/// `agent-run` feature to see it.
+/// drives it: a host (a desktop daemon, or a trigger that starts a run from
+/// an HTTP request or a message), the host of a parent agent that starts a
+/// child agent, or a component that adapts another protocol onto it. Named
+/// after `wasi:cli/run`. Unstable: a consumer enables the `agent-run`
+/// feature to see it.
 ///
 /// A run is what a chat interface calls a turn: one message from the person
 /// and everything the agent does to answer it. That is usually many model

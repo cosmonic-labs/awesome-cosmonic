@@ -55,7 +55,8 @@ world tool-provider {
 
 /// An agent that can be handed runs: the `agent` world plus the `run`
 /// export. A host drives it through the export, so it needs no ingress and
-/// no protocol of its own. The world a spawned child targets, too.
+/// no protocol of its own. The world a child agent started by another
+/// agent targets, too.
 @unstable(feature = agent-run)
 world runnable-agent {
     include agent;

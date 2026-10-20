@@ -8,8 +8,8 @@ package cosmonic:agent@0.4.0;
 /// lives in `run`, which an agent exports.
 ///
 /// A run is one unit of work: a message in, the agent's loop of model calls
-/// (steps) and tool calls, and a final reply out. On Cosmonic Desktop one run
-/// is one turn of the conversation. "Step" means one message the agent adds
+/// (steps) and tool calls, and a final reply out. In a chat UI one run is one
+/// turn of the conversation. "Step" means one message the agent adds
 /// to the conversation: a model reply, the results of the tools it called,
 /// or an error it records.
 ///
