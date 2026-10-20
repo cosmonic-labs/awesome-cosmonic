@@ -66,10 +66,11 @@ interface compact {
     /// committed. Returns `start-error` without starting and without writing,
     /// as `run` does.
     ///
-    /// Streams `compacted` once the summary is committed, then `counts`. No
-    /// `compacted` event means there was nothing to summarize. The outcome has
-    /// an empty reply, no `structured`, and finish `done`. `options.schema` does
-    /// not apply and is ignored. The summary call counts as one model call
+    /// Streams `compacted` once the summary is committed, then `counts`. The
+    /// outcome has an empty reply and no `structured`; `options.schema` does
+    /// not apply and is ignored. A compaction that summarizes, and one that
+    /// finds nothing to summarize, both finish `done`; only the first sends
+    /// `compacted`. The summary call counts as one model call
     /// against `max-steps`, `max-total-tokens` and `max-duration`, as a model
     /// call in `run` does; a limit that stops it finishes with that limit and
     /// no `compacted` event. A refused or content-filtered summary is never
