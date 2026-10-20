@@ -1,8 +1,11 @@
 # Migrating to cosmonic:agent 0.4.0
 
-The agent package adds typed chat interruption outcomes and explicit tool dispatch
-outcomes. Update imports from `cosmonic:agent@0.3.0` to `cosmonic:agent@0.4.0`.
-The published 0.3.0 artifact remains unchanged.
+0.4.0 is a breaking release. It adds typed chat interruption and tool dispatch
+outcomes, moves the tool records into `tool-types`, reshapes tool input and
+arguments, carries citations and refusals, and adds the unstable `run` and
+`compact` exports behind `agent-run`. Update imports from
+`cosmonic:agent@0.3.0` to `cosmonic:agent@0.4.0`. The published 0.3.0 artifact
+remains unchanged.
 
 - Rename `inference-types.capabilities` and `model-description.capabilities` to
   `supported-operations`. The flags remain `chat` and `embeddings`.
@@ -36,8 +39,9 @@ The published 0.3.0 artifact remains unchanged.
   it was cut off by a crash, which a driver treats as failed); a summary's
   `agent.compaction.v1` (trigger `requested`) shares that final commit with the
   replacement state. A refused or content-filtered summary is never committed:
-  no `compacted` event, the state unchanged, and the compaction ends failed. Compaction ids are a namespace apart from run ids, and a
-  driver that gets `duplicate` reads the outcome from the journal.
+  no `compacted` event, the state unchanged, and the compaction ends failed.
+  Compaction ids are a namespace apart from run ids, and a driver that gets
+  `duplicate` reads the outcome from the journal.
 - Match the new `reply-part` cases `cited-text` (text with its citations) and
   `refusal`, and the new `finish` cases `refusal` and `content-filter`. A
   driver that reads only `run-outcome` keeps citations and can tell a refusal
