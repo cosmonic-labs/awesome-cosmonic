@@ -126,7 +126,7 @@ interface run-types {
         /// Tool calls made.
         tool-calls: u32,
         /// Token usage summed over the run's model calls. None in a field
-        /// means unreported.
+        /// means unreported; a sum past the u32 maximum stays at it.
         usage: usage,
     }
 
