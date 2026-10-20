@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.0;
+package cosmonic:agent@0.4.1;
 
 /// Text embeddings with a prepared model.
 @since(version = 0.3.0)

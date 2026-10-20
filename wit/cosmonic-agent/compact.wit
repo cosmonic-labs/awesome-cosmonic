@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.0;
+package cosmonic:agent@0.4.1;
 
 /// Summarize older context now, at the driver's request, between runs.
 /// Exported by an agent that can compact on request; a driver that

@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.0;
+package cosmonic:agent@0.4.1;
 
 /// An agent may be handed runs. Exported by an agent and called by whatever
 /// drives it: a host (a desktop daemon, or a trigger that starts a run from

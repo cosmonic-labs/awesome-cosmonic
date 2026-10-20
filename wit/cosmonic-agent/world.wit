@@ -1,5 +1,5 @@
 /// Inference, authorized model access, tools, and durable agent sessions.
-package cosmonic:agent@0.4.0;
+package cosmonic:agent@0.4.1;
 
 /// A provider owns the model resources used by its inference interfaces.
 @since(version = 0.3.0)
