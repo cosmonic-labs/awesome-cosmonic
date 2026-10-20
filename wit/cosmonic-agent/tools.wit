@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.0;
+package cosmonic:agent@0.4.1;
 
 /// Tool discovery and calls. The same interface is imported by an agent and
 /// exported by a tool provider, so a provider links directly to an agent or

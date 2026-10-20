@@ -8,7 +8,7 @@ Long-lived operations use native WIT streams and futures.
 
 | Package | Contract |
 | --- | --- |
-| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.4.0 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.4.1 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
 | [`cosmonic:notify`](cosmonic-notify/notify.wit) 0.2.0 | An API for sending notifications to users and getting their responses, with actions such as links and callbacks. |
 
