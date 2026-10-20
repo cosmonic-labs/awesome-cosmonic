@@ -48,10 +48,11 @@ interface run-types {
         /// carries no structured answer (`finish.refusal`,
         /// `finish.content-filter`).
         schema: option<json>,
-        /// Model calls the agent may make in this run. The agent stops and
-        /// finishes with `max-steps` when it is reached. Advisory: the agent
-        /// counts its own steps, so a driver enforces it only where it meters
-        /// the agent's model calls itself.
+        /// Model calls the agent may make in this run, counting a call made
+        /// again after `finish-reason.pause-turn`, whose paused reply is never
+        /// the final one. The agent stops and finishes with `max-steps` when
+        /// it is reached. Advisory: the agent counts its own steps, so a driver
+        /// enforces it only where it meters the agent's model calls itself.
         max-steps: option<u32>,
         /// Tokens the agent may spend in this run, across all its model calls:
         /// the sum of `usage.prompt-tokens` and `usage.completion-tokens`. Not
