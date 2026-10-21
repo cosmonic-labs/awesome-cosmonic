@@ -190,7 +190,12 @@ pub struct Engine {
 
 impl Engine {
     pub const fn new() -> Self {
-        Self { workloads: BTreeMap::new(), epochs: 0, ended: Vec::new(), last_wall: None }
+        Self {
+            workloads: BTreeMap::new(),
+            epochs: 0,
+            ended: Vec::new(),
+            last_wall: None,
+        }
     }
 
     /// Create a schedule starting at `now`.
@@ -231,8 +236,9 @@ impl Engine {
     /// - Raising `min-interval` removes shorter schedules.
     /// - Lowering `max-registrations` removes the newest excess registrations.
     pub fn bind(&mut self, workload: &str, binding: Binding, can_register: bool, now: Now) {
-        let Workload { mut entries, busy, .. } =
-            self.workloads.remove(workload).unwrap_or_default();
+        let Workload {
+            mut entries, busy, ..
+        } = self.workloads.remove(workload).unwrap_or_default();
         entries.retain(|name, entry| {
             if entry.declared {
                 return binding.declared.get(name) == Some(&entry.spec);
@@ -259,7 +265,10 @@ impl Engine {
             .map(|(name, entry)| (entry.epoch, name.clone()))
             .collect();
         registered.sort();
-        for (_, name) in registered.into_iter().skip(binding.limits.max_registrations) {
+        for (_, name) in registered
+            .into_iter()
+            .skip(binding.limits.max_registrations)
+        {
             entries.remove(&name);
             self.ended.push(Ended {
                 workload: workload.to_string(),
@@ -276,7 +285,12 @@ impl Engine {
         }
         self.workloads.insert(
             workload.to_string(),
-            Workload { limits: binding.limits, can_register, entries, busy },
+            Workload {
+                limits: binding.limits,
+                can_register,
+                entries,
+                busy,
+            },
         );
     }
 
@@ -327,7 +341,7 @@ impl Engine {
             && *at <= now.wall
         {
             return Err(
-                SpecError::InvalidSchedule("the instant is not in the future".to_string()).into()
+                SpecError::InvalidSchedule("the instant is not in the future".to_string()).into(),
             );
         }
         if !held.entries.contains_key(name) {
@@ -386,7 +400,8 @@ impl Engine {
     }
 
     fn clock_reset(&self, now: Now) -> bool {
-        self.last_wall.is_some_and(|last| now.wall.nanos_until(last) > CLOCK_RESET)
+        self.last_wall
+            .is_some_and(|last| now.wall.nanos_until(last) > CLOCK_RESET)
     }
 
     /// Return firings due at `now`, marked in flight until [`Engine::complete`] records
@@ -424,7 +439,12 @@ impl Engine {
                         let missed = entry.missed.saturating_add(skipped);
                         entry.missed = 0;
                         entry.overtaken = false;
-                        Firing { name: name.clone(), scheduled_at, missed, attempt: 1 }
+                        Firing {
+                            name: name.clone(),
+                            scheduled_at,
+                            missed,
+                            attempt: 1,
+                        }
                     }
                     None => match &entry.retry {
                         Some(retry) if !in_flight && now.mono >= retry.due => {
@@ -437,7 +457,11 @@ impl Engine {
                     },
                 };
                 busy.insert(name.clone(), entry.epoch);
-                due.push(Dispatch { workload: workload.clone(), epoch: entry.epoch, firing });
+                due.push(Dispatch {
+                    workload: workload.clone(),
+                    epoch: entry.epoch,
+                    firing,
+                });
             }
         }
         due
@@ -500,7 +524,9 @@ impl Engine {
                 if end.is_some() {
                     Completion::Settled
                 } else {
-                    Completion::Undelivered { first: !was_unreachable }
+                    Completion::Undelivered {
+                        first: !was_unreachable,
+                    }
                 }
             }
             Outcome::Retry if dispatch.firing.attempt >= held.limits.retry_max_attempts => {
@@ -688,7 +714,10 @@ mod tests {
     fn at(secs: u64) -> Now {
         Now {
             mono: 1_000 * SEC + secs * SEC,
-            wall: Wall { seconds: T0 + secs as i64, nanoseconds: 0 },
+            wall: Wall {
+                seconds: T0 + secs as i64,
+                nanoseconds: 0,
+            },
         }
     }
 
@@ -699,7 +728,10 @@ mod tests {
     fn bound(declared: &[(&str, Spec)], can_register: bool) -> Engine {
         let mut engine = Engine::new();
         let binding = Binding {
-            declared: declared.iter().map(|(n, s)| (n.to_string(), s.clone())).collect(),
+            declared: declared
+                .iter()
+                .map(|(n, s)| (n.to_string(), s.clone()))
+                .collect(),
             limits: Limits::default(),
         };
         engine.bind("wl", binding, can_register, at(0));
@@ -714,7 +746,11 @@ mod tests {
     /// When `name` is next due, as listed at `now`.
     fn next(engine: &mut Engine, name: &str, now: Now) -> Option<Wall> {
         let listed = engine.list("wl", now).unwrap();
-        listed.into_iter().find(|r| r.name == name).unwrap_or_else(|| panic!("{name} is not listed")).next
+        listed
+            .into_iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("{name} is not listed"))
+            .next
     }
 
     fn names(due: &[Dispatch]) -> Vec<&str> {
@@ -807,7 +843,10 @@ mod tests {
         let mut engine = bound(&[("nightly", cron("0 2 * * *"))], false);
         // The monotonic clock has moved one second; the system clock was set
         // forward to 02:00.
-        let jumped = Now { mono: at(1).mono, wall: at(2 * 3600).wall };
+        let jumped = Now {
+            mono: at(1).mono,
+            wall: at(2 * 3600).wall,
+        };
         assert_eq!(names(&fire(&mut engine, jumped)), ["nightly"]);
     }
 
@@ -830,7 +869,10 @@ mod tests {
     #[test]
     fn different_schedules_fire_together() {
         let mut engine = bound(
-            &[("a", Spec::Interval(10 * SEC)), ("b", Spec::Interval(10 * SEC))],
+            &[
+                ("a", Spec::Interval(10 * SEC)),
+                ("b", Spec::Interval(10 * SEC)),
+            ],
             false,
         );
         let due = engine.poll(at(10));
@@ -844,7 +886,10 @@ mod tests {
     fn retry_redelivers_with_backoff_and_a_rising_attempt() {
         let mut engine = bound(&[("poll", Spec::Interval(60 * SEC))], false);
         let first = engine.poll(at(60));
-        assert_eq!(engine.complete(&first[0], Outcome::Retry, at(60)), Completion::RetryIn(SEC));
+        assert_eq!(
+            engine.complete(&first[0], Outcome::Retry, at(60)),
+            Completion::RetryIn(SEC)
+        );
         assert_eq!(engine.next_wake(at(60)), Some(SEC));
         assert!(engine.poll(at(60)).is_empty());
 
@@ -852,11 +897,17 @@ mod tests {
         assert_eq!(second[0].firing.attempt, 2);
         assert_eq!(second[0].firing.scheduled_at, first[0].firing.scheduled_at);
         // The backoff doubles.
-        assert_eq!(engine.complete(&second[0], Outcome::Retry, at(61)), Completion::RetryIn(2 * SEC));
+        assert_eq!(
+            engine.complete(&second[0], Outcome::Retry, at(61)),
+            Completion::RetryIn(2 * SEC)
+        );
         let third = engine.poll(at(63));
         assert_eq!(third[0].firing.attempt, 3);
         // Three attempts is the default ceiling.
-        assert_eq!(engine.complete(&third[0], Outcome::Retry, at(63)), Completion::RetriesExhausted);
+        assert_eq!(
+            engine.complete(&third[0], Outcome::Retry, at(63)),
+            Completion::RetriesExhausted
+        );
         assert!(engine.poll(at(70)).is_empty());
         // The schedule itself is unaffected.
         let next = engine.poll(at(120));
@@ -868,12 +919,18 @@ mod tests {
         let mut engine = Engine::new();
         let binding = Binding {
             declared: [("poll".to_string(), Spec::Interval(2 * SEC))].into(),
-            limits: Limits { retry_backoff: 5 * SEC, ..Limits::default() },
+            limits: Limits {
+                retry_backoff: 5 * SEC,
+                ..Limits::default()
+            },
         };
         engine.bind("wl", binding, false, at(0));
         let first = engine.poll(at(2));
         // The next firing is due in 2s; a 5s backoff would land after it.
-        assert_eq!(engine.complete(&first[0], Outcome::Retry, at(2)), Completion::RetrySuperseded);
+        assert_eq!(
+            engine.complete(&first[0], Outcome::Retry, at(2)),
+            Completion::RetrySuperseded
+        );
         let next = engine.poll(at(4));
         assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 0));
     }
@@ -882,7 +939,10 @@ mod tests {
     fn a_pending_retry_is_dropped_when_the_schedule_comes_due() {
         let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
         let first = engine.poll(at(10));
-        assert_eq!(engine.complete(&first[0], Outcome::Retry, at(18)), Completion::RetryIn(SEC));
+        assert_eq!(
+            engine.complete(&first[0], Outcome::Retry, at(18)),
+            Completion::RetryIn(SEC)
+        );
         // The loop wakes after both the retry and the next period are due.
         let due = engine.poll(at(21));
         assert_eq!(due.len(), 1);
@@ -895,7 +955,10 @@ mod tests {
     fn failed_is_not_redelivered() {
         let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
         let first = engine.poll(at(10));
-        assert_eq!(engine.complete(&first[0], Outcome::Failed, at(10)), Completion::Settled);
+        assert_eq!(
+            engine.complete(&first[0], Outcome::Failed, at(10)),
+            Completion::Settled
+        );
         assert!(engine.poll(at(15)).is_empty());
         assert_eq!(engine.poll(at(20))[0].firing.missed, 0);
     }
@@ -917,7 +980,10 @@ mod tests {
             engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)),
             Err(RegisterError::AccessDenied)
         );
-        assert_eq!(engine.unregister("wl", "poll"), Err(RegisterError::AccessDenied));
+        assert_eq!(
+            engine.unregister("wl", "poll"),
+            Err(RegisterError::AccessDenied)
+        );
         assert_eq!(engine.list("wl", at(0)), Err(RegisterError::AccessDenied));
         assert_eq!(
             engine.register("stranger", "poll", Spec::Interval(10 * SEC), at(0)),
@@ -929,7 +995,9 @@ mod tests {
     fn registered_schedules_fire_and_can_be_removed() {
         let mut engine = bound(&[], true);
         assert_eq!(engine.next_wake(at(0)), None);
-        engine.register("wl", "poll", Spec::Interval(5 * SEC), at(100)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(5 * SEC), at(100))
+            .unwrap();
         assert_eq!(engine.next_wake(at(100)), Some(5 * SEC));
         assert_eq!(names(&fire(&mut engine, at(105))), ["poll"]);
 
@@ -943,17 +1011,27 @@ mod tests {
     #[test]
     fn registering_the_same_schedule_again_keeps_its_phase() {
         let mut engine = bound(&[], true);
-        assert_eq!(engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)), Ok(true));
+        assert_eq!(
+            engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)),
+            Ok(true)
+        );
         // Accepted, and reported as having changed nothing.
-        assert_eq!(engine.register("wl", "poll", Spec::Interval(10 * SEC), at(7)), Ok(false));
+        assert_eq!(
+            engine.register("wl", "poll", Spec::Interval(10 * SEC), at(7)),
+            Ok(false)
+        );
         assert_eq!(names(&fire(&mut engine, at(10))), ["poll"]);
     }
 
     #[test]
     fn registering_a_different_schedule_restarts_it() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
-        engine.register("wl", "poll", Spec::Interval(20 * SEC), at(7)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(20 * SEC), at(7))
+            .unwrap();
         assert!(fire(&mut engine, at(10)).is_empty());
         assert!(fire(&mut engine, at(26)).is_empty());
         assert_eq!(names(&fire(&mut engine, at(27))), ["poll"]);
@@ -962,26 +1040,56 @@ mod tests {
     #[test]
     fn a_result_for_a_replaced_schedule_is_ignored() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
         let old = engine.poll(at(10));
-        engine.register("wl", "poll", Spec::Interval(5 * SEC), at(11)).unwrap();
-        assert_eq!(engine.complete(&old[0], Outcome::Retry, at(12)), Completion::Stale);
+        engine
+            .register("wl", "poll", Spec::Interval(5 * SEC), at(11))
+            .unwrap();
+        assert_eq!(
+            engine.complete(&old[0], Outcome::Retry, at(12)),
+            Completion::Stale
+        );
         // The replacement was never in flight, so it fires on time.
         assert_eq!(names(&engine.poll(at(16))), ["poll"]);
 
         engine.unbind("wl");
-        assert_eq!(engine.complete(&old[0], Outcome::Handled, at(17)), Completion::Stale);
+        assert_eq!(
+            engine.complete(&old[0], Outcome::Handled, at(17)),
+            Completion::Stale
+        );
     }
 
     #[test]
     fn register_validates_before_it_accepts() {
         let mut engine = bound(&[], true);
         let refused = |result| matches!(result, Err(RegisterError::Spec(_)));
-        assert!(refused(engine.register("wl", "", Spec::Interval(10 * SEC), at(0))));
-        assert!(refused(engine.register("wl", "bad name", Spec::Interval(10 * SEC), at(0))));
-        assert!(refused(engine.register("wl", "poll", Spec::Interval(0), at(0))));
+        assert!(refused(engine.register(
+            "wl",
+            "",
+            Spec::Interval(10 * SEC),
+            at(0)
+        )));
+        assert!(refused(engine.register(
+            "wl",
+            "bad name",
+            Spec::Interval(10 * SEC),
+            at(0)
+        )));
+        assert!(refused(engine.register(
+            "wl",
+            "poll",
+            Spec::Interval(0),
+            at(0)
+        )));
         // Shorter than the default one-second floor.
-        assert!(refused(engine.register("wl", "poll", Spec::Interval(SEC / 2), at(0))));
+        assert!(refused(engine.register(
+            "wl",
+            "poll",
+            Spec::Interval(SEC / 2),
+            at(0)
+        )));
         assert_eq!(engine.list("wl", at(0)), Ok(vec![]));
     }
 
@@ -990,25 +1098,40 @@ mod tests {
         let mut engine = Engine::new();
         let binding = Binding {
             declared: [("declared".to_string(), cron("0 2 * * *"))].into(),
-            limits: Limits { max_registrations: 2, ..Limits::default() },
+            limits: Limits {
+                max_registrations: 2,
+                ..Limits::default()
+            },
         };
         engine.bind("wl", binding, true, at(0));
-        engine.register("wl", "a", Spec::Interval(10 * SEC), at(0)).unwrap();
-        engine.register("wl", "b", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "a", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
+        engine
+            .register("wl", "b", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
         assert_eq!(
             engine.register("wl", "c", Spec::Interval(10 * SEC), at(0)),
             Err(RegisterError::LimitExceeded)
         );
         // Replacing one already held is not a new registration.
-        assert_eq!(engine.register("wl", "a", Spec::Interval(20 * SEC), at(0)), Ok(true));
+        assert_eq!(
+            engine.register("wl", "a", Spec::Interval(20 * SEC), at(0)),
+            Ok(true)
+        );
         engine.unregister("wl", "b").unwrap();
-        assert_eq!(engine.register("wl", "c", Spec::Interval(10 * SEC), at(0)), Ok(true));
+        assert_eq!(
+            engine.register("wl", "c", Spec::Interval(10 * SEC), at(0)),
+            Ok(true)
+        );
     }
 
     #[test]
     fn declared_schedules_are_listed_but_not_the_guests_to_change() {
         let mut engine = bound(&[("nightly", cron("0 2 * * *"))], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
         assert_eq!(
             engine.list("wl", at(0)).unwrap(),
             [
@@ -1030,14 +1153,19 @@ mod tests {
             engine.register("wl", "nightly", Spec::Interval(10 * SEC), at(0)),
             Err(RegisterError::AccessDenied)
         );
-        assert_eq!(engine.unregister("wl", "nightly"), Err(RegisterError::AccessDenied));
+        assert_eq!(
+            engine.unregister("wl", "nightly"),
+            Err(RegisterError::AccessDenied)
+        );
     }
 
     #[test]
     fn workloads_are_kept_apart() {
         let mut engine = bound(&[], true);
         engine.bind("other", Binding::default(), true, at(0));
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
         assert_eq!(engine.list("other", at(0)), Ok(vec![]));
         assert_eq!(engine.unregister("other", "poll"), Ok(false));
         let due = engine.poll(at(10));
@@ -1049,10 +1177,15 @@ mod tests {
     fn a_replayed_bind_keeps_timing_and_registrations() {
         let declared = [("poll", Spec::Interval(10 * SEC))];
         let mut engine = bound(&declared, true);
-        engine.register("wl", "mine", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "mine", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
 
         let binding = Binding {
-            declared: declared.iter().map(|(n, s)| (n.to_string(), s.clone())).collect(),
+            declared: declared
+                .iter()
+                .map(|(n, s)| (n.to_string(), s.clone()))
+                .collect(),
             limits: Limits::default(),
         };
         engine.bind("wl", binding, true, at(7));
@@ -1062,8 +1195,16 @@ mod tests {
 
     #[test]
     fn a_rebind_takes_the_new_declarations() {
-        let mut engine = bound(&[("old", Spec::Interval(10 * SEC)), ("kept", cron("0 2 * * *"))], true);
-        engine.register("wl", "new", Spec::Interval(10 * SEC), at(0)).unwrap();
+        let mut engine = bound(
+            &[
+                ("old", Spec::Interval(10 * SEC)),
+                ("kept", cron("0 2 * * *")),
+            ],
+            true,
+        );
+        engine
+            .register("wl", "new", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
 
         let binding = Binding {
             declared: [
@@ -1107,22 +1248,41 @@ mod tests {
     /// A workload that may register, under limits of the test's choosing.
     fn limited(limits: Limits) -> Engine {
         let mut engine = Engine::new();
-        engine.bind("wl", Binding { declared: BTreeMap::new(), limits }, true, at(0));
+        engine.bind(
+            "wl",
+            Binding {
+                declared: BTreeMap::new(),
+                limits,
+            },
+            true,
+            at(0),
+        );
         engine
     }
 
     fn ended(engine: &mut Engine) -> Vec<(String, EndReason)> {
-        engine.take_ended().into_iter().map(|e| (e.name, e.reason)).collect()
+        engine
+            .take_ended()
+            .into_iter()
+            .map(|e| (e.name, e.reason))
+            .collect()
     }
 
     fn listed(engine: &mut Engine) -> Vec<String> {
-        engine.list("wl", at(0)).unwrap().into_iter().map(|r| r.name).collect()
+        engine
+            .list("wl", at(0))
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect()
     }
 
     #[test]
     fn once_after_fires_a_single_time_and_is_gone() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         assert_eq!(engine.next_wake(at(0)), Some(10 * SEC));
         assert!(fire(&mut engine, at(9)).is_empty());
 
@@ -1131,7 +1291,10 @@ mod tests {
         assert_eq!(due[0].firing.scheduled_at, at(10).wall);
         assert_eq!((due[0].firing.missed, due[0].firing.attempt), (0, 1));
 
-        assert_eq!(ended(&mut engine), [("check".to_string(), EndReason::Fired)]);
+        assert_eq!(
+            ended(&mut engine),
+            [("check".to_string(), EndReason::Fired)]
+        );
         assert!(listed(&mut engine).is_empty());
         assert!(fire(&mut engine, at(100)).is_empty());
         assert_eq!(engine.next_wake(at(100)), None);
@@ -1140,7 +1303,9 @@ mod tests {
     #[test]
     fn once_after_is_listed_until_its_firing_settles() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         let due = engine.poll(at(10));
         // Still being handled: held, and not due a second time.
         assert_eq!(listed(&mut engine), ["check"]);
@@ -1152,7 +1317,9 @@ mod tests {
     #[test]
     fn once_after_reports_when_the_delay_elapsed_if_the_loop_wakes_late() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         let due = fire(&mut engine, at(14));
         assert_eq!(due[0].firing.scheduled_at, at(10).wall);
         assert_eq!(due[0].firing.missed, 0);
@@ -1161,7 +1328,9 @@ mod tests {
     #[test]
     fn once_at_fires_at_its_instant_on_the_system_clock() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "launch", Spec::OnceAt(at(3_600).wall), at(0)).unwrap();
+        engine
+            .register("wl", "launch", Spec::OnceAt(at(3_600).wall), at(0))
+            .unwrap();
         // A deadline on the system clock, so the sleep is capped like cron's.
         assert_eq!(engine.next_wake(at(0)), Some(WALL_RESYNC));
         assert!(fire(&mut engine, at(3_599)).is_empty());
@@ -1185,11 +1354,17 @@ mod tests {
     #[test]
     fn registering_a_pending_one_shot_again_does_not_restart_it() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(7)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(7))
+            .unwrap();
         assert_eq!(names(&fire(&mut engine, at(10))), ["check"]);
         // Once spent, the same call schedules a new one.
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(11)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(11))
+            .unwrap();
         assert!(fire(&mut engine, at(20)).is_empty());
         assert_eq!(names(&fire(&mut engine, at(21))), ["check"]);
     }
@@ -1197,72 +1372,124 @@ mod tests {
     #[test]
     fn a_one_shot_is_retried_with_nothing_to_supersede_it() {
         // A backoff this long would lose to the next firing of an interval.
-        let mut engine = limited(Limits { retry_backoff: 60 * SEC, ..Limits::default() });
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        let mut engine = limited(Limits {
+            retry_backoff: 60 * SEC,
+            ..Limits::default()
+        });
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
 
         let first = engine.poll(at(10));
-        assert_eq!(engine.complete(&first[0], Outcome::Retry, at(10)), Completion::RetryIn(60 * SEC));
+        assert_eq!(
+            engine.complete(&first[0], Outcome::Retry, at(10)),
+            Completion::RetryIn(60 * SEC)
+        );
         assert_eq!(listed(&mut engine), ["check"]);
         let second = engine.poll(at(70));
         assert_eq!(second[0].firing.attempt, 2);
         assert_eq!(second[0].firing.scheduled_at, first[0].firing.scheduled_at);
-        assert_eq!(engine.complete(&second[0], Outcome::Retry, at(70)), Completion::RetryIn(120 * SEC));
+        assert_eq!(
+            engine.complete(&second[0], Outcome::Retry, at(70)),
+            Completion::RetryIn(120 * SEC)
+        );
         let third = engine.poll(at(190));
-        assert_eq!(engine.complete(&third[0], Outcome::Retry, at(190)), Completion::RetriesExhausted);
+        assert_eq!(
+            engine.complete(&third[0], Outcome::Retry, at(190)),
+            Completion::RetriesExhausted
+        );
 
-        assert_eq!(ended(&mut engine), [("check".to_string(), EndReason::Fired)]);
+        assert_eq!(
+            ended(&mut engine),
+            [("check".to_string(), EndReason::Fired)]
+        );
         assert!(listed(&mut engine).is_empty());
     }
 
     #[test]
     fn a_one_shot_that_cannot_be_delivered_is_dropped() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         let due = engine.poll(at(10));
         engine.complete(&due[0], Outcome::Undeliverable, at(10));
-        assert_eq!(ended(&mut engine), [("check".to_string(), EndReason::Undelivered)]);
+        assert_eq!(
+            ended(&mut engine),
+            [("check".to_string(), EndReason::Undelivered)]
+        );
         assert!(engine.poll(at(100)).is_empty());
     }
 
     #[test]
     fn a_one_shot_counts_against_max_registrations_until_it_fires() {
-        let mut engine = limited(Limits { max_registrations: 1, ..Limits::default() });
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        let mut engine = limited(Limits {
+            max_registrations: 1,
+            ..Limits::default()
+        });
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         assert_eq!(
             engine.register("wl", "other", Spec::Interval(10 * SEC), at(0)),
             Err(RegisterError::LimitExceeded)
         );
         fire(&mut engine, at(10));
-        assert_eq!(engine.register("wl", "other", Spec::Interval(10 * SEC), at(10)), Ok(true));
+        assert_eq!(
+            engine.register("wl", "other", Spec::Interval(10 * SEC), at(10)),
+            Ok(true)
+        );
     }
 
     /// A reading where the two clocks are set independently, in seconds.
     fn clock(mono_secs: u64, wall_secs: i64) -> Now {
         Now {
             mono: 1_000 * SEC + mono_secs * SEC,
-            wall: Wall { seconds: T0 + wall_secs, nanoseconds: 0 },
+            wall: Wall {
+                seconds: T0 + wall_secs,
+                nanoseconds: 0,
+            },
         }
     }
 
     fn rebind(engine: &mut Engine, limits: Limits, can_register: bool, now: Now) {
-        engine.bind("wl", Binding { declared: BTreeMap::new(), limits }, can_register, now);
+        engine.bind(
+            "wl",
+            Binding {
+                declared: BTreeMap::new(),
+                limits,
+            },
+            can_register,
+            now,
+        );
     }
 
     #[test]
     fn a_one_shot_handler_can_register_itself_again() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         let first = engine.poll(at(10));
 
         // From inside the handler: the same name, the same delay. The firing
         // being handled is spent, so this is a new schedule, not a no-op.
-        assert_eq!(engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(11)), Ok(true));
-        assert_eq!(engine.complete(&first[0], Outcome::Handled, at(12)), Completion::Stale);
+        assert_eq!(
+            engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(11)),
+            Ok(true)
+        );
+        assert_eq!(
+            engine.complete(&first[0], Outcome::Handled, at(12)),
+            Completion::Stale
+        );
         assert_eq!(listed(&mut engine), ["check"]);
 
         assert!(engine.poll(at(20)).is_empty());
         let second = engine.poll(at(21));
-        assert_eq!((names(&second), second[0].firing.attempt), (vec!["check"], 1));
+        assert_eq!(
+            (names(&second), second[0].firing.attempt),
+            (vec!["check"], 1)
+        );
         engine.complete(&second[0], Outcome::Handled, at(21));
         assert!(listed(&mut engine).is_empty());
     }
@@ -1270,8 +1497,13 @@ mod tests {
     #[test]
     fn an_identical_absolute_one_shot_due_but_not_dispatched_is_unchanged() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAt(at(10).wall), at(0)).unwrap();
-        assert_eq!(engine.register("wl", "check", Spec::OnceAt(at(10).wall), at(11)), Ok(false));
+        engine
+            .register("wl", "check", Spec::OnceAt(at(10).wall), at(0))
+            .unwrap();
+        assert_eq!(
+            engine.register("wl", "check", Spec::OnceAt(at(10).wall), at(11)),
+            Ok(false)
+        );
         assert_eq!(next(&mut engine, "check", at(11)), when(10));
         let due = fire(&mut engine, at(11));
         assert_eq!(due[0].firing.scheduled_at, at(10).wall);
@@ -1285,31 +1517,47 @@ mod tests {
     fn a_retry_is_refused_once_the_schedule_came_due_during_the_attempt() {
         let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
         let first = engine.poll(at(10));
-        assert_eq!(engine.complete(&first[0], Outcome::Retry, at(16)), Completion::RetryIn(SEC));
+        assert_eq!(
+            engine.complete(&first[0], Outcome::Retry, at(16)),
+            Completion::RetryIn(SEC)
+        );
         let second = engine.poll(at(17));
         assert_eq!(second[0].firing.attempt, 2);
         // The period elapses while the second attempt is still running.
         assert!(engine.poll(at(20)).is_empty());
         // The backoff would fit before the period after that, but the firing
         // is already one behind.
-        assert_eq!(engine.complete(&second[0], Outcome::Retry, at(23)), Completion::RetrySuperseded);
+        assert_eq!(
+            engine.complete(&second[0], Outcome::Retry, at(23)),
+            Completion::RetrySuperseded
+        );
         assert!(engine.poll(at(25)).is_empty());
         let next = engine.poll(at(30));
         assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 1));
         // The fresh firing is not held to what happened to the last one.
-        assert_eq!(engine.complete(&next[0], Outcome::Retry, at(30)), Completion::RetryIn(SEC));
+        assert_eq!(
+            engine.complete(&next[0], Outcome::Retry, at(30)),
+            Completion::RetryIn(SEC)
+        );
     }
 
     #[test]
     fn replacing_a_schedule_does_not_let_it_overlap_the_firing_in_flight() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(60 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(60 * SEC), at(0))
+            .unwrap();
         let old = engine.poll(at(60));
-        engine.register("wl", "poll", Spec::Interval(SEC), at(61)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(SEC), at(61))
+            .unwrap();
         // Due at 62 and 63, with the old handler still running.
         assert!(engine.poll(at(62)).is_empty());
         assert!(engine.poll(at(63)).is_empty());
-        assert_eq!(engine.complete(&old[0], Outcome::Handled, at(64)), Completion::Stale);
+        assert_eq!(
+            engine.complete(&old[0], Outcome::Handled, at(64)),
+            Completion::Stale
+        );
         let next = engine.poll(at(65));
         assert_eq!(names(&next), ["poll"]);
         assert_eq!(next[0].firing.missed, 3);
@@ -1318,10 +1566,14 @@ mod tests {
     #[test]
     fn removing_and_registering_again_does_not_overlap_either() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(60 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(60 * SEC), at(0))
+            .unwrap();
         let old = engine.poll(at(60));
         engine.unregister("wl", "poll").unwrap();
-        engine.register("wl", "poll", Spec::Interval(SEC), at(61)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(SEC), at(61))
+            .unwrap();
         assert!(engine.poll(at(62)).is_empty());
         engine.complete(&old[0], Outcome::Handled, at(62));
         assert_eq!(names(&engine.poll(at(63))), ["poll"]);
@@ -1330,9 +1582,13 @@ mod tests {
     #[test]
     fn a_one_shot_waits_for_the_firing_in_flight_instead_of_being_lost() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "check", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         let old = engine.poll(at(10));
-        engine.register("wl", "check", Spec::OnceAfter(SEC), at(11)).unwrap();
+        engine
+            .register("wl", "check", Spec::OnceAfter(SEC), at(11))
+            .unwrap();
         // Due at 12, but the previous firing's handler is still running.
         assert!(engine.poll(at(12)).is_empty());
         // Nothing to set a timer for: the delivery finishing wakes the loop.
@@ -1398,14 +1654,19 @@ mod tests {
     #[test]
     fn a_rebind_without_the_scheduler_grant_drops_registered_schedules() {
         let mut engine = bound(&[("beat", Spec::Interval(10 * SEC))], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
 
         let binding = Binding {
             declared: [("beat".to_string(), Spec::Interval(10 * SEC))].into(),
             limits: Limits::default(),
         };
         engine.bind("wl", binding, false, at(5));
-        assert_eq!(ended(&mut engine), [("poll".to_string(), EndReason::Rebound)]);
+        assert_eq!(
+            ended(&mut engine),
+            [("poll".to_string(), EndReason::Rebound)]
+        );
         // Only the declared schedule is left to fire.
         assert_eq!(names(&fire(&mut engine, at(10))), ["beat"]);
     }
@@ -1413,11 +1674,26 @@ mod tests {
     #[test]
     fn a_rebind_with_a_higher_floor_drops_what_it_rules_out() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "fast", Spec::Interval(SEC), at(0)).unwrap();
-        engine.register("wl", "slow", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "fast", Spec::Interval(SEC), at(0))
+            .unwrap();
+        engine
+            .register("wl", "slow", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
 
-        rebind(&mut engine, Limits { min_interval: 5 * SEC, ..Limits::default() }, true, at(0));
-        assert_eq!(ended(&mut engine), [("fast".to_string(), EndReason::Rebound)]);
+        rebind(
+            &mut engine,
+            Limits {
+                min_interval: 5 * SEC,
+                ..Limits::default()
+            },
+            true,
+            at(0),
+        );
+        assert_eq!(
+            ended(&mut engine),
+            [("fast".to_string(), EndReason::Rebound)]
+        );
         assert_eq!(listed(&mut engine), ["slow"]);
     }
 
@@ -1464,19 +1740,29 @@ mod tests {
         let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
         let running = engine.poll(at(10));
         // The handler takes 12s, then asks for a retry. No poll saw 20 pass.
-        assert_eq!(engine.complete(&running[0], Outcome::Retry, at(22)), Completion::RetrySuperseded);
+        assert_eq!(
+            engine.complete(&running[0], Outcome::Retry, at(22)),
+            Completion::RetrySuperseded
+        );
         assert_eq!(engine.poll(at(30))[0].firing.missed, 1);
     }
 
     #[test]
     fn a_replacement_counts_what_it_skipped_while_it_waited() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(60 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(60 * SEC), at(0))
+            .unwrap();
         let old = engine.poll(at(60));
-        engine.register("wl", "poll", Spec::Interval(SEC), at(61)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(SEC), at(61))
+            .unwrap();
         // No poll while the old handler runs: nothing is waking the loop.
         assert_eq!(engine.next_wake(at(61)), None);
-        assert_eq!(engine.complete(&old[0], Outcome::Handled, at(64)), Completion::Stale);
+        assert_eq!(
+            engine.complete(&old[0], Outcome::Handled, at(64)),
+            Completion::Stale
+        );
         assert!(engine.poll(at(64)).is_empty());
         let next = engine.poll(at(65));
         assert_eq!((names(&next), next[0].firing.missed), (vec!["poll"], 3));
@@ -1489,10 +1775,19 @@ mod tests {
             let due = engine.poll(at(secs));
             engine.complete(&due[0], outcome, at(secs))
         };
-        assert_eq!(settle(10, Outcome::Undeliverable), Completion::Undelivered { first: true });
-        assert_eq!(settle(20, Outcome::Undeliverable), Completion::Undelivered { first: false });
+        assert_eq!(
+            settle(10, Outcome::Undeliverable),
+            Completion::Undelivered { first: true }
+        );
+        assert_eq!(
+            settle(20, Outcome::Undeliverable),
+            Completion::Undelivered { first: false }
+        );
         assert_eq!(settle(30, Outcome::Handled), Completion::Settled);
-        assert_eq!(settle(40, Outcome::Undeliverable), Completion::Undelivered { first: true });
+        assert_eq!(
+            settle(40, Outcome::Undeliverable),
+            Completion::Undelivered { first: true }
+        );
     }
 
     #[test]
@@ -1511,14 +1806,23 @@ mod tests {
     fn once_at_refuses_nanoseconds_that_are_not_a_fraction_of_a_second() {
         let mut engine = bound(&[], true);
         for seconds in [T0 - 2, T0 + 60] {
-            let instant = Wall { seconds, nanoseconds: 4_000_000_000 };
+            let instant = Wall {
+                seconds,
+                nanoseconds: 4_000_000_000,
+            };
             assert!(matches!(
                 engine.register("wl", "odd", Spec::OnceAt(instant), at(0)),
                 Err(RegisterError::Spec(SpecError::InvalidSchedule(_)))
             ));
         }
-        let instant = Wall { seconds: T0 + 60, nanoseconds: 999_999_999 };
-        assert_eq!(engine.register("wl", "fine", Spec::OnceAt(instant), at(0)), Ok(true));
+        let instant = Wall {
+            seconds: T0 + 60,
+            nanoseconds: 999_999_999,
+        };
+        assert_eq!(
+            engine.register("wl", "fine", Spec::OnceAt(instant), at(0)),
+            Ok(true)
+        );
     }
 
     #[test]
@@ -1526,16 +1830,24 @@ mod tests {
         let mut engine = bound(&[("beat", Spec::Interval(10 * SEC))], true);
         // Registered in this order, which is not the order of their names.
         for name in ["m", "z", "a", "q"] {
-            engine.register("wl", name, Spec::Interval(10 * SEC), at(0)).unwrap();
+            engine
+                .register("wl", name, Spec::Interval(10 * SEC), at(0))
+                .unwrap();
         }
         let binding = Binding {
             declared: [("beat".to_string(), Spec::Interval(10 * SEC))].into(),
-            limits: Limits { max_registrations: 2, ..Limits::default() },
+            limits: Limits {
+                max_registrations: 2,
+                ..Limits::default()
+            },
         };
         engine.bind("wl", binding, true, at(1));
         assert_eq!(
             ended(&mut engine),
-            [("a".to_string(), EndReason::Rebound), ("q".to_string(), EndReason::Rebound)]
+            [
+                ("a".to_string(), EndReason::Rebound),
+                ("q".to_string(), EndReason::Rebound)
+            ]
         );
         // The declared schedule is not one of the two.
         assert_eq!(listed(&mut engine), ["beat", "m", "z"]);
@@ -1544,9 +1856,15 @@ mod tests {
     #[test]
     fn each_kind_of_schedule_is_listed_with_when_it_is_next_due() {
         let mut engine = bound(&[("nightly", cron("0 2 * * *"))], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
-        engine.register("wl", "later", Spec::OnceAfter(20 * SEC), at(0)).unwrap();
-        engine.register("wl", "then", Spec::OnceAt(at(30).wall), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
+        engine
+            .register("wl", "later", Spec::OnceAfter(20 * SEC), at(0))
+            .unwrap();
+        engine
+            .register("wl", "then", Spec::OnceAt(at(30).wall), at(0))
+            .unwrap();
         // Asking later does not move any of them.
         for now in [at(0), at(3)] {
             assert_eq!(next(&mut engine, "nightly", now), when(2 * 3600));
@@ -1560,7 +1878,9 @@ mod tests {
     fn overdue_forecasts_match_the_firings_without_consuming_missed_counts() {
         for seconds in [135, 36_005] {
             let mut engine = bound(&[("minutely", cron("* * * * *"))], true);
-            engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
+            engine
+                .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+                .unwrap();
             let now = at(seconds);
             for _ in 0..2 {
                 assert_eq!(next(&mut engine, "minutely", now), when(seconds / 60 * 60));
@@ -1578,7 +1898,9 @@ mod tests {
     #[test]
     fn overdue_forecasts_follow_the_schedule_clock_after_a_forward_step() {
         let mut engine = bound(&[("minutely", cron("* * * * *"))], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), clock(0, 0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), clock(0, 0))
+            .unwrap();
         let now = clock(35, 130);
         assert_eq!(next(&mut engine, "minutely", now), when(120));
         assert_eq!(next(&mut engine, "poll", now), when(125));
@@ -1613,7 +1935,9 @@ mod tests {
     #[test]
     fn next_moves_on_each_time_an_interval_fires() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
         fire(&mut engine, at(10));
         assert_eq!(next(&mut engine, "poll", at(10)), when(20));
         fire(&mut engine, at(23));
@@ -1624,7 +1948,9 @@ mod tests {
     #[test]
     fn next_passes_over_what_comes_due_while_the_handler_is_running() {
         let mut engine = bound(&[("minutely", cron("* * * * *"))], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
         let due = engine.poll(at(60));
         assert_eq!(names(&due), ["minutely", "poll"]);
         // Both handlers are still running. Until their periods pass, the
@@ -1640,24 +1966,33 @@ mod tests {
     #[test]
     fn a_one_shot_has_no_next_once_its_firing_is_being_handled() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "later", Spec::OnceAfter(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "later", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
         assert_eq!(next(&mut engine, "later", at(9)), when(10));
         let due = engine.poll(at(10));
         assert_eq!(names(&due), ["later"]);
         // Still listed, until the firing settles.
         assert_eq!(next(&mut engine, "later", at(10)), None);
         // And while a redelivery of it is owed.
-        assert_eq!(engine.complete(&due[0], Outcome::Retry, at(10)), Completion::RetryIn(SEC));
+        assert_eq!(
+            engine.complete(&due[0], Outcome::Retry, at(10)),
+            Completion::RetryIn(SEC)
+        );
         assert_eq!(next(&mut engine, "later", at(10)), None);
     }
 
     #[test]
     fn a_one_shot_waiting_for_its_handler_is_listed_at_the_instant_it_was_due() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "job", Spec::Interval(10 * SEC), at(0)).unwrap();
+        engine
+            .register("wl", "job", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
         let running = engine.poll(at(10));
         // Replaced while its firing is still being handled.
-        engine.register("wl", "job", Spec::OnceAfter(5 * SEC), at(11)).unwrap();
+        engine
+            .register("wl", "job", Spec::OnceAfter(5 * SEC), at(11))
+            .unwrap();
         assert!(engine.poll(at(20)).is_empty());
         assert_eq!(next(&mut engine, "job", at(20)), when(16));
         engine.complete(&running[0], Outcome::Handled, at(21));
@@ -1668,9 +2003,14 @@ mod tests {
     #[test]
     fn next_for_an_interval_is_read_off_the_system_clock_as_it_stands() {
         let mut engine = bound(&[], true);
-        engine.register("wl", "poll", Spec::Interval(10 * SEC), clock(0, 0)).unwrap();
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), clock(0, 0))
+            .unwrap();
         // Four seconds on, the system clock has been set forward 96 more.
         // The period still has six seconds to run.
-        assert_eq!(next(&mut engine, "poll", clock(4, 100)), Some(clock(0, 106).wall));
+        assert_eq!(
+            next(&mut engine, "poll", clock(4, 100)),
+            Some(clock(0, 106).wall)
+        );
     }
 }

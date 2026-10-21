@@ -41,7 +41,9 @@ impl Fired {
     fn parse(line: &str) -> Option<Self> {
         let (_, fields) = line.split_once("ticker: fired ")?;
         let field = |key: &str| {
-            fields.split_whitespace().find_map(|field| field.strip_prefix(key)?.strip_prefix('='))
+            fields
+                .split_whitespace()
+                .find_map(|field| field.strip_prefix(key)?.strip_prefix('='))
         };
         Some(Self {
             name: field("name")?.to_string(),
@@ -92,9 +94,12 @@ struct Host {
 
 impl Host {
     fn start(wash: &str, workload: &Path) -> Self {
-        let log = std::env::temp_dir().join(format!("cron-scheduler-e2e-{}.log", std::process::id()));
+        let log =
+            std::env::temp_dir().join(format!("cron-scheduler-e2e-{}.log", std::process::id()));
         let stdout = File::create(&log).expect("create the host log");
-        let stderr = stdout.try_clone().expect("share the host log between stdout and stderr");
+        let stderr = stdout
+            .try_clone()
+            .expect("share the host log between stdout and stderr");
         let child = Command::new(wash)
             .arg("dev")
             .current_dir(workload)
@@ -103,12 +108,17 @@ impl Host {
             .stderr(stderr)
             .spawn()
             .unwrap_or_else(|err| panic!("could not run `{wash} dev`: {err}"));
-        Self { child: Some(child), log }
+        Self {
+            child: Some(child),
+            log,
+        }
     }
 
     /// Whether the host process has ended.
     fn exited(&mut self) -> bool {
-        self.child.as_mut().is_none_or(|child| !matches!(child.try_wait(), Ok(None)))
+        self.child
+            .as_mut()
+            .is_none_or(|child| !matches!(child.try_wait(), Ok(None)))
     }
 
     /// Everything the host, the plugin and the workload have logged so far.
@@ -136,7 +146,11 @@ impl Host {
 
     /// The firings of one schedule the workload has handled, oldest first.
     fn fired(&self, name: &str) -> Vec<Fired> {
-        self.log().lines().filter_map(Fired::parse).filter(|fired| fired.name == name).collect()
+        self.log()
+            .lines()
+            .filter_map(Fired::parse)
+            .filter(|fired| fired.name == name)
+            .collect()
     }
 
     /// Wait up to `seconds` for a firing of `name` that satisfies `wanted`.
@@ -149,7 +163,9 @@ impl Host {
     /// An interrupt and not a kill: the host unbinds its workloads on the way
     /// down, and the plugin dropping their schedules is one of the checks.
     fn stop(&mut self) {
-        let Some(mut child) = self.child.take() else { return };
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
         let _ = kill_process(Pid::from_child(&child), Signal::INT);
         if !wait_until(15, || !matches!(child.try_wait(), Ok(None))) {
             let _ = child.kill();
@@ -202,7 +218,9 @@ impl Ticker {
 
     /// The listing's entry for one schedule, if it is held.
     fn held(&self, name: &str) -> Option<Listed> {
-        self.listing().into_iter().find(|listed| listed.name == name)
+        self.listing()
+            .into_iter()
+            .find(|listed| listed.name == name)
     }
 }
 
@@ -243,7 +261,9 @@ impl Run {
     fn expect(&mut self, what: &str, path: &str, status: u16, text: &str) {
         let got = self.ticker.post(path);
         let ok = matches!(&got, Some((code, body)) if *code == status && body.contains(text));
-        self.check_or(what, ok, || format!("expected {status} containing '{text}', got {got:?}"));
+        self.check_or(what, ok, || {
+            format!("expected {status} containing '{text}', got {got:?}")
+        });
     }
 }
 
@@ -284,7 +304,9 @@ fn shown(next: Option<i64>) -> String {
 
 /// The system clock, in whole seconds.
 fn unix_now() -> i64 {
-    let since = SystemTime::now().duration_since(UNIX_EPOCH).expect("a clock set after 1970");
+    let since = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("a clock set after 1970");
     i64::try_from(since.as_secs()).expect("a clock set before the year 292277026596")
 }
 
@@ -318,8 +340,17 @@ fn schedules_fire_the_way_the_contract_says() {
     let ticker = Ticker::new();
     let serving = |ticker: &Ticker| matches!(ticker.get("/schedules"), Some((200, _)));
     wait_until(60, || host.exited() || serving(&ticker));
-    assert!(serving(&ticker), "the host never served the workload:\n{}", host.log());
-    let mut run = Run { host, ticker, passed: 0, failed: Vec::new() };
+    assert!(
+        serving(&ticker),
+        "the host never served the workload:\n{}",
+        host.log()
+    );
+    let mut run = Run {
+        host,
+        ticker,
+        passed: 0,
+        failed: Vec::new(),
+    };
 
     run.section("declared schedules");
     run.check(
@@ -342,11 +373,17 @@ fn schedules_fire_the_way_the_contract_says() {
     let next_beat = beat.and_then(|held| held.next);
     let next_minute = minutely.and_then(|held| held.next);
     run.check(
-        format!("an interval's next firing is within its period ({})", shown(next_beat)),
+        format!(
+            "an interval's next firing is within its period ({})",
+            shown(next_beat)
+        ),
         next_beat.is_some_and(|at| (now - 1..=now + 5).contains(&at)),
     );
     run.check_or(
-        format!("a crontab's next firing is the coming minute boundary ({})", shown(next_minute)),
+        format!(
+            "a crontab's next firing is the coming minute boundary ({})",
+            shown(next_minute)
+        ),
         next_minute.is_some_and(|at| (now - 1..=now + 60).contains(&at) && at % 60 == 0),
         || format!("listed at {now}"),
     );
@@ -358,7 +395,12 @@ fn schedules_fire_the_way_the_contract_says() {
     run.section("registering at run time");
     // The loop has just begun a five-second sleep for the next heartbeat. A
     // registration has to cut that short, or these firings arrive late.
-    run.expect("register an interval", "/register?name=poll&every-ms=500", 200, "ok");
+    run.expect(
+        "register an interval",
+        "/register?name=poll&every-ms=500",
+        200,
+        "ok",
+    );
     pause(1_700);
     let polls = run.host.fired("poll").len();
     run.check_or(
@@ -384,23 +426,68 @@ fn schedules_fire_the_way_the_contract_says() {
     );
 
     run.section("refusals");
-    run.expect("a name with a space", "/register?name=bad%20name&every-ms=1000", 400, "invalid-name");
-    run.expect("a period under min-interval", "/register?name=fast&every-ms=100", 400, "invalid-schedule");
-    run.expect("a malformed crontab", "/register?name=c&cron=not+a+cron", 400, "invalid-schedule");
-    run.expect("a crontab that never matches", "/register?name=c&cron=0+0+30+2+*", 400, "invalid-schedule");
+    run.expect(
+        "a name with a space",
+        "/register?name=bad%20name&every-ms=1000",
+        400,
+        "invalid-name",
+    );
+    run.expect(
+        "a period under min-interval",
+        "/register?name=fast&every-ms=100",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "a malformed crontab",
+        "/register?name=c&cron=not+a+cron",
+        400,
+        "invalid-schedule",
+    );
+    run.expect(
+        "a crontab that never matches",
+        "/register?name=c&cron=0+0+30+2+*",
+        400,
+        "invalid-schedule",
+    );
     run.expect(
         "an unknown time zone",
         "/register?name=c&cron=0+9+*+*+*&tz=Mars/Phobos",
         400,
         "invalid-schedule",
     );
-    run.expect("a schedule kind the plugin lacks", "/register?name=o&other=every+full+moon", 400, "unsupported");
-    run.expect("replacing a declared schedule", "/register?name=heartbeat&every-ms=1000", 403, "access-denied");
-    run.expect("removing a declared schedule", "/unregister?name=heartbeat", 403, "access-denied");
-    run.expect("removing a name no schedule could have", "/unregister?name=bad%20name", 400, "invalid-name");
+    run.expect(
+        "a schedule kind the plugin lacks",
+        "/register?name=o&other=every+full+moon",
+        400,
+        "unsupported",
+    );
+    run.expect(
+        "replacing a declared schedule",
+        "/register?name=heartbeat&every-ms=1000",
+        403,
+        "access-denied",
+    );
+    run.expect(
+        "removing a declared schedule",
+        "/unregister?name=heartbeat",
+        403,
+        "access-denied",
+    );
+    run.expect(
+        "removing a name no schedule could have",
+        "/unregister?name=bad%20name",
+        400,
+        "invalid-name",
+    );
 
     run.section("unregistering stops the calls");
-    run.expect("unregister the interval", "/unregister?name=poll", 200, "ok");
+    run.expect(
+        "unregister the interval",
+        "/unregister?name=poll",
+        200,
+        "ok",
+    );
     pause(300);
     let before = run.host.fired("poll").len();
     pause(1_500);
@@ -445,7 +532,9 @@ fn schedules_fire_the_way_the_contract_says() {
     let typed = run.ticker.held("calendar");
     run.check(
         "default typed fields preserve the text schedule in listings",
-        typed.as_ref().is_some_and(|held| held.is("registered", "cron * * * * *")),
+        typed
+            .as_ref()
+            .is_some_and(|held| held.is("registered", "cron * * * * *")),
     );
     run.expect(
         "typed registration cannot replace a declared schedule",
@@ -497,7 +586,12 @@ fn schedules_fire_the_way_the_contract_says() {
     );
 
     run.section("limits");
-    run.expect("a slow interval", "/register?name=second&every-ms=60000", 200, "ok");
+    run.expect(
+        "a slow interval",
+        "/register?name=second&every-ms=60000",
+        200,
+        "ok",
+    );
     run.expect(
         "a crontab in a named zone",
         "/register?name=ny&cron=0+9+*+*+mon-fri&tz=America/New_York",
@@ -514,13 +608,33 @@ fn schedules_fire_the_way_the_contract_says() {
                 })
         }),
     );
-    run.expect("a third registration", "/register?name=third&every-ms=60000", 200, "ok");
-    run.expect("a fourth, past max-registrations", "/register?name=fourth&every-ms=60000", 429, "limit-exceeded");
-    run.expect("typed registration shares max-registrations", "/register-calendar?name=fourth", 429, "limit-exceeded");
+    run.expect(
+        "a third registration",
+        "/register?name=third&every-ms=60000",
+        200,
+        "ok",
+    );
+    run.expect(
+        "a fourth, past max-registrations",
+        "/register?name=fourth&every-ms=60000",
+        429,
+        "limit-exceeded",
+    );
+    run.expect(
+        "typed registration shares max-registrations",
+        "/register-calendar?name=fourth",
+        429,
+        "limit-exceeded",
+    );
     run.expect("unregister", "/unregister?name=third", 200, "ok");
     run.expect("unregister again", "/unregister?name=third", 200, "ok");
     run.expect("unregister the crontab", "/unregister?name=ny", 200, "ok");
-    run.expect("unregister the slow interval", "/unregister?name=second", 200, "ok");
+    run.expect(
+        "unregister the slow interval",
+        "/unregister?name=second",
+        200,
+        "ok",
+    );
 
     run.section("retry");
     run.expect(
@@ -529,7 +643,8 @@ fn schedules_fire_the_way_the_contract_says() {
         200,
         "ok",
     );
-    run.host.wait_for_firing("retry-job", 9, |fired| fired.attempt == 3);
+    run.host
+        .wait_for_firing("retry-job", 9, |fired| fired.attempt == 3);
     let attempts: Vec<Fired> = run.host.fired("retry-job").into_iter().take(3).collect();
     run.check(
         "the firing is delivered three times",
@@ -538,24 +653,34 @@ fn schedules_fire_the_way_the_contract_says() {
     run.check(
         "every delivery carries the same scheduled-at",
         attempts.first().is_some_and(|first| {
-            attempts.iter().all(|fired| fired.scheduled_at == first.scheduled_at)
+            attempts
+                .iter()
+                .all(|fired| fired.scheduled_at == first.scheduled_at)
         }),
     );
     run.check(
         "the backoff starts at retry.backoff",
-        run.host.logged(&["'retry-job' ", " will be retried in 500ms: attempt 1 of 3"]),
+        run.host
+            .logged(&["'retry-job' ", " will be retried in 500ms: attempt 1 of 3"]),
     );
     run.check(
         "the backoff doubles",
-        run.host.logged(&["'retry-job' ", " will be retried in 1s: attempt 2 of 3"]),
+        run.host
+            .logged(&["'retry-job' ", " will be retried in 1s: attempt 2 of 3"]),
     );
     run.expect("unregister it", "/unregister?name=retry-job", 200, "ok");
 
     run.section("failure");
-    run.expect("register a handler that fails", "/register?name=fail-job&every-ms=1000", 200, "ok");
+    run.expect(
+        "register a handler that fails",
+        "/register?name=fail-job&every-ms=1000",
+        200,
+        "ok",
+    );
     run.check(
         "the failure is logged with the handler's detail",
-        run.host.wait_for(&["'fail-job' ", " failed: this schedule always fails"], 4),
+        run.host
+            .wait_for(&["'fail-job' ", " failed: this schedule always fails"], 4),
     );
     pause(1_200);
     let failures = run.host.fired("fail-job");
@@ -563,7 +688,10 @@ fn schedules_fire_the_way_the_contract_says() {
         "a failed firing is not redelivered",
         failures.iter().all(|fired| fired.attempt == 1),
     );
-    run.check("the schedule carries on after a failure", failures.len() >= 2);
+    run.check(
+        "the schedule carries on after a failure",
+        failures.len() >= 2,
+    );
     run.expect("unregister it", "/unregister?name=fail-job", 200, "ok");
 
     run.section("overlap");
@@ -578,7 +706,8 @@ fn schedules_fire_the_way_the_contract_says() {
     // and the one at 4s reports them.
     run.check(
         "skipped firings are counted in the next one",
-        run.host.wait_for_firing("slow-job", 8, |fired| fired.missed == 2),
+        run.host
+            .wait_for_firing("slow-job", 8, |fired| fired.missed == 2),
     );
     // A delivery starts with `fired` and ends with `finished`. If one began
     // before the last had ended, two of a kind would be next to each other.
@@ -607,7 +736,12 @@ fn schedules_fire_the_way_the_contract_says() {
     );
 
     run.section("a handler that traps");
-    run.expect("register a handler that panics", "/register?name=trap-job&every-ms=1000", 200, "ok");
+    run.expect(
+        "register a handler that panics",
+        "/register?name=trap-job&every-ms=1000",
+        200,
+        "ok",
+    );
     run.check(
         "the trap reaches the plugin as an error, not a crash",
         run.host.wait_for(&["'trap-job' ", " failed"], 5),
@@ -623,29 +757,54 @@ fn schedules_fire_the_way_the_contract_says() {
     );
 
     run.section("one-shot schedules");
-    run.expect("register a delay", "/register?name=once-job&once-after-ms=1000", 200, "ok");
+    run.expect(
+        "register a delay",
+        "/register?name=once-job&once-after-ms=1000",
+        200,
+        "ok",
+    );
     run.check(
         "a pending one-shot is listed",
         run.ticker
             .held("once-job")
             .is_some_and(|held| held.is("registered", "once-after 1000ms") && held.next.is_some()),
     );
-    run.expect("registering it again is accepted", "/register?name=once-job&once-after-ms=1000", 200, "ok");
-    run.check("it fires", run.host.wait_for_firing("once-job", 4, |_| true));
+    run.expect(
+        "registering it again is accepted",
+        "/register?name=once-job&once-after-ms=1000",
+        200,
+        "ok",
+    );
+    run.check(
+        "it fires",
+        run.host.wait_for_firing("once-job", 4, |_| true),
+    );
     pause(2_200);
-    run.check("it fires exactly once", run.host.fired("once-job").len() == 1);
-    run.check("it is removed once it has fired", run.ticker.held("once-job").is_none());
+    run.check(
+        "it fires exactly once",
+        run.host.fired("once-job").len() == 1,
+    );
+    run.check(
+        "it is removed once it has fired",
+        run.ticker.held("once-job").is_none(),
+    );
     let at = unix_now() + 3;
-    run.expect("register an instant", &format!("/register?name=at-job&once-at={at}"), 200, "ok");
+    run.expect(
+        "register an instant",
+        &format!("/register?name=at-job&once-at={at}"),
+        200,
+        "ok",
+    );
     run.check(
         "it is listed with that instant as its next firing",
-        run.ticker
-            .held("at-job")
-            .is_some_and(|held| held.is("registered", &format!("once-at {at}")) && held.next == Some(at)),
+        run.ticker.held("at-job").is_some_and(|held| {
+            held.is("registered", &format!("once-at {at}")) && held.next == Some(at)
+        }),
     );
     run.check(
         "it fires with that instant as scheduled-at",
-        run.host.wait_for_firing("at-job", 6, |fired| fired.scheduled_at == at),
+        run.host
+            .wait_for_firing("at-job", 6, |fired| fired.scheduled_at == at),
     );
     run.expect(
         "an instant in the past",
@@ -653,7 +812,12 @@ fn schedules_fire_the_way_the_contract_says() {
         400,
         "invalid-schedule",
     );
-    run.expect("a delay under min-interval", "/register?name=soon&once-after-ms=100", 400, "invalid-schedule");
+    run.expect(
+        "a delay under min-interval",
+        "/register?name=soon&once-after-ms=100",
+        400,
+        "invalid-schedule",
+    );
     run.expect(
         "a one-shot whose handler asks for a retry",
         "/register?name=retry-once&once-after-ms=1000",
@@ -662,11 +826,18 @@ fn schedules_fire_the_way_the_contract_says() {
     );
     run.check(
         "it is redelivered up to the third attempt",
-        run.host.wait_for_firing("retry-once", 6, |fired| fired.attempt == 3),
+        run.host
+            .wait_for_firing("retry-once", 6, |fired| fired.attempt == 3),
     );
     pause(500);
-    run.check("it was delivered three times in all", run.host.fired("retry-once").len() == 3);
-    run.check("it is removed after the last attempt", run.ticker.held("retry-once").is_none());
+    run.check(
+        "it was delivered three times in all",
+        run.host.fired("retry-once").len() == 3,
+    );
+    run.check(
+        "it is removed after the last attempt",
+        run.ticker.held("retry-once").is_none(),
+    );
     // The handler registers its own name again, with the same delay, each time.
     run.expect(
         "a one-shot whose handler registers itself again",
@@ -674,7 +845,10 @@ fn schedules_fire_the_way_the_contract_says() {
         200,
         "ok",
     );
-    run.check("it keeps being called", run.host.wait_for_firing("again-job", 3, |_| true));
+    run.check(
+        "it keeps being called",
+        run.host.wait_for_firing("again-job", 3, |_| true),
+    );
     pause(2_600);
     let again = run.host.fired("again-job").len();
     run.check_or(
@@ -686,16 +860,25 @@ fn schedules_fire_the_way_the_contract_says() {
 
     run.section("crontab (waiting for the minute to turn)");
     let turned = run.host.wait_for_firing("minutely", 65, |_| true);
-    run.check_or("a declared crontab fires", turned, || "no firing within 65s".to_string());
+    run.check_or("a declared crontab fires", turned, || {
+        "no firing within 65s".to_string()
+    });
     if let Some(first) = run.host.fired("minutely").first().cloned() {
         run.check(
-            format!("scheduled-at is the minute boundary ({})", first.scheduled_at),
+            format!(
+                "scheduled-at is the minute boundary ({})",
+                first.scheduled_at
+            ),
             first.scheduled_at % 60 == 0,
         );
         run.check(
-            format!("the firing the listing forecast arrived, with that scheduled-at ({})", shown(next_minute)),
+            format!(
+                "the firing the listing forecast arrived, with that scheduled-at ({})",
+                shown(next_minute)
+            ),
             next_minute.is_some_and(|at| {
-                run.host.wait_for_firing("minutely", 62, |fired| fired.scheduled_at == at)
+                run.host
+                    .wait_for_firing("minutely", 62, |fired| fired.scheduled_at == at)
             }),
         );
     }
@@ -712,12 +895,20 @@ fn schedules_fire_the_way_the_contract_says() {
         format!("the 5s heartbeat fired {} times over {span}s", beats.len()),
         beats.len() >= 3 && i64::try_from(beats.len()).is_ok_and(|count| count == span / 5 + 1),
     );
-    let mut gaps: Vec<i64> =
-        beats.windows(2).map(|pair| pair[1].scheduled_at - pair[0].scheduled_at).collect();
+    let mut gaps: Vec<i64> = beats
+        .windows(2)
+        .map(|pair| pair[1].scheduled_at - pair[0].scheduled_at)
+        .collect();
     gaps.sort_unstable();
     gaps.dedup();
-    run.check(format!("consecutive heartbeats are 5s apart (gaps: {gaps:?})"), gaps == [5]);
-    run.check("no heartbeat was skipped", beats.iter().all(|fired| fired.missed == 0));
+    run.check(
+        format!("consecutive heartbeats are 5s apart (gaps: {gaps:?})"),
+        gaps == [5],
+    );
+    run.check(
+        "no heartbeat was skipped",
+        beats.iter().all(|fired| fired.missed == 0),
+    );
 
     run.section("shutdown");
     run.host.stop();
@@ -726,7 +917,12 @@ fn schedules_fire_the_way_the_contract_says() {
         run.host.logged(&["cron-scheduler: unbound workload"]),
     );
 
-    let Run { host, passed, failed, .. } = run;
+    let Run {
+        host,
+        passed,
+        failed,
+        ..
+    } = run;
     assert!(
         failed.is_empty(),
         "{} of {} checks failed (host log kept at {}):\n  {}",

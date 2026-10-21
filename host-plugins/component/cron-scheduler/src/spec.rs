@@ -53,8 +53,10 @@ impl Wall {
 
     /// Nanoseconds until `later`, or zero if it is at or before `self`.
     pub fn nanos_until(self, later: Self) -> u64 {
-        let from = i128::from(self.seconds) * i128::from(NANOS_PER_SEC) + i128::from(self.nanoseconds);
-        let to = i128::from(later.seconds) * i128::from(NANOS_PER_SEC) + i128::from(later.nanoseconds);
+        let from =
+            i128::from(self.seconds) * i128::from(NANOS_PER_SEC) + i128::from(self.nanoseconds);
+        let to =
+            i128::from(later.seconds) * i128::from(NANOS_PER_SEC) + i128::from(later.nanoseconds);
         u64::try_from(to - from).unwrap_or(if to > from { u64::MAX } else { 0 })
     }
 }
@@ -160,7 +162,9 @@ impl CronSpec {
 
     /// The first matching instant after `after`, or `None` if no later match exists.
     pub fn next_after(&self, after: Wall) -> Option<Wall> {
-        let utc: DateTime<Utc> = Utc.timestamp_opt(after.seconds, after.nanoseconds).single()?;
+        let utc: DateTime<Utc> = Utc
+            .timestamp_opt(after.seconds, after.nanoseconds)
+            .single()?;
         let local = utc.with_timezone(&self.tz);
         let next = self.cron.find_next_occurrence(&local, false).ok()?;
         Some(Wall {
@@ -220,7 +224,9 @@ impl Spec {
 /// other than ASCII letters, digits, `-`, `_`, and `.`.
 pub fn validate_name(name: &str) -> Result<(), SpecError> {
     if name.is_empty() {
-        return Err(SpecError::InvalidName("a schedule name cannot be empty".to_string()));
+        return Err(SpecError::InvalidName(
+            "a schedule name cannot be empty".to_string(),
+        ));
     }
     if name.len() > MAX_NAME_LEN {
         return Err(SpecError::InvalidName(format!(
@@ -261,15 +267,26 @@ pub fn parse_duration(text: &str) -> Result<u64, String> {
             .parse()
             .map_err(|_| format!("'{text}': '{}' is too large", &rest[..digits]))?;
         rest = &rest[digits..];
-        let unit_len = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_alphabetic()).len();
+        let unit_len = rest.len()
+            - rest
+                .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+                .len();
         let scale = match &rest[..unit_len] {
             "ms" => NANOS_PER_MILLI,
             "s" => NANOS_PER_SEC,
             "m" => 60 * NANOS_PER_SEC,
             "h" => 3_600 * NANOS_PER_SEC,
             "d" => 86_400 * NANOS_PER_SEC,
-            "" => return Err(format!("'{text}': {number} needs a unit (ms, s, m, h or d)")),
-            other => return Err(format!("'{text}': unknown unit '{other}' (use ms, s, m, h or d)")),
+            "" => {
+                return Err(format!(
+                    "'{text}': {number} needs a unit (ms, s, m, h or d)"
+                ));
+            }
+            other => {
+                return Err(format!(
+                    "'{text}': unknown unit '{other}' (use ms, s, m, h or d)"
+                ));
+            }
         };
         rest = &rest[unit_len..];
         total = number
@@ -339,9 +356,7 @@ impl Binding {
     /// # Errors
     ///
     /// See [`Binding::parse_entries`].
-    pub fn parse<'a>(
-        config: impl IntoIterator<Item = (&'a str, &'a str)>,
-    ) -> Result<Self, String> {
+    pub fn parse<'a>(config: impl IntoIterator<Item = (&'a str, &'a str)>) -> Result<Self, String> {
         Self::parse_entries([config])
     }
 
@@ -361,7 +376,12 @@ impl Binding {
     {
         let entries: Vec<Vec<(&str, &str)>> = entries
             .into_iter()
-            .map(|entry| entry.into_iter().map(|(key, value)| (key, value.trim())).collect())
+            .map(|entry| {
+                entry
+                    .into_iter()
+                    .map(|(key, value)| (key, value.trim()))
+                    .collect()
+            })
             .collect();
 
         // Limits first, across every entry: a schedule in one entry has to be
@@ -393,7 +413,10 @@ impl Binding {
             Ok(())
         };
         for entry in &entries {
-            let timezone = entry.iter().find(|(key, _)| *key == "timezone").map(|(_, zone)| *zone);
+            let timezone = entry
+                .iter()
+                .find(|(key, _)| *key == "timezone")
+                .map(|(_, zone)| *zone);
             if let Some(zone) = timezone {
                 // Checked here and not only when a crontab uses it, so a
                 // misspelled zone is refused even in an entry with none.
@@ -423,7 +446,9 @@ impl Limits {
         let count = |least: u32| match value.parse::<u32>() {
             Ok(count) if count >= least => Ok(count),
             _ if least == 0 => Err(format!("{key}: '{value}' is not a count")),
-            _ => Err(format!("{key}: '{value}' is not a count of at least {least}")),
+            _ => Err(format!(
+                "{key}: '{value}' is not a count of at least {least}"
+            )),
         };
         let duration = || parse_duration(value).map_err(|e| format!("{key}: {e}"));
         match key {
@@ -475,7 +500,10 @@ mod tests {
     use super::*;
 
     fn at(seconds: i64) -> Wall {
-        Wall { seconds, nanoseconds: 0 }
+        Wall {
+            seconds,
+            nanoseconds: 0,
+        }
     }
 
     // 2026-10-12T00:00:00Z, a Monday.
@@ -492,15 +520,24 @@ mod tests {
     #[test]
     fn cron_finds_the_latest_match_at_or_before() {
         let spec = CronSpec::parse("*/15 * * * *", None).unwrap();
-        assert_eq!(spec.last_at_or_before(at(MONDAY + 900)), Some(at(MONDAY + 900)));
-        assert_eq!(spec.last_at_or_before(at(MONDAY + 1_799)), Some(at(MONDAY + 900)));
+        assert_eq!(
+            spec.last_at_or_before(at(MONDAY + 900)),
+            Some(at(MONDAY + 900))
+        );
+        assert_eq!(
+            spec.last_at_or_before(at(MONDAY + 1_799)),
+            Some(at(MONDAY + 900))
+        );
         assert_eq!(spec.last_at_or_before(at(MONDAY + 899)), Some(at(MONDAY)));
     }
 
     #[test]
     fn cron_ignores_sub_second_time_when_matching() {
         let spec = CronSpec::parse("* * * * *", None).unwrap();
-        let just_before = Wall { seconds: MONDAY + 59, nanoseconds: 999_999_999 };
+        let just_before = Wall {
+            seconds: MONDAY + 59,
+            nanoseconds: 999_999_999,
+        };
         assert_eq!(spec.next_after(just_before), Some(at(MONDAY + 60)));
     }
 
@@ -515,7 +552,10 @@ mod tests {
 
     /// An instant in 2026, given in UTC.
     fn utc(month: u32, day: u32, hour: u32, minute: u32) -> Wall {
-        at(Utc.with_ymd_and_hms(2026, month, day, hour, minute, 0).unwrap().timestamp())
+        at(Utc
+            .with_ymd_and_hms(2026, month, day, hour, minute, 0)
+            .unwrap()
+            .timestamp())
     }
 
     /// The next `count` matches after `from`.
@@ -568,7 +608,13 @@ mod tests {
         );
         assert_eq!(
             matches(&spec, utc(11, 1, 4, 30), 5),
-            [utc(11, 1, 5, 0), utc(11, 1, 5, 30), utc(11, 1, 6, 0), utc(11, 1, 6, 30), utc(11, 1, 7, 0)]
+            [
+                utc(11, 1, 5, 0),
+                utc(11, 1, 5, 30),
+                utc(11, 1, 6, 0),
+                utc(11, 1, 6, 30),
+                utc(11, 1, 7, 0)
+            ]
         );
     }
 
@@ -614,7 +660,10 @@ mod tests {
             ("0 9 * * *", Some("Mars/Olympus_Mons")),
         ] {
             assert!(
-                matches!(CronSpec::parse(expression, zone), Err(SpecError::InvalidSchedule(_))),
+                matches!(
+                    CronSpec::parse(expression, zone),
+                    Err(SpecError::InvalidSchedule(_))
+                ),
                 "{expression:?} in {zone:?} should be refused"
             );
         }
@@ -623,9 +672,9 @@ mod tests {
     #[test]
     fn cron_accepts_what_matches_only_rarely() {
         for expression in [
-            "0 0 29 2 *",  // leap days
-            "0 0 31 * *",  // seven months a year
-            "0 0 29 2 1",  // POSIX: the 29th of February, or any Monday
+            "0 0 29 2 *", // leap days
+            "0 0 31 * *", // seven months a year
+            "0 0 29 2 1", // POSIX: the 29th of February, or any Monday
             "@daily",
         ] {
             assert!(CronSpec::parse(expression, None).is_ok(), "{expression:?}");
@@ -644,7 +693,10 @@ mod tests {
                 format!("{minute} 0 30,31 feb *"),
             ] {
                 assert!(
-                    matches!(CronSpec::parse(&expression, None), Err(SpecError::InvalidSchedule(_))),
+                    matches!(
+                        CronSpec::parse(&expression, None),
+                        Err(SpecError::InvalidSchedule(_))
+                    ),
                     "{expression:?} should be refused"
                 );
             }
@@ -665,7 +717,17 @@ mod tests {
         assert_eq!(parse_duration("30s"), Ok(30 * NANOS_PER_SEC));
         assert_eq!(parse_duration(" 1h30m "), Ok(5_400 * NANOS_PER_SEC));
         assert_eq!(parse_duration("2d"), Ok(172_800 * NANOS_PER_SEC));
-        for bad in ["", "30", "s", "5 s", "1.5s", "30sec", "-5s", "99999999999999999999s", "999999999999d"] {
+        for bad in [
+            "",
+            "30",
+            "s",
+            "5 s",
+            "1.5s",
+            "30sec",
+            "-5s",
+            "99999999999999999999s",
+            "999999999999d",
+        ] {
             assert!(parse_duration(bad).is_err(), "{bad:?} should be refused");
         }
         assert_eq!(format_duration(5_400 * NANOS_PER_SEC), "90m");
@@ -675,19 +737,48 @@ mod tests {
 
     #[test]
     fn names_are_checked() {
-        for good in ["a", "nightly-report", "poll_inbox.v2", &"x".repeat(MAX_NAME_LEN)] {
+        for good in [
+            "a",
+            "nightly-report",
+            "poll_inbox.v2",
+            &"x".repeat(MAX_NAME_LEN),
+        ] {
             assert_eq!(validate_name(good), Ok(()), "{good:?}");
         }
-        for bad in ["", "has space", "slash/y", "ünï", &"x".repeat(MAX_NAME_LEN + 1)] {
-            assert!(matches!(validate_name(bad), Err(SpecError::InvalidName(_))), "{bad:?}");
+        for bad in [
+            "",
+            "has space",
+            "slash/y",
+            "ünï",
+            &"x".repeat(MAX_NAME_LEN + 1),
+        ] {
+            assert!(
+                matches!(validate_name(bad), Err(SpecError::InvalidName(_))),
+                "{bad:?}"
+            );
         }
     }
 
     #[test]
     fn wall_arithmetic_borrows_across_the_second() {
-        let t = Wall { seconds: 10, nanoseconds: 100 };
-        assert_eq!(t.minus_nanos(200), Wall { seconds: 9, nanoseconds: 999_999_900 });
-        assert_eq!(at(-1).minus_nanos(1), Wall { seconds: -2, nanoseconds: 999_999_999 });
+        let t = Wall {
+            seconds: 10,
+            nanoseconds: 100,
+        };
+        assert_eq!(
+            t.minus_nanos(200),
+            Wall {
+                seconds: 9,
+                nanoseconds: 999_999_900
+            }
+        );
+        assert_eq!(
+            at(-1).minus_nanos(1),
+            Wall {
+                seconds: -2,
+                nanoseconds: 999_999_999
+            }
+        );
         assert_eq!(at(5).nanos_until(at(7)), 2 * NANOS_PER_SEC);
         assert_eq!(at(7).nanos_until(at(5)), 0);
     }
@@ -706,9 +797,14 @@ mod tests {
         .unwrap();
         assert_eq!(
             binding.declared.get("nightly"),
-            Some(&Spec::Cron(CronSpec::parse("0 2 * * *", Some("Europe/Berlin")).unwrap()))
+            Some(&Spec::Cron(
+                CronSpec::parse("0 2 * * *", Some("Europe/Berlin")).unwrap()
+            ))
         );
-        assert_eq!(binding.declared.get("poll"), Some(&Spec::Interval(30 * NANOS_PER_SEC)));
+        assert_eq!(
+            binding.declared.get("poll"),
+            Some(&Spec::Interval(30 * NANOS_PER_SEC))
+        );
         assert_eq!(
             binding.limits,
             Limits {
@@ -722,7 +818,8 @@ mod tests {
 
     #[test]
     fn binding_applies_the_zone_whatever_order_the_keys_arrive_in() {
-        let binding = Binding::parse([("timezone", "Asia/Tokyo"), ("schedule.a", "0 9 * * *")]).unwrap();
+        let binding =
+            Binding::parse([("timezone", "Asia/Tokyo"), ("schedule.a", "0 9 * * *")]).unwrap();
         let Some(Spec::Cron(spec)) = binding.declared.get("a") else {
             panic!("schedule.a should be a cron schedule");
         };
@@ -736,14 +833,20 @@ mod tests {
             vec![("timezone", "America/New_Yrok"), ("interval.poll", "30s")],
         ] {
             let err = Binding::parse(config.clone()).unwrap_err();
-            assert!(err.contains("timezone") && err.contains("unknown time zone"), "{config:?}: {err}");
+            assert!(
+                err.contains("timezone") && err.contains("unknown time zone"),
+                "{config:?}: {err}"
+            );
         }
     }
 
     #[test]
     fn each_entry_reads_its_crontabs_in_its_own_zone() {
         let binding = Binding::parse_entries([
-            vec![("schedule.report", "0 9 * * *"), ("timezone", "America/New_York")],
+            vec![
+                ("schedule.report", "0 9 * * *"),
+                ("timezone", "America/New_York"),
+            ],
             vec![("schedule.sync", "0 9 * * *"), ("timezone", "Asia/Tokyo")],
             vec![("schedule.plain", "0 9 * * *")],
         ])
@@ -766,7 +869,10 @@ mod tests {
             vec![("min-interval", "50ms"), ("retry.max-attempts", "7")],
         ])
         .unwrap();
-        assert_eq!(binding.declared.get("fast"), Some(&Spec::Interval(100 * NANOS_PER_MILLI)));
+        assert_eq!(
+            binding.declared.get("fast"),
+            Some(&Spec::Interval(100 * NANOS_PER_MILLI))
+        );
         assert_eq!(binding.limits.retry_max_attempts, 7);
     }
 
@@ -774,11 +880,17 @@ mod tests {
     fn entries_may_not_disagree() {
         for (entries, expect) in [
             (
-                [vec![("retry.max-attempts", "5")], vec![("retry.max-attempts", "9")]],
+                [
+                    vec![("retry.max-attempts", "5")],
+                    vec![("retry.max-attempts", "9")],
+                ],
                 "retry.max-attempts is set by more than one",
             ),
             (
-                [vec![("schedule.a", "0 2 * * *")], vec![("interval.a", "30s")]],
+                [
+                    vec![("schedule.a", "0 2 * * *")],
+                    vec![("interval.a", "30s")],
+                ],
                 "declared more than once",
             ),
         ] {
@@ -803,14 +915,23 @@ mod tests {
             (vec![("interval.poll", "30")], "needs a unit"),
             (vec![("interval.poll", "0s")], "cannot be zero"),
             (vec![("interval.poll", "100ms")], "shorter than"),
-            (vec![("schedule.x", "0 2 * * *"), ("interval.x", "30s")], "more than once"),
-            (vec![("timezone", "Nowhere/Land"), ("schedule.a", "0 2 * * *")], "unknown time zone"),
+            (
+                vec![("schedule.x", "0 2 * * *"), ("interval.x", "30s")],
+                "more than once",
+            ),
+            (
+                vec![("timezone", "Nowhere/Land"), ("schedule.a", "0 2 * * *")],
+                "unknown time zone",
+            ),
             (vec![("min-interval", "1ms")], "below"),
             (vec![("retry.max-attempts", "0")], "at least 1"),
             (vec![("max-registrations", "many")], "not a count"),
         ] {
             let err = Binding::parse(config.clone()).unwrap_err();
-            assert!(err.contains(expect), "{config:?} gave {err:?}, expected {expect:?}");
+            assert!(
+                err.contains(expect),
+                "{config:?} gave {err:?}, expected {expect:?}"
+            );
         }
     }
 
@@ -825,7 +946,11 @@ mod tests {
 
     #[test]
     fn binding_min_interval_admits_a_faster_declared_poll() {
-        let binding = Binding::parse([("interval.fast", "100ms"), ("min-interval", "50ms")]).unwrap();
-        assert_eq!(binding.declared.get("fast"), Some(&Spec::Interval(100 * NANOS_PER_MILLI)));
+        let binding =
+            Binding::parse([("interval.fast", "100ms"), ("min-interval", "50ms")]).unwrap();
+        assert_eq!(
+            binding.declared.get("fast"),
+            Some(&Spec::Interval(100 * NANOS_PER_MILLI))
+        );
     }
 }

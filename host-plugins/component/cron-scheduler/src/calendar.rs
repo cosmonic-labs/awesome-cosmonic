@@ -64,10 +64,10 @@ impl Calendar {
     pub fn compile(&self) -> Result<CronSpec, SpecError> {
         let minutes = selector("minutes", &self.minutes, 0, 59)?;
         let hours = selector("hours", &self.hours, 0, 23)?;
-        let days = self
-            .days_of_month
-            .as_ref()
-            .map_or_else(|| Ok("*".to_string()), |parts| selector("days-of-month", parts, 1, 31))?;
+        let days = self.days_of_month.as_ref().map_or_else(
+            || Ok("*".to_string()),
+            |parts| selector("days-of-month", parts, 1, 31),
+        )?;
         let weekdays = self.weekdays.as_ref().map_or_else(
             || Ok("*".to_string()),
             |days| named("weekdays", days.iter().map(|day| *day as u8)),
@@ -92,7 +92,11 @@ fn named(field: &str, values: impl Iterator<Item = u8>) -> Result<String, SpecEr
     if values.is_empty() {
         return Err(invalid(field, "selection cannot be empty"));
     }
-    Ok(values.into_iter().map(|value| value.to_string()).collect::<Vec<_>>().join(","))
+    Ok(values
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(","))
 }
 
 fn selector(field: &str, parts: &[Part], min: u8, max: u8) -> Result<String, SpecError> {
@@ -113,7 +117,10 @@ fn selector(field: &str, parts: &[Part], min: u8, max: u8) -> Result<String, Spe
             Part::Stepped { start, end, step } => (start, end, step),
         };
         if start < min || end > max || start > end {
-            return Err(invalid(field, &format!("range must be ordered and within {min}-{max}")));
+            return Err(invalid(
+                field,
+                &format!("range must be ordered and within {min}-{max}"),
+            ));
         }
         if step == 0 {
             return Err(invalid(field, "step must be positive"));
@@ -121,7 +128,11 @@ fn selector(field: &str, parts: &[Part], min: u8, max: u8) -> Result<String, Spe
         values.extend((start..=end).step_by(usize::from(step)));
     }
     // A wildcard must remain distinct from a restricted day field covering all values.
-    if any { Ok("*".to_string()) } else { named(field, values.into_iter()) }
+    if any {
+        Ok("*".to_string())
+    } else {
+        named(field, values.into_iter())
+    }
 }
 
 #[cfg(test)]
@@ -145,7 +156,10 @@ mod tests {
     }
 
     fn wall(seconds: i64) -> Wall {
-        Wall { seconds, nanoseconds: 0 }
+        Wall {
+            seconds,
+            nanoseconds: 0,
+        }
     }
 
     #[test]
@@ -170,23 +184,60 @@ mod tests {
     #[test]
     fn selectors_normalize_order_duplicates_and_overlapping_ranges() {
         let calendar = Calendar {
-            minutes: vec![Part::At(30), Part::Stepped { start: 0, end: 45, step: 15 }, Part::At(0)],
+            minutes: vec![
+                Part::At(30),
+                Part::Stepped {
+                    start: 0,
+                    end: 45,
+                    step: 15,
+                },
+                Part::At(0),
+            ],
             months: Some(vec![Month::December, Month::January, Month::December]),
             weekdays: Some(vec![Weekday::Friday, Weekday::Monday, Weekday::Friday]),
             ..calendar()
         };
-        assert_eq!(calendar.compile().unwrap().expression(), "0,15,30,45 9 * 1,12 1,5");
+        assert_eq!(
+            calendar.compile().unwrap().expression(),
+            "0,15,30,45 9 * 1,12 1,5"
+        );
     }
 
     #[test]
     fn typed_fields_preserve_fixed_and_recurring_daylight_saving_behavior() {
-        let spring = wall(Utc.with_ymd_and_hms(2026, 3, 7, 12, 0, 0).unwrap().timestamp());
-        let fall = wall(Utc.with_ymd_and_hms(2026, 10, 31, 12, 0, 0).unwrap().timestamp());
+        let spring = wall(
+            Utc.with_ymd_and_hms(2026, 3, 7, 12, 0, 0)
+                .unwrap()
+                .timestamp(),
+        );
+        let fall = wall(
+            Utc.with_ymd_and_hms(2026, 10, 31, 12, 0, 0)
+                .unwrap()
+                .timestamp(),
+        );
         for (minutes, hours, expression, from, count) in [
-            (vec![Part::At(30)], vec![Part::At(2)], "30 2 * * *", spring, 3),
+            (
+                vec![Part::At(30)],
+                vec![Part::At(2)],
+                "30 2 * * *",
+                spring,
+                3,
+            ),
             (vec![Part::At(30)], vec![Part::At(1)], "30 1 * * *", fall, 3),
-            (vec![Part::Every(30)], vec![Part::Any], "*/30 * * * *", spring, 80),
-            (vec![Part::Every(30)], vec![Part::Any], "*/30 * * * *", fall, 80),
+            (
+                vec![Part::Every(30)],
+                vec![Part::Any],
+                "*/30 * * * *",
+                spring,
+                80,
+            ),
+            (
+                vec![Part::Every(30)],
+                vec![Part::Any],
+                "*/30 * * * *",
+                fall,
+                80,
+            ),
         ] {
             let calendar = Calendar {
                 minutes,
@@ -243,10 +294,20 @@ mod tests {
         for (min, max) in [(0, 59), (0, 23), (1, 31)] {
             let mut invalid_parts = vec![
                 Part::At(max + 1),
-                Part::Range { start: max, end: min },
-                Part::Range { start: min, end: max + 1 },
+                Part::Range {
+                    start: max,
+                    end: min,
+                },
+                Part::Range {
+                    start: min,
+                    end: max + 1,
+                },
                 Part::Every(0),
-                Part::Stepped { start: min, end: max, step: 0 },
+                Part::Stepped {
+                    start: min,
+                    end: max,
+                    step: 0,
+                },
             ];
             if min > 0 {
                 invalid_parts.push(Part::At(min - 1));
@@ -261,28 +322,57 @@ mod tests {
     #[test]
     fn empty_flags_unknown_zones_and_impossible_dates_are_rejected() {
         for calendar in [
-            Calendar { weekdays: Some(vec![]), ..calendar() },
-            Calendar { months: Some(vec![]), ..calendar() },
-            Calendar { timezone: Some("Mars/Phobos".into()), ..calendar() },
+            Calendar {
+                weekdays: Some(vec![]),
+                ..calendar()
+            },
+            Calendar {
+                months: Some(vec![]),
+                ..calendar()
+            },
+            Calendar {
+                timezone: Some("Mars/Phobos".into()),
+                ..calendar()
+            },
             Calendar {
                 days_of_month: Some(vec![Part::At(30)]),
                 months: Some(vec![Month::February]),
                 ..calendar()
             },
         ] {
-            assert!(matches!(calendar.compile(), Err(SpecError::InvalidSchedule(_))));
+            assert!(matches!(
+                calendar.compile(),
+                Err(SpecError::InvalidSchedule(_))
+            ));
         }
     }
 
     #[test]
     fn typed_and_text_registration_share_names_and_limits() {
         let mut engine = Engine::new();
-        let limits = Limits { max_registrations: 1, ..Limits::default() };
-        let now = |secs: u64| Now { mono: secs * 1_000_000_000, wall: wall(MONDAY + secs as i64) };
-        engine.bind("workload", Binding { limits, ..Binding::default() }, true, now(0));
+        let limits = Limits {
+            max_registrations: 1,
+            ..Limits::default()
+        };
+        let now = |secs: u64| Now {
+            mono: secs * 1_000_000_000,
+            wall: wall(MONDAY + secs as i64),
+        };
+        engine.bind(
+            "workload",
+            Binding {
+                limits,
+                ..Binding::default()
+            },
+            true,
+            now(0),
+        );
         let typed = calendar().compile().unwrap();
         let text = CronSpec::parse(typed.expression(), typed.timezone()).unwrap();
-        assert_eq!(engine.register("workload", "job", Spec::Cron(typed), now(0)), Ok(true));
+        assert_eq!(
+            engine.register("workload", "job", Spec::Cron(typed), now(0)),
+            Ok(true)
+        );
         assert_eq!(
             engine.register("workload", "job", Spec::Cron(text.clone()), now(10)),
             Ok(false)
