@@ -40,15 +40,19 @@ inline reply without buttons. `actions` describes support and `max-actions`
 bounds the current request; providers keep the two consistent.
 
 Discovery never displays UI. An unavailable service still returns
-`available: false`; an unreachable provider returns an error. Permission has no
+`available: false`. A forwarding provider that cannot reach its downstream
+returns `failed`, which a caller can tell apart from `available: false`; missing
+scope or policy returns `access-denied`. Permission has no
 query. First send may request platform authorization; declined authorization
 maps to `unavailable`, and caller revocation maps to `access-denied`. Availability
 does not encode why a service is unavailable or prescribe a retry policy.
 
 Providers truncate extra actions and display text at character boundaries.
-Without inline reply, input becomes a same-id callback button if buttons are
-supported and a `max-actions` slot remains after the listed actions. Otherwise
-it is dropped and logged. Unsupported urgency uses normal. The three urgency
+With inline reply, input uses no action slot. Without it, input becomes a
+same-id callback button if buttons are supported and a `max-actions` slot remains
+after the listed actions; the click returns `action(id)` with no text. If no slot
+remains or buttons are unsupported, `send` returns `not-supported` rather than
+accept a reply that cannot arrive. Unsupported urgency uses normal. The three urgency
 levels follow the [freedesktop notification specification](https://specifications.freedesktop.org/notification/latest/urgency-levels.html);
 urgency does not override this API's response deadline.
 
@@ -62,11 +66,14 @@ requests that cannot be adapted.
 Navigation is optional and governed by embedding policy. `deep-link` accepts
 application routes, and `url` accepts HTTP or HTTPS. Without navigation support,
 both behave as `callback`. Supporting navigation does not grant unrestricted
-network access or bypass the embedding's route and URL policy.
+network access or bypass the embedding's route and URL policy. Selecting any
+target still settles the notification as `action(id)`, or `activated` for the
+body, in addition to any navigation.
 
 `timeout: option<duration>` uses `wasi:clocks/types@0.3.0`, in nanoseconds.
 `none` uses the provider's default; `some(0)` expires immediately. Larger values
-are clamped to the provider's maximum. Display lifetime remains best effort.
+are clamped to the provider's maximum. The default and maximum are finite, so a
+wait for `sent.response` always ends. Display lifetime remains best effort.
 Using a shared type requires the clocks package, but grants no clock operations.
 
 ## Delivery
@@ -75,16 +82,22 @@ Using a shared type requires the clocks package, but grants no clock operations.
 not guarantee visibility or successful delivery. A later delivery failure
 resolves the result's error arm, rather than masquerading as expiration.
 
-If a future reader is attached when the notification settles, its result goes
-to the future; otherwise it goes to the scope's queue. The queued `event` carries
-the same id and result, including delivery failures. Dropping the future never
-withdraws the notification. Delivery is best effort: a reader failing mid-await
+When a notification settles, the provider writes its result to the future. If
+the write is not accepted because the reader was dropped, the result goes to the
+scope's queue instead. A future that is held but never read still receives the
+result, which is then not queued. The queued `event` carries the same id and
+result, including delivery failures. Dropping the future never withdraws the
+notification. Delivery is best effort: a reader failing mid-await
 can lose its result, and abrupt provider loss can prevent any result arriving.
 
 Activation, action, reply, observed dismissal, expiry, closure, or another
 terminal outcome settles a notification once while the provider remains live.
-A missed deadline or unobservable dismissal produces `expired`. `close`, tag
-replacement, and orderly shutdown produce `closed`. `other(option<string>)`
+A missed deadline or unobservable dismissal produces `expired`; without
+`dismissal` support it can hide an explicit dismissal, so do not resend
+automatically. `close`, tag replacement, and orderly shutdown produce `closed`
+when the provider can still deliver; a caller's own tag resend expects it. A
+provider that is gone cannot deliver it, and futures then close without a value.
+`other(option<string>)`
 covers additional terminal outcomes without adding a variant case. Consumers
 must handle it without assuming activation or automatically resending; detail
 strings are diagnostic, not a protocol.
@@ -105,8 +118,10 @@ may take them first. With `follow: true`, newly queued events are eligible too.
 The queue is bounded and overflow drops its oldest events; successful completion
 does not promise durable or lossless history.
 
-Unknown or completed ids are a no-op for `close`. While unavailable, `send` and
-`subscribe` return `unavailable`, while `close` succeeds. Caller access policy
+Unknown or completed ids are a no-op for `close`, and a completed id keeps its
+original outcome even while that outcome is still queued. While unavailable,
+`send` and `subscribe` return `unavailable`, while `close` succeeds and pending
+notifications stay pending. Caller access policy
 still applies. `limit-exceeded` covers rate budgets and resource limits. `failed`
 reports a failed delivery attempt or subscription; `other` covers unclassified
 failures. Error strings must not be parsed, and errors do not prove that nothing
@@ -117,8 +132,9 @@ was displayed.
 - **Wait for an answer:** send and await `sent.response`; handle either the
   outcome or delivery error.
 - **Answer later:** send, keep `sent.id`, and drop the future. A later invocation
-  drains `subscribe(false).events`, then checks completion. Pending ids are not
-  in the backlog yet.
+  drains `subscribe(false).events`, then checks completion. An id absent from the
+  backlog is pending, or a competing reader took it; run one reader per scope
+  when you need to tell them apart.
 - **Follow continuously:** drain `subscribe(true).events` and check completion
   when it closes.
 - **Withdraw:** close an id; its result is `ok(closed)`.

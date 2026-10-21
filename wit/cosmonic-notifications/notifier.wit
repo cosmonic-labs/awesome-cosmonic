@@ -14,14 +14,19 @@ interface notifier {
   record sent {
     /// Correlates responses and permits withdrawal within this caller scope.
     id: notification-id,
-    /// Resolves with an outcome or delivery error. With no reader when it
-    /// settles, the same result goes to events.subscribe. Dropping this future
-    /// never withdraws the notification. Delivery is best effort, not durable.
+    /// Resolves with an outcome or delivery error. When the notification
+    /// settles, the provider writes the result to this future; if the write is
+    /// not accepted because the reader was dropped, the same result goes to
+    /// events.subscribe. A future that is held but never read still receives
+    /// the result, which is then not queued. Dropping this future never
+    /// withdraws the notification. Delivery is best effort, not durable.
     response: future<result<response, error-code>>,
   }
 
   /// Discover effective support without UI. Unavailable services still return
-  /// available false; an unreachable provider returns an error.
+  /// available false. A forwarding provider that cannot reach its downstream
+  /// returns failed, so a caller can tell it from available false; missing
+  /// scope or policy returns access-denied.
   @since(version = 0.3.0)
   get-features: async func() -> result<supported-features, error-code>;
 
@@ -32,7 +37,9 @@ interface notifier {
   send: async func(notification: notification) -> result<sent, error-code>;
 
   /// Settle a pending id as closed. Unknown or completed ids, and an
-  /// unavailable service, are a no-op. Caller access policy still applies.
+  /// unavailable service, are a no-op; a completed id keeps its original outcome
+  /// even while that outcome is still queued. Pending notifications stay pending
+  /// while the service is unavailable. Caller access policy still applies.
   @since(version = 0.3.0)
   close: async func(id: notification-id) -> result<_, error-code>;
 }
