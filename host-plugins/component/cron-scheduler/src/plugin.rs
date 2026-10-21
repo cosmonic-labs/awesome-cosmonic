@@ -67,7 +67,10 @@ fn now() -> Now {
     let wall = system_clock::now();
     Now {
         mono: monotonic_clock::now(),
-        wall: Wall { seconds: wall.seconds, nanoseconds: wall.nanoseconds },
+        wall: Wall {
+            seconds: wall.seconds,
+            nanoseconds: wall.nanoseconds,
+        },
     }
 }
 
@@ -103,9 +106,10 @@ fn to_spec(schedule: Schedule) -> Result<Spec, SpecError> {
             CronSpec::parse(&cron.expression, cron.timezone.as_deref()).map(Spec::Cron)
         }
         Schedule::Interval(period) => Ok(Spec::Interval(period)),
-        Schedule::OnceAt(at) => {
-            Ok(Spec::OnceAt(Wall { seconds: at.seconds, nanoseconds: at.nanoseconds }))
-        }
+        Schedule::OnceAt(at) => Ok(Spec::OnceAt(Wall {
+            seconds: at.seconds,
+            nanoseconds: at.nanoseconds,
+        })),
         Schedule::OnceAfter(delay) => Ok(Spec::OnceAfter(delay)),
         Schedule::Other(text) => Err(SpecError::Unsupported(format!(
             "'{text}': this plugin provides cron, interval, once-at and once-after schedules"
@@ -120,9 +124,10 @@ fn from_spec(spec: Spec) -> Schedule {
             timezone: cron.timezone().map(str::to_string),
         }),
         Spec::Interval(period) => Schedule::Interval(period),
-        Spec::OnceAt(at) => {
-            Schedule::OnceAt(ServedInstant { seconds: at.seconds, nanoseconds: at.nanoseconds })
-        }
+        Spec::OnceAt(at) => Schedule::OnceAt(ServedInstant {
+            seconds: at.seconds,
+            nanoseconds: at.nanoseconds,
+        }),
         Spec::OnceAfter(delay) => Schedule::OnceAfter(delay),
     }
 }
@@ -134,11 +139,16 @@ fn calendar_spec(schedule: CalendarSchedule) -> Result<Spec, SpecError> {
             .map(|part| match part {
                 CalendarPart::Any => Part::Any,
                 CalendarPart::At(value) => Part::At(value),
-                CalendarPart::Range(range) => Part::Range { start: range.start, end: range.end },
+                CalendarPart::Range(range) => Part::Range {
+                    start: range.start,
+                    end: range.end,
+                },
                 CalendarPart::Every(step) => Part::Every(step),
-                CalendarPart::Stepped(range) => {
-                    Part::Stepped { start: range.start, end: range.end, step: range.step }
-                }
+                CalendarPart::Stepped(range) => Part::Stepped {
+                    start: range.start,
+                    end: range.end,
+                    step: range.step,
+                },
             })
             .collect()
     };
@@ -236,7 +246,9 @@ fn register_spec(name: &str, spec: Spec) -> Result<(), ScheduleError> {
     let described = describe(&spec);
     // Unchanged registrations do not wake the loop or add log noise.
     if ENGINE.with_borrow_mut(|engine| engine.register(&workload, name, spec, now()))? {
-        log(format!("workload {workload} registered '{name}': {described}"));
+        log(format!(
+            "workload {workload} registered '{name}': {described}"
+        ));
         wake();
     }
     Ok(())
@@ -292,10 +304,16 @@ impl LifecycleGuest for Plugin {
                 .filter(|binding| binding.namespace == "cosmonic" && binding.package == "cron")
         };
         let entries = ours().map(|binding| {
-            binding.config.iter().map(|(key, value)| (key.as_str(), value.as_str()))
+            binding
+                .config
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str()))
         });
         let binding = Binding::parse_entries(entries).map_err(|err| {
-            format!("cosmonic:cron binding of workload '{}': {err}", workload.name)
+            format!(
+                "cosmonic:cron binding of workload '{}': {err}",
+                workload.name
+            )
         })?;
         let grants = |interface: &str| {
             ours().any(|binding| binding.interfaces.iter().any(|name| name == interface))
@@ -321,8 +339,16 @@ impl LifecycleGuest for Plugin {
             "bound workload {} ({}): {}{}",
             workload.id,
             workload.name,
-            if declared.is_empty() { "no declared schedules".to_string() } else { declared.join(", ") },
-            if can_register { "; may register its own" } else { "" },
+            if declared.is_empty() {
+                "no declared schedules".to_string()
+            } else {
+                declared.join(", ")
+            },
+            if can_register {
+                "; may register its own"
+            } else {
+                ""
+            },
         ));
         ENGINE.with_borrow_mut(|engine| engine.bind(&workload.id, binding, can_register, now()));
         log_ended();
@@ -376,7 +402,10 @@ fn log_ended() {
             EndReason::Undelivered => "was dropped, the workload was not running when it came due",
             EndReason::Rebound => "was removed, the workload's new binding does not permit it",
         };
-        log(format!("'{}' of workload {} {why}", ended.name, ended.workload));
+        log(format!(
+            "'{}' of workload {} {why}",
+            ended.name, ended.workload
+        ));
     }
 }
 
@@ -384,7 +413,9 @@ fn log_ended() {
 fn settle(dispatch: &Dispatch, outcome: Outcome, detail: Option<String>) {
     let completion = ENGINE.with_borrow_mut(|engine| engine.complete(dispatch, outcome, now()));
     log_ended();
-    let Dispatch { workload, firing, .. } = dispatch;
+    let Dispatch {
+        workload, firing, ..
+    } = dispatch;
     let detail = detail.map(|d| format!(": {d}")).unwrap_or_default();
     let what = match (outcome, completion) {
         (Outcome::Handled, _) | (_, Completion::Stale) => return,

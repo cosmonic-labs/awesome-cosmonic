@@ -30,8 +30,8 @@ mod bindings {
 
 use bindings::cosmonic::cron::scheduler;
 use bindings::cosmonic::cron::types::{
-    CalendarPart, CalendarRange, CalendarSchedule, CronSchedule, Firing, Months,
-    Schedule, ScheduleError, Weekdays,
+    CalendarPart, CalendarRange, CalendarSchedule, CronSchedule, Firing, Months, Schedule,
+    ScheduleError, Weekdays,
 };
 use bindings::exports::cosmonic::cron::handler::{Guest as HandlerGuest, HandlerError};
 use bindings::exports::wasi::http::handler::Guest as HttpGuest;
@@ -48,10 +48,13 @@ impl HandlerGuest for Ticker {
             firing.name, firing.scheduled_at.seconds, firing.missed, firing.attempt
         );
         match firing.name.split('-').next() {
-            Some("retry") if firing.attempt < 3 => {
-                Err(HandlerError::Retry(Some(format!("attempt {} of 3", firing.attempt))))
-            }
-            Some("fail") => Err(HandlerError::Failed(Some("this schedule always fails".into()))),
+            Some("retry") if firing.attempt < 3 => Err(HandlerError::Retry(Some(format!(
+                "attempt {} of 3",
+                firing.attempt
+            )))),
+            Some("fail") => Err(HandlerError::Failed(Some(
+                "this schedule always fails".into(),
+            ))),
             Some("slow") => {
                 monotonic_clock::wait_for(2_500_000_000).await;
                 eprintln!("ticker: finished name={}", firing.name);
@@ -68,14 +71,18 @@ impl HandlerGuest for Ticker {
 
 impl HttpGuest for Ticker {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        let target = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
+        let target = request
+            .get_path_with_query()
+            .unwrap_or_else(|| "/".to_string());
         let (path, query) = target.split_once('?').unwrap_or((&target, ""));
         let name = || param(query, "name").unwrap_or_default();
 
         let result = match (request.get_method(), path) {
             (Method::Get, "/schedules") => list().await,
             (Method::Post, "/register") => match schedule_from(query) {
-                Some(schedule) => scheduler::register(name(), schedule).await.map(|()| "ok\n".into()),
+                Some(schedule) => scheduler::register(name(), schedule)
+                    .await
+                    .map(|()| "ok\n".into()),
                 None => {
                     let kinds = "every-ms, cron, once-after-ms, once-at or other";
                     return Ok(respond(400, format!("give one of {kinds}\n")));
@@ -104,12 +111,22 @@ async fn list() -> Result<String, ScheduleError> {
     Ok(held
         .into_iter()
         .map(|held| {
-            let origin = if held.declared { "declared" } else { "registered" };
+            let origin = if held.declared {
+                "declared"
+            } else {
+                "registered"
+            };
             let schedule = match held.schedule {
-                Schedule::Cron(CronSchedule { expression, timezone: Some(zone) }) => {
+                Schedule::Cron(CronSchedule {
+                    expression,
+                    timezone: Some(zone),
+                }) => {
                     format!("cron {expression} in {zone}")
                 }
-                Schedule::Cron(CronSchedule { expression, timezone: None }) => {
+                Schedule::Cron(CronSchedule {
+                    expression,
+                    timezone: None,
+                }) => {
                     format!("cron {expression}")
                 }
                 Schedule::Interval(period) => format!("interval {}ms", period / 1_000_000),
@@ -117,7 +134,9 @@ async fn list() -> Result<String, ScheduleError> {
                 Schedule::OnceAfter(delay) => format!("once-after {}ms", delay / 1_000_000),
                 Schedule::Other(text) => format!("other {text}"),
             };
-            let next = held.next.map_or("none".to_string(), |at| at.seconds.to_string());
+            let next = held
+                .next
+                .map_or("none".to_string(), |at| at.seconds.to_string());
             format!("{}\t{origin}\t{schedule}\tnext={next}\n", held.name)
         })
         .collect())
@@ -131,10 +150,16 @@ fn schedule_from(query: &str) -> Option<Schedule> {
         return Some(Schedule::OnceAfter(millis.parse::<u64>().ok()? * 1_000_000));
     }
     if let Some(seconds) = param(query, "once-at") {
-        return Some(Schedule::OnceAt(Instant { seconds: seconds.parse().ok()?, nanoseconds: 0 }));
+        return Some(Schedule::OnceAt(Instant {
+            seconds: seconds.parse().ok()?,
+            nanoseconds: 0,
+        }));
     }
     if let Some(expression) = param(query, "cron") {
-        return Some(Schedule::Cron(CronSchedule { expression, timezone: param(query, "tz") }));
+        return Some(Schedule::Cron(CronSchedule {
+            expression,
+            timezone: param(query, "tz"),
+        }));
     }
     param(query, "other").map(Schedule::Other)
 }
