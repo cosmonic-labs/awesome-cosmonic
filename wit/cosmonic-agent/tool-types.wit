@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.2;
 
 /// Tool definitions, responses, and errors shared by tool callers and tool
 /// providers. Function-less: importing it gives no permission, so a provider that

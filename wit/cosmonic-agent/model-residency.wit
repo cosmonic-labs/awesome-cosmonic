@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.2;
 
 /// Optional, trusted controls for providers that manage local model residency.
 /// Hosts allow this interface separately from inference and agent aliases.
