@@ -96,14 +96,19 @@ struct Host {
 }
 
 impl Host {
-    fn start(wash: &str, workload: &Path) -> Self {
+    fn start(wash: &str, workload: &Path, prebuilt: bool) -> Self {
         let log =
             std::env::temp_dir().join(format!("cron-scheduler-e2e-{}.log", std::process::id()));
         let stdout = File::create(&log).expect("create the host log");
         let stderr = stdout
             .try_clone()
             .expect("share the host log between stdout and stderr");
-        let child = Command::new(wash)
+        let mut command = Command::new(wash);
+        if prebuilt {
+            // Keep the validated components unchanged.
+            command.env("WASH_DEV", "{ command = \"true\" }");
+        }
+        let child = command
             .arg("dev")
             .current_dir(workload)
             .stdin(Stdio::null())
@@ -334,11 +339,26 @@ fn schedules_fire_the_way_the_contract_says() {
     let plugin = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workload = plugin.join("tests/fixtures/ticker");
 
-    println!("building the plugin and the ticker workload");
-    build(&wash, plugin);
-    build(&wash, &workload);
+    let prebuilt = std::env::var("CRON_E2E_PREBUILT").as_deref() == Ok("1");
+    if prebuilt {
+        for component in [
+            plugin.join("target/wasm32-wasip2/release/cron_scheduler.wasm"),
+            workload.join("target/wasm32-wasip2/release/ticker.wasm"),
+        ] {
+            assert!(
+                component.is_file(),
+                "missing prebuilt component: {}",
+                component.display()
+            );
+        }
+        println!("using the validated plugin and ticker components");
+    } else {
+        println!("building the plugin and the ticker workload");
+        build(&wash, plugin);
+        build(&wash, &workload);
+    }
 
-    let mut host = Host::start(&wash, &workload);
+    let mut host = Host::start(&wash, &workload, prebuilt);
     println!("starting the host (log: {})", host.log.display());
     let ticker = Ticker::new();
     let serving = |ticker: &Ticker| matches!(ticker.get("/schedules"), Some((200, _)));

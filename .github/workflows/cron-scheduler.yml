@@ -26,11 +26,12 @@ concurrency:
 env:
   RUSTUP_TOOLCHAIN: "1.99.0"
   WASH_VERSION: v2.10.3
+  WASH_SOURCE_REVISION: 548bb21b65ac8cc03776f73656c4bf7be2f96992 # v2.10.3
   WASM_TOOLS_VERSION: 1.258.0
 
 jobs:
   test-and-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       WKG_CONFIG_FILE: ${{ github.workspace }}/wit/wkg-registries.toml
@@ -43,7 +44,21 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust and the Wasm target
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy --target wasm32-wasip2
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component clippy --component rustfmt --target wasm32-wasip2
+
+      - name: Cache Cargo dependencies and build outputs
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: cron-scheduler
+          cache-bin: false
+          workspaces: |
+            host-plugins/component/cron-scheduler -> target
+            host-plugins/component/cron-scheduler/tests/fixtures/ticker -> target
+
+      - name: Check formatting
+        run: |
+          cargo fmt --check
+          cargo fmt --manifest-path tests/fixtures/ticker/Cargo.toml --check
 
       - uses: wasmCloud/setup-wash-action@47756fa211cc82f392c57e39504f43ef46fc0b3e # v2.1.0
         with:
@@ -92,3 +107,109 @@ jobs:
             host-plugins/component/cron-scheduler/target/wasm32-wasip2/release/cron_scheduler.wasm
             host-plugins/component/cron-scheduler/tests/fixtures/ticker/target/wasm32-wasip2/release/ticker.wasm
           if-no-files-found: error
+
+  build-integration-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      RUSTUP_TOOLCHAIN: "1.96.0"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - name: Cache the pinned integration host
+        id: host-cache
+        uses: actions/cache@8b402f58fbc84540c8b491a91e594a4576fec3d7 # v5.0.2
+        with:
+          path: ${{ runner.temp }}/cron-integration-host/wash
+          key: cron-host-ubuntu24.04-${{ runner.arch }}-${{ env.WASH_SOURCE_REVISION }}-${{ env.RUSTUP_TOOLCHAIN }}-no-default-host-plugins-debug0-v1
+
+      - name: Check out the pinned wash source
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: wasmCloud/wasmCloud
+          ref: ${{ env.WASH_SOURCE_REVISION }}
+          path: wash-source
+          persist-credentials: false
+
+      - name: Install the host build toolchain
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Build wash with host component plugins
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        working-directory: wash-source
+        run: |
+          cargo build --locked -p wash --bin wash --no-default-features --features host-component-plugins
+          install -Dm755 target/debug/wash "$RUNNER_TEMP/cron-integration-host/wash"
+
+      - name: Check the integration host
+        run: '"$RUNNER_TEMP/cron-integration-host/wash" --version'
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cron-integration-host
+          path: ${{ runner.temp }}/cron-integration-host/wash
+          if-no-files-found: error
+          retention-days: 1
+
+  integration:
+    needs: [test-and-build, build-integration-host]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      WKG_CONFIG_FILE: ${{ github.workspace }}/wit/wkg-registries.toml
+    defaults:
+      run:
+        working-directory: host-plugins/component/cron-scheduler
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust for the test driver
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Restore Cargo dependencies and build outputs
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: cron-scheduler
+          cache-bin: false
+          save-if: false
+          workspaces: |
+            host-plugins/component/cron-scheduler -> target
+            host-plugins/component/cron-scheduler/tests/fixtures/ticker -> target
+
+      - name: Download validated components
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cron-scheduler
+          path: host-plugins/component/cron-scheduler
+
+      - name: Download the pinned integration host
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cron-integration-host
+          path: ${{ runner.temp }}/cron-integration-host
+
+      - name: Run host integration tests
+        env:
+          WASH: ${{ runner.temp }}/cron-integration-host/wash
+          CRON_E2E_PREBUILT: "1"
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          chmod +x "$WASH"
+          cargo test --locked --test e2e -- --ignored --nocapture
+
+      - name: Check dependency locks
+        run: git diff --exit-code -- Cargo.lock wkg.lock tests/fixtures/ticker/Cargo.lock tests/fixtures/ticker/wkg.lock
+
+      - name: Upload failed host logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cron-scheduler-host-logs
+          path: ${{ runner.temp }}/cron-scheduler-e2e-*.log
+          if-no-files-found: ignore
+          retention-days: 7
