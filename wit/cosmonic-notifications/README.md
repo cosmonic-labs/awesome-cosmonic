@@ -93,20 +93,18 @@ stay queued, and overflow drops the oldest.
 
 ## Adaptation
 
-`get-features` separates service availability from an extensible feature list:
+`get-features` returns an extensible feature list:
 
 ```wit
-record supported-features {
-  available: bool,
-  features: list<supported-feature>,
-}
+get-features: async func() -> result<list<supported-feature>, error-code>;
 ```
 
-For example, `features: [actions(2), navigation]` allows two buttons and navigation,
-but no inline reply, urgency hints, or dismissal reports. Each standard feature
-appears at most once, in any order. `other("example:badge")` advertises a provider
-extension; callers ignore names they do not understand. Feature support does not
-imply that the service is currently available.
+For example, `[actions(2), navigation]` allows two buttons and navigation, but no
+inline reply, urgency hints, or dismissal reports. Each standard feature appears
+at most once, in any order. `other("example:badge")` advertises a provider extension;
+callers ignore names they do not understand. An empty list means no optional
+features. An unavailable service returns `unavailable` instead. Availability and
+support can change, so `send` may still fail after discovery succeeds.
 
 Providers truncate actions to the `actions` limit (zero when absent), truncate
 long text, fall back to normal urgency, and treat navigation behaviors as
@@ -132,7 +130,8 @@ are trimmed and blank tags are invalid.
 
 ## Errors
 
-While the service is unavailable, `send` and `subscribe` return `unavailable`.
+While the service is unavailable, `get-features`, `send`, and `subscribe` return
+`unavailable`.
 `close` still settles a pending id as `closed`, and the provider withdraws the
 native notification once it can. Declined platform authorization is
 `unavailable`; caller revocation is `access-denied`. `error-code.other` requires
