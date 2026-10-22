@@ -102,28 +102,6 @@ While the service is unavailable, `send` and `subscribe` return `unavailable`,
 and `close` succeeds. Declined platform authorization is `unavailable`; caller
 revocation is `access-denied`. Error strings are diagnostic; don't parse them.
 
-## WASI architecture review
-
-| Pattern | Decision |
-| --- | --- |
-| P3 async | Every operation uses native `async func`; futures and streams suspend through the P3 ABI. |
-| Resources | None. Scope-local ids correlate notifications across component instances. |
-| Naming | Kebab-case names, noun records, verb-first operations, and established WASI error spellings. |
-| Version metadata | Interfaces, types, operations, worlds, and world bindings carry `@since(version = 0.3.0)`. |
-| Duration | Reuse WASI clocks duration; optional absence has one meaning, separate from zero. |
-| Errors | Operation results, response futures, queued events, and subscription completion carry typed failures. |
-| Variants | `response.other` and `error-code.other` admit unclassified meanings. WIT has no non-exhaustive variants; adding a discriminant still requires a breaking release. Urgency stays the three standard presentation hints. |
-| Streams | Native streams supply backpressure; a completion future distinguishes normal completion from a reported failure. |
-| Scope | A terminal provider instance serves one scope; the assembler supplies isolation and persistence. |
-| Triggers | Short-lived consumers need an external invocation trigger. A handler can be added separately. |
-
-The [Component Model WIT specification](https://github.com/WebAssembly/component-model/blob/main/design/mvp/WIT.md)
-and [native concurrency model](https://github.com/WebAssembly/component-model/blob/main/design/mvp/Concurrency.md)
-define the ABI. [WASI 0.3 HTTP](https://github.com/WebAssembly/WASI/blob/v0.3.0/proposals/http/wit/types.wit)
-uses a completion future alongside a body stream, and
-[WASI clocks](https://github.com/WebAssembly/WASI/blob/v0.3.0/proposals/clocks/wit/types.wit)
-defines duration. These patterns support component providers without polling resources.
-
 ## Publishing
 
 The build script fetches the digest-pinned clocks dependency and verifies that
