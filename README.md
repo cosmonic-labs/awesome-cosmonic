@@ -119,7 +119,7 @@ _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
 Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-host-component-plugins/) and deployed into a host at runtime as trigger services with a capability ingress, so you ship, version, and sandbox them like any other component. Currently opt-in via the `host-component-plugins` feature, so check the docs for the state of play before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
 
-- [cron-scheduler](host-plugins/component/cron-scheduler/) (hosted): Implements `cosmonic:cron@0.1.0` by calling a workload's `handler` export on crontab, interval and one-shot schedules, read from the workload's binding or registered through `scheduler`, with per-schedule overlap protection, bounded retry, and operator limits on how long a registered schedule lives. Rust, timed by `wasi:clocks@0.3.0`, dispatching through `wasmcloud:host/workload-call`; registered schedules are held in memory.
+- [cron-scheduler](host-plugins/component/cron-scheduler/) (hosted): Implements `cosmonic:cron@0.1.0` by calling a workload's `handler` export on crontab, interval and one-shot schedules, read from the workload's binding or registered through `scheduler`, with per-schedule overlap protection, bounded retry, and operator limits on registration count, interval periods, and one-shot delays. Rust, timed by `wasi:clocks@0.3.0`, dispatching through `wasmcloud:host/workload-call`; registered schedules are held in memory.
 
 ## Workload Examples
 

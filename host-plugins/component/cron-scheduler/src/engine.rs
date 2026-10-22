@@ -186,8 +186,8 @@ pub struct Engine {
     firings: u64,
     /// Schedules removed since [`Engine::take_ended`] was last called.
     ended: Vec<Ended>,
-    /// The system clock as of the last poll, to notice it being set back.
-    last_wall: Option<Wall>,
+    /// Both clocks at the last poll, to measure system-clock corrections.
+    last_poll: Option<Now>,
 }
 
 impl Engine {
@@ -199,7 +199,7 @@ impl Engine {
             namespace,
             firings: 0,
             ended: Vec::new(),
-            last_wall: None,
+            last_poll: None,
         }
     }
 
@@ -432,15 +432,17 @@ impl Engine {
     }
 
     fn clock_reset(&self, now: Now) -> bool {
-        self.last_wall
-            .is_some_and(|last| now.wall.nanos_until(last) > CLOCK_RESET)
+        self.last_poll.is_some_and(|last| {
+            let expected = last.wall.plus_nanos(now.mono.saturating_sub(last.mono));
+            now.wall.nanos_until(expected) > CLOCK_RESET
+        })
     }
 
     /// Return firings due at `now`, marked in flight until [`Engine::complete`] records
     /// their results.
     pub fn poll(&mut self, now: Now) -> Vec<Dispatch> {
         let reset = self.clock_reset(now);
-        self.last_wall = Some(now.wall);
+        self.last_poll = Some(now);
 
         let mut due = Vec::new();
         for (workload, held) in &mut self.workloads {
@@ -2274,5 +2276,67 @@ mod tests {
             ended(&mut engine),
             [("check".to_string(), EndReason::Fired)]
         );
+    }
+
+    #[test]
+    fn clock_reset_threshold_excludes_the_time_between_polls() {
+        for correction in [3 * 3600 - 1, 3 * 3600, 3 * 3600 + 1, 3 * 3600 + 15] {
+            let mut engine = Engine::new(0);
+            engine.bind(
+                "wl",
+                Binding {
+                    declared: [("minutely".to_string(), cron("* * * * *"))].into(),
+                    ..Binding::default()
+                },
+                true,
+                clock(0, 5 * 3600),
+            );
+            assert!(engine.poll(clock(0, 5 * 3600)).is_empty());
+
+            let wall = 5 * 3600 + 30 - correction;
+            let now = clock(30, wall);
+            let expected = if correction > 3 * 3600 {
+                (wall / 60 + 1) * 60
+            } else {
+                5 * 3600 + 60
+            };
+            for _ in 0..2 {
+                assert_eq!(
+                    next(&mut engine, "minutely", now),
+                    Some(clock(0, expected).wall)
+                );
+            }
+            assert!(engine.poll(now).is_empty());
+            assert_eq!(
+                next(&mut engine, "minutely", now),
+                Some(clock(0, expected).wall)
+            );
+            let due = engine.poll(clock(30 + (expected - wall) as u64, expected));
+            assert_eq!(names(&due), ["minutely"]);
+            assert_eq!(due[0].firing.scheduled_at, clock(0, expected).wall);
+        }
+    }
+
+    #[test]
+    fn a_large_backward_correction_is_detected_even_when_wall_time_advanced() {
+        let mut engine = Engine::new(0);
+        engine.bind(
+            "wl",
+            Binding {
+                declared: [("minutely".to_string(), cron("* * * * *"))].into(),
+                ..Binding::default()
+            },
+            true,
+            clock(0, 5 * 3600),
+        );
+        assert!(engine.poll(clock(0, 5 * 3600)).is_empty());
+
+        // Five hours elapsed, with a backward correction of 3h 15s.
+        let now = clock(5 * 3600, 7 * 3600 - 15);
+        assert_eq!(next(&mut engine, "minutely", now), when(7 * 3600));
+        assert!(engine.poll(now).is_empty());
+        let due = engine.poll(clock(5 * 3600 + 15, 7 * 3600));
+        assert_eq!(names(&due), ["minutely"]);
+        assert_eq!(due[0].firing.scheduled_at, clock(0, 7 * 3600).wall);
     }
 }
