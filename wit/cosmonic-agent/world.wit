@@ -1,5 +1,5 @@
 /// Inference, authorized model access, tools, and durable agent sessions.
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.2;
 
 /// A provider owns the model resources used by its inference interfaces.
 @since(version = 0.3.0)
@@ -37,7 +37,8 @@ world embeddings-provider {
 
 /// A sandboxed agent acquires models through workload-scoped aliases.
 /// Model administration, credentials, and network permissions belong to the host.
-/// Notifications require an explicit cosmonic:notify import and provider permission.
+/// Notifications require an explicit cosmonic:notifications import and provider
+/// permission.
 @since(version = 0.3.0)
 world agent {
     import inference-types;

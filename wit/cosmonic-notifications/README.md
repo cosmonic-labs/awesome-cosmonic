@@ -53,10 +53,11 @@ record sent {
 ```
 
 Acceptance doesn't guarantee the notification was shown. When it settles, the
-provider writes the result to `sent.response`, even if the future is held but
-unread. If the future was dropped, the result is queued instead. Dropping the
-future never withdraws the notification; `close` does. Delivery is best effort,
-not durable.
+provider starts writing the result to `sent.response`. The write completes when
+the reader receives it; a held but unread future keeps the write pending. If the
+reader is dropped before that transfer completes, the same result is queued,
+even if the notification has already settled. Dropping the future never withdraws
+the notification; `close` does. Delivery is best effort, not durable.
 
 | Response | Meaning |
 | --- | --- |

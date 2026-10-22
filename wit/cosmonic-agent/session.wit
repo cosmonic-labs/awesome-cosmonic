@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.2;
 
 /// An append-only journal and opaque agent state, scoped by the host to the
 /// caller. The host chooses the session a caller works in (one per workload,

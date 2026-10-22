@@ -15,11 +15,12 @@ interface notifier {
     /// Correlates responses and permits withdrawal within this caller scope.
     id: notification-id,
     /// Resolves with an outcome or delivery error. When the notification
-    /// settles, the provider writes the result to this future; if the write is
-    /// not accepted because the reader was dropped, the same result goes to
-    /// events.subscribe. A future that is held but never read still receives
-    /// the result, which is then not queued. Dropping this future never
-    /// withdraws the notification. Delivery is best effort, not durable.
+    /// settles, the provider starts writing the result to this future. The
+    /// write completes when the reader receives it; holding an unread future
+    /// keeps the write pending. If the reader is dropped before that transfer
+    /// completes, the same result goes to events.subscribe, even if the
+    /// notification has already settled. Dropping this future never withdraws
+    /// the notification. Delivery is best effort, not durable.
     response: future<result<response, error-code>>,
   }
 

@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.2;
 
 /// Types for handing an agent runs: how to do one, what it streams while it
 /// works, and how it ends. Unstable: a consumer enables the `agent-run`
