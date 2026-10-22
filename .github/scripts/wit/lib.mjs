@@ -51,3 +51,11 @@ export async function declaredPackage(wasm) {
   if (!line) throw new Error(`${wasm} has no package declaration`);
   return line;
 }
+
+// The version a built package declares, after checking that it declares `pkg`.
+export async function declaredVersion(pkg, wasm) {
+  const built = await declaredPackage(wasm);
+  const version = built.slice(built.indexOf("@") + 1, -1);
+  if (built !== declaration(pkg, version)) throw new Error(`${wasm} declares '${built}', expected ${packageInfo(pkg).id}`);
+  return version;
+}

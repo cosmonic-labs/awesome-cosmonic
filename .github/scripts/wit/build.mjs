@@ -3,11 +3,11 @@
 //   node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
 //
 // Imported packages are pinned by wkg.lock; fetching must preserve the lock.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
-import { declaration, declaredPackage, packageInfo, run, runMain, setOutput } from "./lib.mjs";
+import { declaration, declaredVersion, packageInfo, run, runMain, setOutput } from "./lib.mjs";
 
 const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
@@ -38,6 +38,14 @@ async function main([dir, pkg]) {
 
   // wash builds the package in ./wit, so stage the one being built.
   const stage = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), `wit-${info.namespace}-${info.name}-`));
+  try {
+    await build(dir, pkg, info, version, stage);
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+async function build(dir, pkg, info, version, stage) {
   mkdirSync(join(stage, "wit"), { recursive: true });
   for (const f of readdirSync(dir).filter((f) => f.endsWith(".wit"))) {
     copyFileSync(join(dir, f), join(stage, "wit", f));
@@ -62,9 +70,9 @@ async function main([dir, pkg]) {
   await run("wash", ["wit", "build", "--output-file", out], { cwd: stage });
 
   await run("wasm-tools", ["validate", "--features", "all", out]);
-  const built = await declaredPackage(out);
-  if (built !== declaration(pkg, version)) throw new Error(`built package declares '${built}'`);
-  console.log(`built ${out} (${built})`);
+  const built = await declaredVersion(pkg, out);
+  if (built !== version) throw new Error(`built package declares ${built}, expected ${version}`);
+  console.log(`built ${out} (${declaration(pkg, version)})`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) runMain(main);
