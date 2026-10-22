@@ -39,10 +39,11 @@ interface notifier {
   @since(version = 0.3.0)
   send: async func(notification: notification) -> result<sent, error-code>;
 
-  /// Settle a pending id as closed. Unknown or completed ids, and an
-  /// unavailable service, are a no-op; a completed id keeps its original outcome
-  /// even while that outcome is still queued. Pending notifications stay pending
-  /// while the service is unavailable. Caller access policy still applies.
+  /// Settle a pending id as closed, including while the service is unavailable:
+  /// the provider owns the pending set, so it settles the id at once and
+  /// withdraws the native notification when it can. Unknown or completed ids
+  /// are a no-op; a completed id keeps its original outcome even while that
+  /// outcome is still queued. Caller access policy still applies.
   @since(version = 0.3.0)
   close: async func(id: notification-id) -> result<_, error-code>;
 }
