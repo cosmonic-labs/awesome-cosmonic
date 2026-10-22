@@ -136,20 +136,3 @@ node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notificat
 The artifact is `dist/notifications.wasm`, published at
 `ghcr.io/cosmonic-labs/cosmonic/notifications:0.3.0` through
 [`../wkg-registries.toml`](../wkg-registries.toml).
-
-## User stories for the deferred example
-
-- As a reader, I build a consumer and component provider from published WIT,
-  with concise instructions for ownership, authorization, and typed errors.
-- As an assembler, I replace a native service with a virtual provider, then
-  interpose a forwarding or filtering component without rebuilding the consumer.
-- As an implementer, I preserve actions and replies across Windows, macOS,
-  Linux, and web environments and report effective support.
-- As a test author, I verify separate-scope isolation, replacement, close,
-  expiry, unknown outcomes, overflow, denial, and delivery failures without UI.
-- As a consumer, I handle errors from both the response future and event results,
-  and distinguish a drained backlog from a failed subscription.
-- As an embedding author, I retain each provider's scope state and invoke
-  short-lived consumers to collect queued results.
-
-The application example is deferred.
