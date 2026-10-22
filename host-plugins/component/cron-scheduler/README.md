@@ -72,7 +72,7 @@ scheduler::register_calendar("business-hours".into(), CalendarSchedule {
 }).await?;
 ```
 
-Selectors accept a wildcard, one value, an inclusive range, a step from the field's minimum, or a stepped range; lists combine selections. Minutes are 0-59, hours 0-23, and days of month 1-31. Empty selectors or flags, reversed ranges, out-of-range values, and zero steps are rejected. Restricted day-of-month and weekday fields match with OR, as in POSIX cron.
+Selectors accept a wildcard, one value, an inclusive range, a step from the field's minimum, or a stepped range; lists combine selections. Minutes are 0-59, hours 0-23, and days of month 1-31. Empty selectors or flags, reversed ranges, out-of-range values, and zero steps are rejected. Restricted day-of-month and weekday fields match with OR, as in POSIX cron. Selecting all seven weekdays is equivalent to leaving weekdays unset.
 
 Both registration functions share names, permissions, limits, retries, and overlap protection. Listings return typed schedules as `Schedule::Cron` with a normalized expression; passing that expression back to `register` preserves the registration. Typed selections are normalized by value, so reordering or duplicating them changes nothing.
 
@@ -100,13 +100,13 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 
 - One schedule never overlaps itself. A firing that comes due while the previous one is still being handled is skipped, and the next delivered firing reports how many were skipped in `missed`. This holds by name, so replacing a schedule, or removing it and registering it again, waits for the firing in flight. Different schedules are delivered concurrently.
 - A firing is not stored. If the workload is not running when it comes due, it is skipped and counted in `missed`.
-- A handler that answers `retry` gets the same firing again, with `attempt` one higher, until `retry.max-attempts`, or until the schedule's next firing is due or came due while the handler was running. A handler that answers `failed`, traps or times out is not called again for that firing.
+- A handler that answers `retry` gets the same firing again, with `attempt` one higher, until `retry.max-attempts`, or until the schedule's next firing is due or came due while the handler was running. A repeating firing abandoned after `retry`, including an undeliverable retry, counts in the next delivery's `missed`. A handler that answers `failed`, traps or times out is not called again for that firing.
 - An interval is a fixed rate on the monotonic clock. A late wake-up does not shift later firings.
 - A crontab firing's `scheduled-at` is the instant the expression matched, not the time the handler ran.
 - `list-registrations` gives each schedule's `next` firing as of the call, so a component need not parse a crontab to say when it runs. For a crontab or `once-at` schedule it is the `scheduled-at` that firing will carry. For an interval or `once-after` schedule it is the monotonic mark read off the system clock at that moment. It is `none` for a one-shot whose firing is already being handled. While a handler runs past its period, `next` is the occurrence after the ones being skipped.
 - A schedule that fires once is removed when its firing has been handled or given up on. It is retried like any other firing, with nothing to cut the retries short. An instant that has already passed is refused. Its handler may register the same name again to be called once more.
-- If a bound workload is bound again, registered schedules the new binding does not permit are removed: all of them if `scheduler` is no longer granted, any interval below a raised `min-interval`, and the newest beyond a lowered `max-registrations`. The workload is not told; the plugin logs each one, and it is gone from `list-registrations`.
-- `missed` is a lower bound. It counts firings skipped behind a running handler or an unreachable workload. It does not count what came due while the plugin itself was down: schedules are rebuilt from the present after a restart.
+- If a bound workload is bound again, registered schedules the new binding does not permit are removed: all of them if `scheduler` is no longer granted, any interval below a raised `min-interval`, the newest beyond a lowered `max-registrations`, and registrations whose names become declared schedules. The workload is not told directly; the plugin logs each removal. A declared replacement remains visible in `list-registrations`.
+- `missed` is a lower bound. It counts firings skipped behind a running handler or an unreachable workload, and firings abandoned after `retry`. It does not count what came due while the plugin itself was down: schedules are rebuilt from the present after a restart.
 
 ### Limits of this implementation
 

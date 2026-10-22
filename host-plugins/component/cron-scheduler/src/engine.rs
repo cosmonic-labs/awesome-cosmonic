@@ -104,8 +104,7 @@ pub enum EndReason {
     Fired,
     /// The one-shot firing could not reach the workload.
     Undelivered,
-    /// A new binding revoked `scheduler`, raised `min-interval` beyond this schedule,
-    /// or lowered `max-registrations` below it.
+    /// A new binding removed or took over a registration.
     Rebound,
 }
 
@@ -245,6 +244,11 @@ impl Engine {
             }
             if binding.declared.contains_key(name) {
                 // A name the binding now declares belongs to the binding.
+                self.ended.push(Ended {
+                    workload: workload.to_string(),
+                    name: name.clone(),
+                    reason: EndReason::Rebound,
+                });
                 return false;
             }
             let permitted = can_register && binding.limits.check(&entry.spec).is_ok();
@@ -428,9 +432,9 @@ impl Engine {
                 }
                 let firing = match entry.advance(now) {
                     Some((scheduled_at, skipped)) => {
-                        // The schedule itself came due, which outranks a
-                        // redelivery of the firing before it.
-                        entry.retry = None;
+                        // A new firing supersedes any pending retry, counted as missed.
+                        let skipped =
+                            skipped.saturating_add(u32::from(entry.retry.take().is_some()));
                         if in_flight {
                             entry.missed = entry.missed.saturating_add(skipped).saturating_add(1);
                             entry.overtaken = true;
@@ -513,13 +517,14 @@ impl Engine {
             Outcome::Handled | Outcome::Failed => Completion::Settled,
             Outcome::Undeliverable => {
                 if first_attempt {
-                    // Never delivered, so it joins what the next firing
-                    // reports. A redelivery that could not be made is
-                    // different: that firing did reach the handler once.
+                    // Carry counts the handler never received.
                     entry.missed = entry
                         .missed
                         .saturating_add(dispatch.firing.missed)
                         .saturating_add(1);
+                } else {
+                    // The handler requested a retry and never handled this firing.
+                    entry.missed = entry.missed.saturating_add(1);
                 }
                 if end.is_some() {
                     Completion::Settled
@@ -549,6 +554,16 @@ impl Engine {
                 }
             }
         };
+
+        // Report abandoned repeating firings in the next delivery.
+        if end.is_none()
+            && matches!(
+                completion,
+                Completion::RetriesExhausted | Completion::RetrySuperseded
+            )
+        {
+            entry.missed = entry.missed.saturating_add(1);
+        }
 
         // A spent schedule stays only as long as a redelivery is still owed.
         if let Some(reason) = end
@@ -909,9 +924,9 @@ mod tests {
             Completion::RetriesExhausted
         );
         assert!(engine.poll(at(70)).is_empty());
-        // The schedule itself is unaffected.
+        // The schedule itself is unaffected, and reports the firing given up.
         let next = engine.poll(at(120));
-        assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 0));
+        assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 1));
     }
 
     #[test]
@@ -932,7 +947,7 @@ mod tests {
             Completion::RetrySuperseded
         );
         let next = engine.poll(at(4));
-        assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 0));
+        assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 1));
     }
 
     #[test]
@@ -946,7 +961,8 @@ mod tests {
         // The loop wakes after both the retry and the next period are due.
         let due = engine.poll(at(21));
         assert_eq!(due.len(), 1);
-        assert_eq!(due[0].firing.attempt, 1);
+        // The dropped redelivery is reported as missed.
+        assert_eq!((due[0].firing.attempt, due[0].firing.missed), (1, 1));
         engine.complete(&due[0], Outcome::Handled, at(21));
         assert!(engine.poll(at(22)).is_empty());
     }
@@ -1532,8 +1548,9 @@ mod tests {
             Completion::RetrySuperseded
         );
         assert!(engine.poll(at(25)).is_empty());
+        // The one skipped at 20, and the one given up.
         let next = engine.poll(at(30));
-        assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 1));
+        assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 2));
         // The fresh firing is not held to what happened to the last one.
         assert_eq!(
             engine.complete(&next[0], Outcome::Retry, at(30)),
@@ -1652,6 +1669,24 @@ mod tests {
     }
 
     #[test]
+    fn a_registration_taken_over_by_a_declared_name_is_reported() {
+        let mut engine = bound(&[], true);
+        engine
+            .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+            .unwrap();
+
+        let binding = Binding {
+            declared: [("poll".to_string(), Spec::Interval(20 * SEC))].into(),
+            limits: Limits::default(),
+        };
+        engine.bind("wl", binding, true, at(5));
+        assert_eq!(
+            ended(&mut engine),
+            [("poll".to_string(), EndReason::Rebound)]
+        );
+    }
+
+    #[test]
     fn a_rebind_without_the_scheduler_grant_drops_registered_schedules() {
         let mut engine = bound(&[("beat", Spec::Interval(10 * SEC))], true);
         engine
@@ -1744,7 +1779,8 @@ mod tests {
             engine.complete(&running[0], Outcome::Retry, at(22)),
             Completion::RetrySuperseded
         );
-        assert_eq!(engine.poll(at(30))[0].firing.missed, 1);
+        // The one skipped at 20, and the one given up.
+        assert_eq!(engine.poll(at(30))[0].firing.missed, 2);
     }
 
     #[test]
@@ -1791,15 +1827,18 @@ mod tests {
     }
 
     #[test]
-    fn a_redelivery_that_cannot_be_made_is_not_a_missed_firing() {
+    fn an_undeliverable_retry_counts_the_firing_but_not_previously_reported_misses() {
         let mut engine = bound(&[("poll", Spec::Interval(60 * SEC))], false);
-        let first = engine.poll(at(60));
-        engine.complete(&first[0], Outcome::Retry, at(60));
-        let again = engine.poll(at(61));
+        let first = engine.poll(at(240));
+        assert_eq!(first[0].firing.missed, 3);
+        engine.complete(&first[0], Outcome::Retry, at(240));
+        let again = engine.poll(at(241));
         assert_eq!(again[0].firing.attempt, 2);
-        // The firing reached the handler once; only its retry was lost.
-        engine.complete(&again[0], Outcome::Undeliverable, at(61));
-        assert_eq!(engine.poll(at(120))[0].firing.missed, 0);
+        engine.complete(&again[0], Outcome::Undeliverable, at(241));
+        let next = engine.poll(at(300));
+        assert_eq!(next[0].firing.missed, 1);
+        engine.complete(&next[0], Outcome::Handled, at(300));
+        assert_eq!(engine.poll(at(360))[0].firing.missed, 0);
     }
 
     #[test]

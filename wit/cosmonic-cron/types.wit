@@ -92,6 +92,9 @@ interface types {
         /// Day selections in 1-31, or `none` for every day of the month.
         days-of-month: option<calendar-selector>,
         /// Selected weekdays, nonempty when set, or `none` for every weekday.
+        ///
+        /// All seven are equivalent to `none`, so they never restrict the day under
+        /// the OR rule.
         weekdays: option<weekdays>,
         /// Selected months, nonempty when set, or `none` for every month.
         months: option<months>,
@@ -199,8 +202,9 @@ interface types {
         name: schedule-name,
         /// The firing's due time, which may precede handler execution.
         ///
-        /// For `cron`, this is the exact matching instant, stable across redeliveries
-        /// and usable with `name` as an idempotency key.
+        /// It is stable across redeliveries of the same firing, so `name` and
+        /// `scheduled-at` together are an idempotency key for every schedule kind.
+        /// For `cron`, this is the exact matching instant.
         /// For `once-at`, it is the requested instant; for `interval` and `once-after`,
         /// it is the system-clock reading when the period or delay elapsed.
         scheduled-at: instant,
@@ -209,6 +213,8 @@ interface types {
         ///
         /// Firings are skipped when a previous handler is still running, the workload
         /// is unreachable, or the implementer falls behind.
+        /// A firing given up after its handler answered `retry` also counts, since it
+        /// was never handled.
         /// Handlers that only need to run near the current time can ignore this count.
         ///
         /// The count is a lower bound: implementers may cap it after long gaps or lose

@@ -68,10 +68,21 @@ impl Calendar {
             || Ok("*".to_string()),
             |parts| selector("days-of-month", parts, 1, 31),
         )?;
-        let weekdays = self.weekdays.as_ref().map_or_else(
-            || Ok("*".to_string()),
-            |days| named("weekdays", days.iter().map(|day| *day as u8)),
-        )?;
+        let weekdays = match &self.weekdays {
+            // All seven weekdays are a wildcard under the POSIX day-field OR rule.
+            Some(days)
+                if days
+                    .iter()
+                    .map(|day| *day as u8)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == 7 =>
+            {
+                "*".to_string()
+            }
+            Some(days) => named("weekdays", days.iter().map(|day| *day as u8))?,
+            None => "*".to_string(),
+        };
         let months = self.months.as_ref().map_or_else(
             || Ok("*".to_string()),
             |months| named("months", months.iter().map(|month| *month as u8)),
@@ -287,6 +298,35 @@ mod tests {
             calendar.compile().unwrap().next_after(wall(MONDAY)),
             Some(wall(MONDAY + 9 * 3600))
         );
+    }
+
+    #[test]
+    fn all_seven_weekdays_leave_the_weekday_field_unrestricted() {
+        let all = vec![
+            Weekday::Sunday,
+            Weekday::Monday,
+            Weekday::Tuesday,
+            Weekday::Wednesday,
+            Weekday::Thursday,
+            Weekday::Friday,
+            Weekday::Saturday,
+        ];
+        let mut calendar = Calendar {
+            days_of_month: Some(vec![Part::At(13)]),
+            weekdays: Some(all),
+            ..calendar()
+        };
+        let unset = Calendar {
+            weekdays: None,
+            ..calendar.clone()
+        };
+        assert_eq!(calendar.compile().unwrap(), unset.compile().unwrap());
+        assert_eq!(
+            calendar.compile().unwrap().next_after(wall(MONDAY)),
+            Some(wall(MONDAY + 86_400 + 9 * 3600))
+        );
+        calendar.weekdays.as_mut().unwrap().push(Weekday::Sunday);
+        assert_eq!(calendar.compile().unwrap(), unset.compile().unwrap());
     }
 
     #[test]

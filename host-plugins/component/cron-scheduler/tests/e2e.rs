@@ -669,6 +669,24 @@ fn schedules_fire_the_way_the_contract_says() {
             .logged(&["'retry-job' ", " will be retried in 1s: attempt 2 of 3"]),
     );
     run.expect("unregister it", "/unregister?name=retry-job", 200, "ok");
+    run.expect(
+        "register a handler that always asks for a retry",
+        "/register?name=exhaust-job&every-ms=4000",
+        200,
+        "ok",
+    );
+    run.check(
+        "an exhausted firing is counted in the next firing's missed",
+        run.host.wait_for_firing("exhaust-job", 12, |fired| {
+            fired.attempt == 1 && fired.missed == 1
+        }),
+    );
+    run.check(
+        "retry exhaustion is logged",
+        run.host
+            .logged(&["'exhaust-job' ", " gave up after 3 attempts"]),
+    );
+    run.expect("unregister it", "/unregister?name=exhaust-job", 200, "ok");
 
     run.section("failure");
     run.expect(
