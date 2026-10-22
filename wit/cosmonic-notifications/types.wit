@@ -183,5 +183,5 @@ interface types {
     /// "example:badge". Callers ignore names they do not understand. Extensions
     /// do not change the behavior of the standard features above.
     other(string),
- }
+  }
 }
