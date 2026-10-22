@@ -183,16 +183,5 @@ interface types {
     /// "example:badge". Callers ignore names they do not understand. Extensions
     /// do not change the behavior of the standard features above.
     other(string),
-  }
-
-  /// Current availability and support. Support can change, so send may still fail.
-  @since(version = 0.3.0)
-  record supported-features {
-    /// False when nothing can be displayed; sends return unavailable.
-    available: bool,
-    /// Unordered supported features. Each standard case appears at most once;
-    /// other may appear multiple times with distinct names. Missing actions
-    /// means a zero-button limit. Features do not imply service availability.
-    features: list<supported-feature>,
-  }
+ }
 }
