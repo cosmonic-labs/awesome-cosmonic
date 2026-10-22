@@ -18,8 +18,9 @@ interface notifier {
     /// settles, the provider writes the result to this future; if the write is
     /// not accepted because the reader was dropped, the same result goes to
     /// events.subscribe. A future that is held but never read still receives
-    /// the result, which is then not queued. Dropping this future never
-    /// withdraws the notification. Delivery is best effort, not durable.
+    /// the result, which is then not queued, so await this future or drop it;
+    /// never hold it unread. Dropping this future never withdraws the
+    /// notification. Delivery is best effort, not durable.
     response: future<result<response, error-code>>,
   }
 
@@ -36,10 +37,11 @@ interface notifier {
   @since(version = 0.3.0)
   send: async func(notification: notification) -> result<sent, error-code>;
 
-  /// Settle a pending id as closed. Unknown or completed ids, and an
-  /// unavailable service, are a no-op; a completed id keeps its original outcome
-  /// even while that outcome is still queued. Pending notifications stay pending
-  /// while the service is unavailable. Caller access policy still applies.
+  /// Settle a pending id as closed, including while the service is unavailable:
+  /// the provider owns the pending set, so it settles the id at once and
+  /// withdraws the native notification when it can. Unknown or completed ids
+  /// are a no-op; a completed id keeps its original outcome even while that
+  /// outcome is still queued. Caller access policy still applies.
   @since(version = 0.3.0)
   close: async func(id: notification-id) -> result<_, error-code>;
 }

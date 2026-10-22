@@ -71,12 +71,15 @@ interface types {
     /// With inline reply, the input uses no action slot. Without it, use a
     /// same-id callback button if actions are supported and a max-actions slot
     /// remains after the listed actions; the button returns action(id) with no
-    /// text. If no slot remains or actions are unsupported, return
+    /// text. Listed actions keep precedence: the fallback button never displaces
+    /// one, so a caller that needs a reply checks get-features or sends fewer
+    /// actions. If no slot remains or actions are unsupported, return
     /// not-supported rather than accept a reply that cannot arrive.
     input: option<text-input>,
     /// Body-click target. None lets the embedding choose, including no navigation.
     default-target: option<action-target>,
-    /// Replacement key, trimmed before validation. None disables replacement;
+    /// Replacement key. Unlike ids, which are echoed exactly, a tag is only
+    /// compared, so it is trimmed before validation. None disables replacement;
     /// blank returns invalid-argument. Accept at least 64 UTF-8 bytes; reject
     /// oversized tags without truncation. The same tag in this caller scope
     /// replaces a pending notification, whose outcome is closed.
@@ -118,8 +121,8 @@ interface types {
     /// automatically.
     expired,
     /// Withdrawn by close, replaced by a tag, or ended by orderly shutdown when
-    /// the provider can still deliver. A replacement by the caller's own resend
-    /// is expected.
+    /// the provider can still deliver. It reflects no user decision, so the
+    /// caller may resend.
     closed,
     /// Another terminal outcome; detail is diagnostic only. Do not assume
     /// user activation or retry automatically. Providers use this case for
