@@ -1,4 +1,4 @@
-package cosmonic:agent@0.4.1;
+package cosmonic:agent@0.4.2;
 
 /// Trusted catalog and preparation controls for local or remote inference.
 /// Agents acquire authorized handles through models instead.
