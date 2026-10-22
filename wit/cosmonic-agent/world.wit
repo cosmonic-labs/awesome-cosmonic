@@ -37,7 +37,7 @@ world embeddings-provider {
 
 /// A sandboxed agent acquires models through workload-scoped aliases.
 /// Model administration, credentials, and network permissions belong to the host.
-/// Notifications require an explicit cosmonic:notify import and provider permission.
+/// Notifications require an explicit cosmonic:notifications import and provider permission.
 @since(version = 0.3.0)
 world agent {
     import inference-types;
