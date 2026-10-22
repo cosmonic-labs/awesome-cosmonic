@@ -1,8 +1,10 @@
 package cosmonic:notifications@0.3.0;
 
-/// Trusted wiring binds notifier and events to one stable caller scope.
-/// Ids, tags, rate budget, and queued results belong to that scope across
-/// invocations. A terminal component instance serves exactly one scope.
+/// Send and withdraw notifications for callers that share one notification queue.
+/// The host or application connects notifier and events to the same caller scope:
+/// the group whose notification ids, replacement tags, rate budget, and queued
+/// results are shared across invocations. Calls cannot choose a different scope.
+/// Each component that delivers notifications serves one scope per instance.
 @since(version = 0.3.0)
 interface notifier {
   @since(version = 0.3.0)
@@ -24,10 +26,10 @@ interface notifier {
     response: future<result<response, error-code>>,
   }
 
-  /// Discover effective support without UI. Unavailable services still return
-  /// available false. A forwarding provider that cannot reach its downstream
-  /// returns failed, so a caller can tell it from available false; missing
-  /// scope or policy returns access-denied.
+  /// Discover availability and a list of supported features without displaying UI.
+  /// Unavailable services still return available false. A forwarding provider
+  /// that cannot reach its downstream returns failed instead. A missing caller
+  /// scope or denied caller policy returns access-denied.
   @since(version = 0.3.0)
   get-features: async func() -> result<supported-features, error-code>;
 

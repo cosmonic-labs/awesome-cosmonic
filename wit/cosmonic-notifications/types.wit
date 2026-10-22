@@ -8,7 +8,7 @@ interface types {
 
   /// What happens when the user activates an action or the notification body.
   @since(version = 0.3.0)
-  variant action-target {
+  variant action-behavior {
     /// Open an application route. Reject schemes, hosts, `..`, and leading `//`.
     /// An unknown route only focuses the application. Selecting it also settles
     /// the notification as action(id), or activated for the body target.
@@ -16,13 +16,14 @@ interface types {
     /// Open an HTTP or HTTPS URL. Other schemes return invalid-argument.
     /// Selecting it also settles the notification like deep-link.
     url(string),
-    /// Report the response without navigation.
+    /// Report the response without navigation. Use this for application-specific
+    /// actions handled by the consumer.
     callback,
   }
 
-  /// A button displayed with a notification.
+  /// A labeled action offered to the user, usually rendered as a button.
   @since(version = 0.3.0)
-  record action {
+  record notification-action {
     /// Nonblank printable id, unique across actions and input. Never trimmed.
     /// Accept at least 64 UTF-8 bytes; reject invalid or oversized ids with
     /// invalid-argument. Echo accepted ids exactly; never truncate them.
@@ -30,13 +31,13 @@ interface types {
     /// Button text. Providers may normalize an empty label.
     label: string,
     /// Navigation or callback behavior when selected.
-    target: action-target,
+    behavior: action-behavior,
   }
 
-  /// An optional inline reply control.
+  /// A request for inline text input; the provider chooses how to render it.
   @since(version = 0.3.0)
   record text-input {
-    /// Same rules as `action.id`.
+    /// Same rules as `notification-action.id`.
     id: string,
     /// Input label. Providers may normalize an empty label.
     label: string,
@@ -64,28 +65,31 @@ interface types {
     title: string,
     /// Supporting display text; may be empty. Same display rules as title.
     body: string,
-    /// Presentation hint; see `supported-features.urgency`.
+    /// Presentation hint; see `supported-feature.urgency`.
     urgency: urgency,
-    /// Truncated to max-actions; the provider logs what it drops.
-    actions: list<action>,
+    /// Truncated to the limit in supported-feature.actions (zero if absent);
+    /// the provider logs what it drops.
+    actions: list<notification-action>,
     /// With inline reply, the input uses no action slot. Without it, use a
-    /// same-id callback button if actions are supported and a max-actions slot
+    /// same-id callback button if actions are supported and an action slot
     /// remains after the listed actions; the button returns action(id) with no
     /// text. If no slot remains or actions are unsupported, return
     /// not-supported rather than accept a reply that cannot arrive.
     input: option<text-input>,
-    /// Body-click target. None lets the embedding choose, including no navigation.
-    default-target: option<action-target>,
-    /// Replacement key, trimmed before validation. None disables replacement;
-    /// blank returns invalid-argument. Accept at least 64 UTF-8 bytes; reject
-    /// oversized tags without truncation. The same tag in this caller scope
-    /// replaces a pending notification, whose outcome is closed.
+    /// Body-click behavior. None lets the embedding choose, including no navigation.
+    default-behavior: option<action-behavior>,
+    /// Caller-chosen replacement key, such as "build-status", not a notification id.
+    /// Sending the same tag in this caller scope closes the previous pending
+    /// notification and returns a new id for its replacement. Completed results
+    /// keep their original ids and outcomes. None disables replacement.
+    /// Trim before validation; blank returns invalid-argument. Accept at least
+    /// 64 UTF-8 bytes; reject oversized tags without truncation.
     tag: option<string>,
     /// Response deadline after acceptance, in nanoseconds. None uses the
     /// provider's default; zero expires immediately. Clamp to the provider's
     /// maximum. The default and maximum are finite. Native display lifetime is
     /// best effort.
-    timeout: option<duration>,
+    timeout-ns: option<duration>,
   }
 
   /// Opaque id, unique within the caller scope and never reused there.
@@ -151,28 +155,41 @@ interface types {
     not-supported(string),
     /// A delivery or subscription failed after the service attempted it.
     failed(string),
-    /// An unclassified failure; optional detail is diagnostic only.
-    other(option<string>),
+    /// An unclassified failure with a nonblank diagnostic description.
+    /// Use a generic description when the service supplies no details.
+    other(string),
   }
 
-  /// What the service currently supports. Support can change, so send may still fail.
+  /// A supported interaction or presentation feature. Absence means unsupported.
+  @since(version = 0.3.0)
+  variant supported-feature {
+    /// Buttons are supported, up to the given limit (1 through 8). Fallback
+    /// reply buttons count toward this limit; inline reply controls do not.
+    actions(u32),
+    /// Text input can produce reply rather than a fallback action.
+    inline-reply,
+    /// The service honors urgency hints.
+    urgency,
+    /// User dismissal can be observed. Enable required platform opt-ins for
+    /// every notification; otherwise dismissed notifications expire.
+    dismissal,
+    /// The service honors deep-link and url behaviors under embedding policy;
+    /// otherwise they act as callback.
+    navigation,
+    /// A provider extension, identified by a nonblank namespaced name such as
+    /// "example:badge". Callers ignore names they do not understand. Extensions
+    /// do not change the behavior of the standard features above.
+    other(string),
+  }
+
+  /// Current availability and support. Support can change, so send may still fail.
   @since(version = 0.3.0)
   record supported-features {
     /// False when nothing can be displayed; sends return unavailable.
     available: bool,
-    /// Buttons are supported; false requires max-actions to be zero.
-    actions: bool,
-    /// Text input can produce reply rather than a fallback action.
-    inline-reply: bool,
-    /// The service honors urgency hints.
-    urgency: bool,
-    /// User dismissal can be observed. Enable required platform opt-ins for
-    /// every notification; otherwise dismissed notifications expire.
-    dismissal: bool,
-    /// The service honors deep-link and url targets under embedding policy;
-    /// otherwise they act as callback.
-    navigation: bool,
-    /// At most 8, and zero without actions. Fallback buttons count.
-    max-actions: u32,
+    /// Unordered supported features. Each standard case appears at most once;
+    /// other may appear multiple times with distinct names. Missing actions
+    /// means a zero-button limit. Features do not imply service availability.
+    features: list<supported-feature>,
   }
 }
