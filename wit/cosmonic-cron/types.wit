@@ -198,12 +198,15 @@ interface types {
     /// A scheduled firing delivered to `handler`.
     @since(version = 0.1.0)
     record firing {
+        /// An opaque idempotency key, stable across redeliveries and unique within
+        /// the workload across registrations and implementer restarts. Do not parse it.
+        id: string,
         /// The schedule that came due.
         name: schedule-name,
         /// The firing's due time, which may precede handler execution.
         ///
-        /// It is stable across redeliveries of the same firing, so `name` and
-        /// `scheduled-at` together are an idempotency key for every schedule kind.
+        /// Stable across redeliveries, but distinct firings may share this time after
+        /// clock corrections. Use `id` for deduplication.
         /// For `cron`, this is the exact matching instant.
         /// For `once-at`, it is the requested instant; for `interval` and `once-after`,
         /// it is the system-clock reading when the period or delay elapsed.

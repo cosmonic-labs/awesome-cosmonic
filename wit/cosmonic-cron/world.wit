@@ -86,6 +86,8 @@ world scheduler-client {
 /// - Revoking `scheduler` removes all registrations.
 /// - Raising `min-interval` removes shorter schedules.
 /// - Lowering `max-registrations` removes the newest excess registrations.
+/// - Lowering `retry.max-attempts` discards queued retries past the new limit;
+///   abandoned repeating firings count in `missed`, and spent one-shots end.
 ///
 /// ## What a declared schedule guarantees
 ///
@@ -130,4 +132,8 @@ world host-plugin {
     /// Read system-clock times for `cron` schedules.
     @since(version = 0.1.0)
     import wasi:clocks/system-clock@0.3.0;
+
+    /// Give each plugin incarnation a fresh firing ID namespace.
+    @since(version = 0.1.0)
+    import wasi:random/random@0.3.0;
 }

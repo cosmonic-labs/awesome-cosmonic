@@ -13,8 +13,8 @@ package cosmonic:cron@0.1.0;
 ///   delivery's `missed`.
 /// - Undeliverable firings are skipped without storage or replay; `missed` counts them
 ///   only when the implementer can track them.
-/// - A handler may request redelivery with `retry`; `name` and `scheduled-at` identify
-///   the firing, and `attempt` counts its deliveries.
+/// - A handler may request redelivery with `retry`; `id` identifies the firing, and
+///   `attempt` counts its deliveries.
 @since(version = 0.1.0)
 interface handler {
     @since(version = 0.1.0)

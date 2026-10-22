@@ -17,6 +17,7 @@
 //! reported, and the test fails at the end if any of them did.
 #![cfg(unix)]
 
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -31,6 +32,7 @@ const BASE: &str = "http://127.0.0.1:8787";
 /// One `ticker: fired ...` line: a firing as the workload's handler saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Fired {
+    id: String,
     name: String,
     scheduled_at: i64,
     missed: u32,
@@ -46,6 +48,7 @@ impl Fired {
                 .find_map(|field| field.strip_prefix(key)?.strip_prefix('='))
         };
         Some(Self {
+            id: field("id")?.to_string(),
             name: field("name")?.to_string(),
             scheduled_at: field("scheduled-at")?.parse().ok()?,
             missed: field("missed")?.parse().ok()?,
@@ -659,6 +662,12 @@ fn schedules_fire_the_way_the_contract_says() {
         }),
     );
     run.check(
+        "redeliveries preserve the firing ID",
+        attempts.first().is_some_and(|first| {
+            !first.id.is_empty() && attempts.iter().all(|fired| fired.id == first.id)
+        }),
+    );
+    run.check(
         "the backoff starts at retry.backoff",
         run.host
             .logged(&["'retry-job' ", " will be retried in 500ms: attempt 1 of 3"]),
@@ -922,6 +931,15 @@ fn schedules_fire_the_way_the_contract_says() {
     run.check(
         format!("consecutive heartbeats are 5s apart (gaps: {gaps:?})"),
         gaps == [5],
+    );
+    run.check(
+        "distinct heartbeats have distinct firing IDs",
+        beats
+            .iter()
+            .map(|fired| &fired.id)
+            .collect::<BTreeSet<_>>()
+            .len()
+            == beats.len(),
     );
     run.check(
         "no heartbeat was skipped",

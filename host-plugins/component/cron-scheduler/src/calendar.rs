@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn typed_and_text_registration_share_names_and_limits() {
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(0);
         let limits = Limits {
             max_registrations: 1,
             ..Limits::default()

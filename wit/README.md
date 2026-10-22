@@ -90,7 +90,7 @@ agent -> authorized model aliases + chat + tools + session
 ```
 
 `cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, `cosmonic:cron`
-imports those and `wasi:clocks`, and `cosmonic:agent` and
+imports those, `wasi:clocks`, and `wasi:random`, while `cosmonic:agent` and
 `cosmonic:notifications` import `wasi:clocks` for `duration`. Each package's
 `wkg.lock` pins them by digest. The build script fetches them and checks the
 lock still reproduces:
@@ -108,7 +108,7 @@ node .github/scripts/wit/build.mjs wit/cosmonic-cron cosmonic:cron
 | --- | --- | --- |
 | `scheduled-handler` | None | `handler` |
 | `scheduler-client` | `scheduler` | `handler` |
-| `host-plugin` | `handler`, `wasi:clocks`, `wasmcloud:host` | `types`, `scheduler`, `wasi:cli/run`, `wasmcloud:host/workload-lifecycle` |
+| `host-plugin` | `handler`, `wasi:clocks`, `wasi:random`, `wasmcloud:host` | `types`, `scheduler`, `wasi:cli/run`, `wasmcloud:host/workload-lifecycle` |
 
 A workload whose schedules are known at deploy time declares them in its
 binding and implements `scheduled-handler`. One that decides at run time

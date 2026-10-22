@@ -17,6 +17,7 @@
 //! the schedule name selects handler behavior:
 //!
 //! - `retry-*` answers `retry` until the third attempt
+//! - `exhaust-*` always answers `retry`
 //! - `fail-*`  answers `failed`
 //! - `slow-*`  takes 2.5 seconds
 //! - `trap-*`  panics
@@ -44,8 +45,8 @@ struct Ticker;
 impl HandlerGuest for Ticker {
     async fn handle(firing: Firing) -> Result<(), HandlerError> {
         eprintln!(
-            "ticker: fired name={} scheduled-at={} missed={} attempt={}",
-            firing.name, firing.scheduled_at.seconds, firing.missed, firing.attempt
+            "ticker: fired name={} id={} scheduled-at={} missed={} attempt={}",
+            firing.name, firing.id, firing.scheduled_at.seconds, firing.missed, firing.attempt
         );
         match firing.name.split('-').next() {
             Some("retry") if firing.attempt < 3 => Err(HandlerError::Retry(Some(format!(
