@@ -170,7 +170,9 @@ The plugin logs to stderr with the prefix `cron-scheduler:` when a workload bind
 
 ## Test
 
-CI runs native tests and Clippy, builds the plugin and test workload, and validates their required exports. The host integration test runs locally with a wash built with `host-component-plugins`.
+CI checks formatting for both crates, runs native tests and Clippy, builds the plugin and test workload, and validates their required exports. Cargo dependencies and build outputs are cached for both crates.
+
+A separate integration job runs the host test against those validated components. Its host is built from the pinned wasmCloud v2.10.3 commit `548bb21b65ac8cc03776f73656c4bf7be2f96992` with Rust 1.96.0 and `host-component-plugins`; the binary is cached by source revision, toolchain, platform, and build options. Failed host logs are uploaded as artifacts.
 
 The schedule logic has no dependency on a clock or on the WIT bindings, so its unit tests run on the host:
 
@@ -184,7 +186,7 @@ The end-to-end test, [`tests/e2e.rs`](tests/e2e.rs), builds the plugin and the t
 WASH=/path/to/wash-with-plugins cargo e2e
 ```
 
-`cargo e2e` is an alias, set in [`.cargo/config.toml`](.cargo/config.toml), for `cargo test --test e2e -- --ignored --nocapture`.
+`cargo e2e` is an alias, set in [`.cargo/config.toml`](.cargo/config.toml), for `cargo test --test e2e -- --ignored --nocapture`. Set `CRON_E2E_PREBUILT=1` to use components already built in their normal output paths; CI uses this to test the artifacts produced by the build job.
 
 Not covered end to end: several workloads on one host (unit-tested in [`src/engine.rs`](src/engine.rs)) and a plugin restart.
 
