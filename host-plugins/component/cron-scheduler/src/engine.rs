@@ -34,6 +34,7 @@ pub struct Now {
 /// A scheduled firing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Firing {
+    pub id: String,
     pub name: String,
     pub scheduled_at: Wall,
     pub missed: u32,
@@ -177,10 +178,12 @@ struct Workload {
     busy: BTreeMap<String, u64>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Engine {
     workloads: BTreeMap<String, Workload>,
     epochs: u64,
+    namespace: u128,
+    firings: u64,
     /// Schedules removed since [`Engine::take_ended`] was last called.
     ended: Vec<Ended>,
     /// The system clock as of the last poll, to notice it being set back.
@@ -188,10 +191,13 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub const fn new() -> Self {
+    /// Start an incarnation with a fresh random namespace.
+    pub const fn new(namespace: u128) -> Self {
         Self {
             workloads: BTreeMap::new(),
             epochs: 0,
+            namespace,
+            firings: 0,
             ended: Vec::new(),
             last_wall: None,
         }
@@ -234,6 +240,7 @@ impl Engine {
     /// - Revoking `scheduler` removes all registrations.
     /// - Raising `min-interval` removes shorter schedules.
     /// - Lowering `max-registrations` removes the newest excess registrations.
+    /// - Lowering `retry.max-attempts` discards queued retries past the new limit.
     pub fn bind(&mut self, workload: &str, binding: Binding, can_register: bool, now: Now) {
         let Workload {
             mut entries, busy, ..
@@ -260,6 +267,27 @@ impl Engine {
                 });
             }
             permitted
+        });
+        entries.retain(|name, entry| {
+            let exhausted = entry
+                .retry
+                .as_ref()
+                .is_some_and(|retry| retry.firing.attempt >= binding.limits.retry_max_attempts);
+            if !exhausted {
+                return true;
+            }
+            entry.retry = None;
+            if entry.spec.is_once() {
+                self.ended.push(Ended {
+                    workload: workload.to_string(),
+                    name: name.clone(),
+                    reason: EndReason::Fired,
+                });
+                false
+            } else {
+                entry.missed = entry.missed.saturating_add(1);
+                true
+            }
         });
         // Oldest first, so that when there are more than `max-registrations`
         // now allows, the ones registered last are the ones to go.
@@ -443,7 +471,9 @@ impl Engine {
                         let missed = entry.missed.saturating_add(skipped);
                         entry.missed = 0;
                         entry.overtaken = false;
+                        self.firings = self.firings.checked_add(1).expect("firing IDs exhausted");
                         Firing {
+                            id: format!("{:032x}-{:016x}", self.namespace, self.firings),
                             name: name.clone(),
                             scheduled_at,
                             missed,
@@ -741,7 +771,7 @@ mod tests {
     }
 
     fn bound(declared: &[(&str, Spec)], can_register: bool) -> Engine {
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(0);
         let binding = Binding {
             declared: declared
                 .iter()
@@ -910,6 +940,7 @@ mod tests {
 
         let second = engine.poll(at(61));
         assert_eq!(second[0].firing.attempt, 2);
+        assert_eq!(second[0].firing.id, first[0].firing.id);
         assert_eq!(second[0].firing.scheduled_at, first[0].firing.scheduled_at);
         // The backoff doubles.
         assert_eq!(
@@ -931,7 +962,7 @@ mod tests {
 
     #[test]
     fn retry_gives_way_to_the_next_firing() {
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(0);
         let binding = Binding {
             declared: [("poll".to_string(), Spec::Interval(2 * SEC))].into(),
             limits: Limits {
@@ -1111,7 +1142,7 @@ mod tests {
 
     #[test]
     fn registrations_are_capped_and_declared_ones_do_not_count() {
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(0);
         let binding = Binding {
             declared: [("declared".to_string(), cron("0 2 * * *"))].into(),
             limits: Limits {
@@ -1263,7 +1294,7 @@ mod tests {
 
     /// A workload that may register, under limits of the test's choosing.
     fn limited(limits: Limits) -> Engine {
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(0);
         engine.bind(
             "wl",
             Binding {
@@ -1404,6 +1435,7 @@ mod tests {
         assert_eq!(listed(&mut engine), ["check"]);
         let second = engine.poll(at(70));
         assert_eq!(second[0].firing.attempt, 2);
+        assert_eq!(second[0].firing.id, first[0].firing.id);
         assert_eq!(second[0].firing.scheduled_at, first[0].firing.scheduled_at);
         assert_eq!(
             engine.complete(&second[0], Outcome::Retry, at(70)),
@@ -1632,7 +1664,7 @@ mod tests {
 
     #[test]
     fn cron_is_rescheduled_when_the_clock_is_set_far_back() {
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(0);
         let binding = Binding {
             declared: [("minutely".to_string(), cron("* * * * *"))].into(),
             limits: Limits::default(),
@@ -1652,7 +1684,7 @@ mod tests {
 
     #[test]
     fn cron_waits_out_a_small_step_back_instead_of_repeating_itself() {
-        let mut engine = Engine::new();
+        let mut engine = Engine::new(0);
         let binding = Binding {
             declared: [("minutely".to_string(), cron("* * * * *"))].into(),
             limits: Limits::default(),
@@ -2050,6 +2082,197 @@ mod tests {
         assert_eq!(
             next(&mut engine, "poll", clock(4, 100)),
             Some(clock(0, 106).wall)
+        );
+    }
+
+    #[test]
+    fn interval_firing_ids_remain_distinct_when_the_wall_clock_repeats() {
+        let mut engine = bound(&[("poll", Spec::Interval(10 * SEC))], false);
+        let first = engine.poll(clock(10, 10));
+        engine.complete(&first[0], Outcome::Handled, clock(10, 10));
+        let second = engine.poll(clock(20, 10));
+        assert_eq!(first[0].firing.scheduled_at, second[0].firing.scheduled_at);
+        assert_ne!(first[0].firing.id, second[0].firing.id);
+        assert_eq!((first[0].firing.attempt, second[0].firing.attempt), (1, 1));
+    }
+
+    #[test]
+    fn cron_firing_ids_remain_distinct_after_a_large_backward_clock_reset() {
+        let mut engine = bound(&[("hourly", cron("0 * * * *"))], false);
+        let first = engine.poll(clock(4 * 3600, 4 * 3600));
+        engine.complete(&first[0], Outcome::Handled, clock(4 * 3600, 4 * 3600));
+        assert!(engine.poll(clock(4 * 3600 + 1, 0)).is_empty());
+        let second = engine.poll(clock(8 * 3600 + 1, 4 * 3600));
+        assert_eq!(first[0].firing.scheduled_at, second[0].firing.scheduled_at);
+        assert_ne!(first[0].firing.id, second[0].firing.id);
+    }
+
+    #[test]
+    fn a_renewed_one_shot_gets_a_new_id_when_its_due_time_repeats() {
+        let mut engine = bound(&[], true);
+        engine
+            .register("wl", "check", Spec::OnceAfter(5 * SEC), clock(0, 0))
+            .unwrap();
+        let first = engine.poll(clock(5, 5));
+        engine.complete(&first[0], Outcome::Handled, clock(5, 5));
+        engine
+            .register("wl", "check", Spec::OnceAfter(5 * SEC), clock(6, 0))
+            .unwrap();
+        let second = engine.poll(clock(11, 5));
+        assert_eq!(first[0].firing.scheduled_at, second[0].firing.scheduled_at);
+        assert_ne!(first[0].firing.id, second[0].firing.id);
+    }
+
+    #[test]
+    fn fresh_incarnation_namespaces_keep_firing_ids_distinct() {
+        let mut ids = Vec::new();
+        for namespace in [1, 2] {
+            let mut engine = Engine::new(namespace);
+            engine.bind("wl", Binding::default(), true, at(0));
+            engine
+                .register("wl", "poll", Spec::Interval(10 * SEC), at(0))
+                .unwrap();
+            ids.push(engine.poll(at(10))[0].firing.id.clone());
+        }
+        assert_ne!(ids[0], ids[1]);
+    }
+
+    #[test]
+    fn a_rebind_discards_queued_retries_past_the_new_attempt_limit() {
+        for declared in [false, true] {
+            let schedules = if declared {
+                vec![("poll", Spec::Interval(60 * SEC))]
+            } else {
+                vec![]
+            };
+            let mut engine = bound(&schedules, true);
+            if !declared {
+                engine
+                    .register("wl", "poll", Spec::Interval(60 * SEC), at(0))
+                    .unwrap();
+            }
+            let first = engine.poll(at(60));
+            assert_eq!(
+                engine.complete(&first[0], Outcome::Retry, at(60)),
+                Completion::RetryIn(SEC)
+            );
+            engine.bind(
+                "wl",
+                Binding {
+                    declared: schedules
+                        .into_iter()
+                        .map(|(name, spec)| (name.to_string(), spec))
+                        .collect(),
+                    limits: Limits {
+                        retry_max_attempts: 1,
+                        ..Limits::default()
+                    },
+                },
+                true,
+                at(60),
+            );
+            assert!(engine.poll(at(61)).is_empty());
+            let next = engine.poll(at(120));
+            assert_eq!((next[0].firing.attempt, next[0].firing.missed), (1, 1));
+            engine.complete(&next[0], Outcome::Handled, at(120));
+            assert_eq!(engine.poll(at(180))[0].firing.missed, 0);
+        }
+    }
+
+    #[test]
+    fn a_rebind_preserves_queued_retries_within_the_new_attempt_limit() {
+        let mut engine = bound(&[("poll", Spec::Interval(60 * SEC))], false);
+        let first = engine.poll(at(60));
+        engine.complete(&first[0], Outcome::Retry, at(60));
+        engine.bind(
+            "wl",
+            Binding {
+                declared: [("poll".to_string(), Spec::Interval(60 * SEC))].into(),
+                limits: Limits {
+                    retry_max_attempts: 2,
+                    ..Limits::default()
+                },
+            },
+            false,
+            at(60),
+        );
+        let retry = engine.poll(at(61));
+        assert_eq!(retry[0].firing.id, first[0].firing.id);
+        assert_eq!(retry[0].firing.attempt, 2);
+        assert_eq!(
+            engine.complete(&retry[0], Outcome::Retry, at(61)),
+            Completion::RetriesExhausted
+        );
+        assert_eq!(engine.poll(at(120))[0].firing.missed, 1);
+    }
+
+    #[test]
+    fn a_rebind_ends_one_shots_whose_queued_retry_exceeds_the_new_limit() {
+        let mut engine = limited(Limits {
+            max_registrations: 1,
+            ..Limits::default()
+        });
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
+        let first = engine.poll(at(10));
+        engine.complete(&first[0], Outcome::Retry, at(10));
+        engine.bind(
+            "wl",
+            Binding {
+                limits: Limits {
+                    max_registrations: 1,
+                    retry_max_attempts: 1,
+                    ..Limits::default()
+                },
+                ..Binding::default()
+            },
+            true,
+            at(10),
+        );
+        assert!(listed(&mut engine).is_empty());
+        assert_eq!(
+            ended(&mut engine),
+            [("check".to_string(), EndReason::Fired)]
+        );
+        assert!(engine.poll(at(11)).is_empty());
+        assert_eq!(
+            engine.register("wl", "next", Spec::OnceAfter(10 * SEC), at(11)),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn a_rebind_ends_exhausted_one_shots_before_applying_the_registration_cap() {
+        let mut engine = limited(Limits {
+            max_registrations: 2,
+            ..Limits::default()
+        });
+        engine
+            .register("wl", "check", Spec::OnceAfter(10 * SEC), at(0))
+            .unwrap();
+        engine
+            .register("wl", "kept", Spec::Interval(60 * SEC), at(1))
+            .unwrap();
+        let first = engine.poll(at(10));
+        engine.complete(&first[0], Outcome::Retry, at(10));
+        engine.bind(
+            "wl",
+            Binding {
+                limits: Limits {
+                    max_registrations: 1,
+                    retry_max_attempts: 1,
+                    ..Limits::default()
+                },
+                ..Binding::default()
+            },
+            true,
+            at(10),
+        );
+        assert_eq!(listed(&mut engine), ["kept"]);
+        assert_eq!(
+            ended(&mut engine),
+            [("check".to_string(), EndReason::Fired)]
         );
     }
 }

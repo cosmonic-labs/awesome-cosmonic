@@ -37,6 +37,7 @@ use bindings::exports::wasmcloud::host::workload_lifecycle::{
 };
 use bindings::wasi::clocks::system_clock::Instant;
 use bindings::wasi::clocks::{monotonic_clock, system_clock};
+use bindings::wasi::random::random;
 use bindings::wasmcloud::host::identity;
 use bindings::wasmcloud::host::workload_call::{self, Target};
 
@@ -52,7 +53,9 @@ const HANDLER: &str = "cosmonic:cron/handler@0.1.0";
 const MIN_SLEEP: u64 = 1_000_000;
 
 thread_local! {
-    static ENGINE: RefCell<Engine> = const { RefCell::new(Engine::new()) };
+    static ENGINE: RefCell<Engine> = RefCell::new(Engine::new(
+        (u128::from(random::get_random_u64()) << 64) | u128::from(random::get_random_u64())
+    ));
     /// Wake channel for scheduler calls and lifecycle hooks, with its receiver owned by
     /// the loop.
     static WAKE: (UnboundedSender<()>, RefCell<Option<UnboundedReceiver<()>>>) = {
@@ -373,6 +376,7 @@ async fn deliver(dispatch: Dispatch) -> (Dispatch, Outcome, Option<String>) {
         return (dispatch, Outcome::Undeliverable, None);
     };
     let firing = Firing {
+        id: dispatch.firing.id.clone(),
         name: dispatch.firing.name.clone(),
         scheduled_at: Instant {
             seconds: dispatch.firing.scheduled_at.seconds,

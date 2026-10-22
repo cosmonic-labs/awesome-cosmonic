@@ -21,6 +21,15 @@ version = "0.3.0"
 digest = "sha256:59e1f4079e64ada450e19ffc9d08854c904e356ed8cc1fda36ff4fe150264db2"
 
 [[packages]]
+name = "wasi:random"
+registry = "wasi.dev"
+
+[[packages.versions]]
+requirement = "=0.3.0"
+version = "0.3.0"
+digest = "sha256:daa3c8897a68fbfc58b95c2e1de1b7af5be8c647bbb2cfeaa54c1e5b1ba9b772"
+
+[[packages]]
 name = "wasmcloud:host"
 registry = "wasmcloud.com"
 
