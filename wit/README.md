@@ -106,5 +106,5 @@ node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
 | `notification-consumer` | `notifier`, `events` | None |
 | `notification-provider` | None | `notifier`, `events` |
 
-Trusted wiring binds both interfaces to one caller scope, and the provider scopes
-ids, tags, and queued responses to it. See the [contract](cosmonic-notifications/README.md).
+For consumer and provider requirements and an example, see the
+[notifications contract](cosmonic-notifications/README.md).
