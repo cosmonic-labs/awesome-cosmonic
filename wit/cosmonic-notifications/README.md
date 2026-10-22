@@ -152,3 +152,12 @@ node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notificat
 The artifact is `dist/notifications.wasm`, published at
 `ghcr.io/cosmonic-labs/cosmonic/notifications:0.3.0` through
 [`../wkg-registries.toml`](../wkg-registries.toml).
+
+After the first publish, make the GHCR package public like the other packages.
+Pull-request builds check the registry anonymously and skip the contents
+comparison for a package they cannot see, so a private package never fails a
+changed-contents-without-bump drift check.
+
+`cosmonic:notify@0.2.0` remains published at
+`ghcr.io/cosmonic-labs/cosmonic/notify` and receives no further releases; this
+package supersedes it.
