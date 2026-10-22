@@ -29,14 +29,15 @@ interface handler {
         /// Retries use a delay and bounded attempt count; repeating schedules stop
         /// retrying once the next firing is due, including if it came due during the
         /// handler call.
+        /// The next delivery counts a firing given up this way in `missed`.
         retry(option<string>),
         /// Stop retrying this firing and deliver future firings of a repeating schedule
         /// as usual.
         failed(option<string>),
         /// An unspecified failure, treated as `failed`.
         ///
-        /// The runtime also returns this when a call cannot complete because of a trap,
-        /// deadline, or workload stopping mid-call.
+        /// Implementers treat a call that cannot complete, because of a trap, deadline,
+        /// or workload stopping mid-call, the same way.
         other(option<string>),
     }
 

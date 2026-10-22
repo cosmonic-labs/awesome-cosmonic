@@ -52,6 +52,7 @@ impl HandlerGuest for Ticker {
                 "attempt {} of 3",
                 firing.attempt
             )))),
+            Some("exhaust") => Err(HandlerError::Retry(Some("always retry".into()))),
             Some("fail") => Err(HandlerError::Failed(Some(
                 "this schedule always fails".into(),
             ))),
