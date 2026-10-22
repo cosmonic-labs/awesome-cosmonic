@@ -11,7 +11,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { declaration, declaredPackage, packageInfo, notice, run, runMain, setOutput, warning } from "./lib.mjs";
+import { declaration, declaredPackage, declaredVersion, packageInfo, notice, run, runMain, setOutput, warning } from "./lib.mjs";
 
 const REGISTRY = "ghcr.io";
 const ACCEPT = [
@@ -22,7 +22,6 @@ const ACCEPT = [
 ].join(", ");
 
 const sha256 = (buf) => `sha256:${createHash("sha256").update(buf).digest("hex")}`;
-const versionOf = (decl) => decl.slice(decl.indexOf("@") + 1, -1);
 
 // Looks the version up in the registry. Returns { status, body, digest }.
 export async function probe(name, version, { anonymous }) {
@@ -47,9 +46,7 @@ export async function probe(name, version, { anonymous }) {
 }
 
 async function check(pkg, wasm, anonymous) {
-  const built = await declaredPackage(wasm);
-  const version = versionOf(built);
-  if (built !== declaration(pkg, version)) throw new Error(`artifact declares '${built}', expected ${packageInfo(pkg).id}`);
+  const version = await declaredVersion(pkg, wasm);
   const name = packageInfo(pkg).repository;
   const ref = `${REGISTRY}/${name}:${version}`;
   const { status, body, digest } = await probe(name, version, { anonymous });
@@ -79,9 +76,7 @@ async function check(pkg, wasm, anonymous) {
 }
 
 async function push(pkg, wasm) {
-  const built = await declaredPackage(wasm);
-  const version = versionOf(built);
-  if (built !== declaration(pkg, version)) throw new Error(`artifact declares '${built}', expected ${packageInfo(pkg).id}`);
+  const version = await declaredVersion(pkg, wasm);
   const ref = `${REGISTRY}/${packageInfo(pkg).repository}:${version}`;
   const out = await run("wash", ["-o", "json", "oci", "push", ref, wasm]);
   console.log(out);
@@ -91,9 +86,7 @@ async function push(pkg, wasm) {
 }
 
 async function verify(pkg, wasm, digest) {
-  const built = await declaredPackage(wasm);
-  const version = versionOf(built);
-  if (built !== declaration(pkg, version)) throw new Error(`artifact declares '${built}', expected ${packageInfo(pkg).id}`);
+  const version = await declaredVersion(pkg, wasm);
   const ref = `${REGISTRY}/${packageInfo(pkg).repository}@${digest}`;
   const pulled = join(process.env.RUNNER_TEMP ?? tmpdir(), `pulled-${packageInfo(pkg).namespace}-${packageInfo(pkg).name}.wasm`);
   await run("wash", ["oci", "pull", ref, pulled]);
