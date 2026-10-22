@@ -11,7 +11,7 @@ arrive on a future or stream.
 | --- | --- |
 | [`cosmonic:agent`](cosmonic-agent/world.wit) 0.4.2 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
-| [`cosmonic:notifications`](cosmonic-notifications/README.md) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams. |
+| [`cosmonic:notifications`](cosmonic-notifications/world.wit) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams. |
 
 ## Inference and agent worlds
 
@@ -108,3 +108,7 @@ node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
 
 Trusted wiring binds both interfaces to one caller scope, and the provider scopes
 ids, tags, and queued responses to it. See the [contract](cosmonic-notifications/README.md).
+
+`cosmonic:notify@0.2.0` stays published at `ghcr.io/cosmonic-labs/cosmonic/notify`
+for existing consumers; `cosmonic:notifications` supersedes it and `notify` receives
+no further releases.
