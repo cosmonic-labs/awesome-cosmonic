@@ -38,6 +38,21 @@ env:
   WASM_TOOLS_VERSION: 1.258.0
 
 jobs:
+  test:
+    name: test helpers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/wit
+            wit
+
+      - run: node --test .github/scripts/wit/*.test.mjs
+
   build:
     name: build ${{ matrix.package }}
     runs-on: ubuntu-latest
@@ -48,15 +63,12 @@ jobs:
       matrix:
         include:
           - package: agent
-            namespace: cosmonic
             id: cosmonic:agent
             dir: wit/cosmonic-agent
           - package: kafka
-            namespace: cosmonic
             id: cosmonic:kafka
             dir: wit/cosmonic-kafka
           - package: notifications
-            namespace: cosmonic
             id: cosmonic:notifications
             dir: wit/cosmonic-notifications
     steps:
@@ -71,9 +83,6 @@ jobs:
       - uses: wasmCloud/setup-wash-action@47756fa211cc82f392c57e39504f43ef46fc0b3e # v2.1.0
         with:
           wash-version: ${{ env.WASH_VERSION }}
-
-      - name: Test WIT workflow helpers
-        run: node --test .github/scripts/wit/*.test.mjs
 
       - name: Validate and build
         run: node .github/scripts/wit/build.mjs "${{ matrix.dir }}" "${{ matrix.id }}"
@@ -91,7 +100,7 @@ jobs:
 
   publish:
     name: publish ${{ matrix.package }}
-    needs: build
+    needs: [build, test]
     if: >-
       github.event_name != 'pull_request' &&
       github.repository == 'cosmonic-labs/awesome-cosmonic' &&
