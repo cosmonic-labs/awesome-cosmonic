@@ -64,7 +64,7 @@ the notification; `close` does. Delivery is best effort, not durable.
 | `activated`, `action`, `reply` | The user answered. |
 | `dismissed` | The user dismissed it (requires `dismissal` support). |
 | `expired` | The deadline passed, or a dismissal wasn't observable. Don't resend automatically. |
-| `closed` | `close`, tag replacement, or orderly shutdown. |
+| `closed` | `close`, tag replacement, or orderly shutdown. No user decision; resending is fine. |
 | `other` | Anything else. Don't assume an answer or resend. |
 
 `timeout` is a `wasi:clocks` `duration`: `none` uses the provider default, zero
@@ -92,16 +92,19 @@ stay queued, and overflow drops the oldest.
 fail: they truncate extra actions and long text, fall back to normal urgency,
 and treat navigation targets as `callback` without navigation support. Without
 inline reply, input becomes a same-id button that returns `action(id)`, or
-`send` returns `not-supported` if no button slot remains.
+`send` returns `not-supported` if no button slot remains after the listed
+actions, which keep precedence.
 
 Ids and tags are never truncated. Providers accept at least 64 UTF-8 bytes and
 reject invalid or oversized values with `invalid-argument`.
 
 ## Errors
 
-While the service is unavailable, `send` and `subscribe` return `unavailable`,
-and `close` succeeds. Declined platform authorization is `unavailable`; caller
-revocation is `access-denied`. Error strings are diagnostic; don't parse them.
+While the service is unavailable, `send` and `subscribe` return `unavailable`.
+`close` still settles a pending id as `closed`, and the provider withdraws the
+native notification once it can. Declined platform authorization is
+`unavailable`; caller revocation is `access-denied`. Error strings are
+diagnostic; don't parse them.
 
 ## Publishing
 
