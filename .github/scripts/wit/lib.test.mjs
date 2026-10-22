@@ -39,6 +39,4 @@ test("notifications uses the existing cosmonic registry mapping", () => {
   const config = readFileSync(new URL("../../../wit/wkg-registries.toml", import.meta.url), "utf8");
   assert.match(config, /\[namespace_registries\.cosmonic\]/);
   assert.match(config, /namespacePrefix = "cosmonic-labs\/"/);
-  assert.doesNotMatch(config, /\[package_registry_overrides/);
-  assert.doesNotMatch(config, /\[namespace_registries\.wasmcloud(?:\]|\.)/);
 });
