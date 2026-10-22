@@ -69,7 +69,7 @@ the notification; `close` does. Delivery is best effort, not durable.
 | `activated`, `action`, `reply` | The user answered. |
 | `dismissed` | The user dismissed it (requires `dismissal` support). |
 | `expired` | The deadline passed, or a dismissal wasn't observable. Don't resend automatically. |
-| `closed` | `close`, tag replacement, or orderly shutdown. |
+| `closed` | `close`, tag replacement, or orderly shutdown. No user decision; resending is fine. |
 | `other` | Anything else. Don't assume an answer or resend. |
 
 `timeout-ns` is a `wasi:clocks` `duration`, in nanoseconds: `none` uses the provider
@@ -112,7 +112,7 @@ Providers truncate actions to the `actions` limit (zero when absent), truncate
 long text, fall back to normal urgency, and treat navigation behaviors as
 `callback` without navigation support. Without inline reply, input becomes a
 same-id button that returns `action(id)`, or `send` returns `not-supported` if no
-button slot remains.
+button slot remains after the listed actions, which keep precedence.
 
 A `notification-action` describes a labeled choice and its `behavior`:
 `deep-link`, `url`, or `callback`. `default-behavior` applies to body clicks.
@@ -132,9 +132,11 @@ are trimmed and blank tags are invalid.
 
 ## Errors
 
-While the service is unavailable, `send` and `subscribe` return `unavailable`,
-and `close` succeeds. Declined platform authorization is `unavailable`; caller
-revocation is `access-denied`. `error-code.other` requires a nonblank description,
+While the service is unavailable, `send` and `subscribe` return `unavailable`.
+`close` still settles a pending id as `closed`, and the provider withdraws the
+native notification once it can. Declined platform authorization is
+`unavailable`; caller revocation is `access-denied`. `error-code.other` requires
+a nonblank description,
 using a generic explanation if the service provides none. Error strings are
 diagnostic; don't parse them.
 
