@@ -155,7 +155,7 @@ interface types {
     other(option<string>),
   }
 
-  /// Effective behavior of the composed service; a snapshot, not a guarantee.
+  /// What the service currently supports. Support can change, so send may still fail.
   @since(version = 0.3.0)
   record supported-features {
     /// False when nothing can be displayed; sends return unavailable.
