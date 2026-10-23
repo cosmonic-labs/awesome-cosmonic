@@ -126,6 +126,26 @@ The contract is documented on the interfaces in [`wit/cosmonic-cron`](../../../w
 
 A backend can translate POSIX day matching into separate triggers and combine simultaneous occurrences into one firing. Provider time-zone rules may determine daylight saving behavior, which the interface leaves to the implementer. Subminute intervals need a finer timer when the provider only supports minute resolution. The current plugin is one implementation of the contract, with the limits listed above.
 
+## Published component
+
+CI publishes the plugin to `ghcr.io/cosmonic-labs/host-plugins/cron-scheduler`
+after the build and host integration tests pass on `main`. `latest` follows
+`main`; `sha-<first 12 commit characters>` identifies a build. A manual run of
+the `cron-scheduler` workflow on `main` also publishes. Pull requests and
+runs in forks only test and build.
+
+Pull a published build to use it with the host commands below:
+
+```sh
+wash oci pull ghcr.io/cosmonic-labs/host-plugins/cron-scheduler:latest cron_scheduler.wasm
+wash host --host-plugin id=cron-scheduler,file=cron_scheduler.wasm
+```
+
+For a pinned deployment, pull by the manifest digest shown in the workflow's
+publish job summary. CI attaches GitHub build provenance to that digest. The
+test ticker workload is included in CI artifacts but is not published to GHCR.
+The host still needs the `host-component-plugins` feature described under [Run](#run).
+
 ## Build
 
 Needs [`wash`](https://wasmcloud.com/docs/installation) and Rust with the `wasm32-wasip2` target. Tested with wash 2.10.3 and Rust 1.99.0.
