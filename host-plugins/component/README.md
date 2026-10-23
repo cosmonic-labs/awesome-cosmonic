@@ -9,3 +9,8 @@ for the state of play before depending on one.
 
 One directory per hosted plugin. See [CONTRIBUTING.md](../../CONTRIBUTING.md)
 for requirements.
+
+- [`cron-scheduler`](cron-scheduler/): Calls workloads on crontab schedules,
+  fixed intervals, and once at a chosen time. CI publishes tested builds to
+  `ghcr.io/cosmonic-labs/host-plugins/cron-scheduler` with `latest` and
+  `sha-<first 12 commit characters>` tags.

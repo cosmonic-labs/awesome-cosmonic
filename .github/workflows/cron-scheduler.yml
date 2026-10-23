@@ -21,7 +21,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Let publishing finish so pushed artifacts receive their attestation.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   RUSTUP_TOOLCHAIN: "1.99.0"
@@ -213,3 +214,75 @@ jobs:
           path: ${{ runner.temp }}/cron-scheduler-e2e-*.log
           if-no-files-found: ignore
           retention-days: 7
+
+  publish:
+    needs: [test-and-build, integration]
+    if: >-
+      github.repository == 'cosmonic-labs/awesome-cosmonic' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      IMAGE: ghcr.io/cosmonic-labs/host-plugins/cron-scheduler
+      COMPONENT: dist/target/wasm32-wasip2/release/cron_scheduler.wasm
+    steps:
+      - name: Download tested components
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cron-scheduler
+          path: dist
+
+      - uses: wasmCloud/setup-wash-action@47756fa211cc82f392c57e39504f43ef46fc0b3e # v2.1.0
+        with:
+          wash-version: ${{ env.WASH_VERSION }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GHCR
+        id: push
+        run: |
+          set -euo pipefail
+          test -s "$COMPONENT"
+          for kind in sha latest; do
+            tag="$kind"
+            if [[ "$kind" == sha ]]; then
+              tag="sha-${GITHUB_SHA:0:12}"
+            fi
+            pushed=$(wash --output json oci push "${IMAGE}:${tag}" "$COMPONENT")
+            digest=$(jq -er '.data.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$pushed")
+            echo "${kind}-digest=${digest}" >> "$GITHUB_OUTPUT"
+            echo "pushed ${IMAGE}:${tag} (${digest})"
+          done
+          {
+            echo '### cron-scheduler published'
+            echo "- Image: \`${IMAGE}:latest\`"
+            echo "- Commit tag: \`${IMAGE}:sha-${GITHUB_SHA:0:12}\`"
+            echo "- Digest: \`${IMAGE}@${digest}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # wash adds a creation timestamp per push, so each tag has its own manifest.
+      - name: Attest the commit tag
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.sha-digest }}
+          push-to-registry: true
+
+      - name: Attest latest
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.latest-digest }}
+          push-to-registry: true
