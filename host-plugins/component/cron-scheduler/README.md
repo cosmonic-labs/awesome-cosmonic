@@ -131,8 +131,19 @@ A backend can translate POSIX day matching into separate triggers and combine si
 CI publishes the plugin to `ghcr.io/cosmonic-labs/host-plugins/cron-scheduler`
 after the build and host integration tests pass on `main`. `latest` follows
 `main`; `sha-<first 12 commit characters>` identifies a build. A manual run of
-the `cron-scheduler` workflow on `main` also publishes. Pull requests and
-runs in forks only test and build.
+the `cron-scheduler` workflow on `main` also publishes. Older workflow reruns
+publish their commit tag but leave `latest` unchanged if the plugin, cron WIT,
+registry configuration, or workflow differs from current `main`. Unrelated
+changes on `main` do not block publishing. Pull requests and runs in forks only
+test and build.
+
+**First publication:** GHCR creates new packages as private. After the first
+push, a package administrator must open the organization's Packages page,
+select `host-plugins/cron-scheduler`, and use **Package settings → Change
+visibility → Public**. Then rerun the failed publish job. CI attests the
+published manifests before checking anonymous pulls with an empty Docker
+configuration and comparing the downloaded bytes with the tested component.
+The check fails until the package is public.
 
 Pull a published build to use it with the host commands below:
 

@@ -233,6 +233,13 @@ jobs:
       IMAGE: ghcr.io/cosmonic-labs/host-plugins/cron-scheduler
       COMPONENT: dist/target/wasm32-wasip2/release/cron_scheduler.wasm
     steps:
+      - name: Check out current main for the freshness check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Download tested components
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -256,6 +263,18 @@ jobs:
           set -euo pipefail
           test -s "$COMPONENT"
           for kind in sha latest; do
+            if [[ "$kind" == latest ]]; then
+              # Unrelated main changes do not invalidate this tested build.
+              changes=$(git diff --name-only "$GITHUB_SHA" HEAD -- \
+                host-plugins/component/cron-scheduler \
+                wit/cosmonic-cron \
+                wit/wkg-registries.toml \
+                .github/workflows/cron-scheduler.yml)
+              if [[ -n "$changes" ]]; then
+                echo "::notice::newer cron sources exist on main; leaving latest unchanged"
+                continue
+              fi
+            fi
             tag="$kind"
             if [[ "$kind" == sha ]]; then
               tag="sha-${GITHUB_SHA:0:12}"
@@ -265,12 +284,6 @@ jobs:
             echo "${kind}-digest=${digest}" >> "$GITHUB_OUTPUT"
             echo "pushed ${IMAGE}:${tag} (${digest})"
           done
-          {
-            echo '### cron-scheduler published'
-            echo "- Image: \`${IMAGE}:latest\`"
-            echo "- Commit tag: \`${IMAGE}:sha-${GITHUB_SHA:0:12}\`"
-            echo "- Digest: \`${IMAGE}@${digest}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
 
       # wash adds a creation timestamp per push, so each tag has its own manifest.
       - name: Attest the commit tag
@@ -281,8 +294,39 @@ jobs:
           push-to-registry: true
 
       - name: Attest latest
+        if: steps.push.outputs.latest-digest != ''
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.latest-digest }}
           push-to-registry: true
+
+      - name: Verify anonymous pulls and report published references
+        env:
+          SHA_DIGEST: ${{ steps.push.outputs.sha-digest }}
+          LATEST_DIGEST: ${{ steps.push.outputs.latest-digest }}
+        run: |
+          set -euo pipefail
+          anonymous_config=$(mktemp -d "$RUNNER_TEMP/cron-anonymous.XXXXXX")
+          pulled="$anonymous_config/cron_scheduler.wasm"
+          for digest in "$SHA_DIGEST" "$LATEST_DIGEST"; do
+            if [[ -z "$digest" ]]; then
+              continue
+            fi
+            if ! DOCKER_CONFIG="$anonymous_config" wash oci pull "${IMAGE}@${digest}" "$pulled"; then
+              echo "::error::anonymous pull failed; for a new GHCR package, set its visibility to Public in Package settings and rerun the publish job (see the plugin README)"
+              exit 1
+            fi
+            cmp "$COMPONENT" "$pulled"
+          done
+          {
+            echo '### cron-scheduler published'
+            echo "- Commit tag: \`${IMAGE}:sha-${GITHUB_SHA:0:12}\`"
+            echo "- Commit digest: \`${IMAGE}@${SHA_DIGEST}\`"
+            if [[ -n "$LATEST_DIGEST" ]]; then
+              echo "- Image: \`${IMAGE}:latest\`"
+              echo "- Latest digest: \`${IMAGE}@${LATEST_DIGEST}\`"
+            else
+              echo '- Latest left unchanged: newer cron sources exist on main.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
