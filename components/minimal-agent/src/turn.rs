@@ -292,10 +292,19 @@ async fn work(events: &mut Events, req: &Request, acc: &mut Accepted) -> Result<
     let mut shortened = false;
     loop {
         if expired(acc) {
-            // Out of time before the next call: end with what there is.
+            // Out of time before the next call: end with what there is, the
+            // text of the model's last reply, if it has replied this run.
+            let reply = live
+                .iter()
+                .rev()
+                .find_map(|m| match m {
+                    Message::Assistant(a) => Some(without_tool_calls(a.clone())),
+                    _ => None,
+                })
+                .unwrap_or(AssistantMessage { content: vec![] });
             return Ok(Finished {
-                answer: String::new(),
-                reply: AssistantMessage { content: vec![] },
+                answer: text_of(&reply),
+                reply,
                 structured: None,
                 turns,
                 counts,
