@@ -2,8 +2,8 @@
 # the `wash` CLI alike.
 version: "0.1.0"
 build:
-  # `wash build` fetches wit/deps first. cosmonic:agent@0.4.0 comes from
-  # wit/cosmonic-agent in this repository (wkg.toml), not from a registry.
+  # `wash build` fetches wit/deps first: cosmonic:agent from ghcr.io, pinned
+  # by digest in wkg.lock.
   command: cargo build --target wasm32-wasip2 --release
   component_path: target/wasm32-wasip2/release/minimal_agent.wasm
 workload:

@@ -1,5 +1,5 @@
 //! wasmtime's bindgen has no switch for WIT feature gates, and `run` is
-//! `@unstable(feature = agent-run)` in cosmonic:agent@0.4.0. Copy the
+//! `@unstable(feature = agent-run)` in cosmonic:agent@0.4.2. Copy the
 //! component's WIT, deps included, with the gates removed into wit-host/
 //! (gitignored). Run `wash wit fetch` in the component first, so ../wit/deps
 //! exists.
