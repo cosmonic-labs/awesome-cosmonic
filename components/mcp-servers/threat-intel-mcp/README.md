@@ -84,8 +84,11 @@ Deployment is via [Cosmonic Desktop](https://cosmonic.com/docs/desktop): apply
 [`deploy/workload.yaml`](deploy/workload.yaml) for the published image, or
 promote a local build and apply the project's
 [`.wash/config.yaml`](.wash/config.yaml) workload settings. Then call it through
-the ingress. In the stateless 2026-07-28 transport, each request stands alone,
-so `tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
+the Desktop ingress, the local HTTP router on port 8200 that picks a workload by
+the request's `Host` header.
+
+In the stateless 2026-07-28 transport, each request stands alone, so
+`tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
 `_meta` block:
 
 ```console
@@ -106,6 +109,6 @@ walk-through.
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`threat-intel-mcp.localhost.cosmonic.sh`, `threat-intel-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard: requests whose `Host` header is not on this list are rejected. Must list the workload's `host` (`threat-intel-mcp.localhost.cosmonic.sh`, `threat-intel-mcp.localhost`). |
 | `MCP_OUTBOUND_MAX_BYTES` | Upper bound on the buffered outbound response body (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Per-request outbound deadline (default 30000). |

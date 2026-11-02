@@ -57,8 +57,10 @@ than data:
 > Couldn't reach `example.org`. It may not be in this workload's egress
 > allowlist (allowedHosts). Add it to the manifest to grant access.
 
-Widen the list in [`workload.yaml`](workload.yaml) /
-[`deploy/workload.yaml`](deploy/workload.yaml) to grant more hosts.
+To grant more hosts, widen the list in the manifest you deploy:
+[`deploy/workload.yaml`](deploy/workload.yaml) for the published image, or
+[`workload.yaml`](workload.yaml) for a local build. For the `wash dev` loop,
+widen it in [`.wash/config.yaml`](.wash/config.yaml) too.
 
 ## Build
 
@@ -74,9 +76,12 @@ WASI p3 component at `target/wasm32-wasip2/release/web_fetch_mcp.wasm`.
 Deployment is via [Cosmonic Desktop](https://cosmonic.com/docs/desktop): apply
 [`deploy/workload.yaml`](deploy/workload.yaml) for the published image, or
 promote a local build and apply [`workload.yaml`](workload.yaml). Then call it
-through the ingress. In the stateless 2026-07-28 transport, each request stands
-alone, so `tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name`
-headers and a `_meta` block:
+through the Desktop ingress, the local HTTP router on port 8200 that picks a
+workload by the request's `Host` header.
+
+In the stateless 2026-07-28 transport, each request stands alone, so
+`tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
+`_meta` block:
 
 ```console
 $ curl -X POST http://web-fetch-mcp.localhost.cosmonic.sh:8200/ \
@@ -87,8 +92,7 @@ $ curl -X POST http://web-fetch-mcp.localhost.cosmonic.sh:8200/ \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fetch_url","arguments":{"url":"https://httpbin.org/get"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-Outbound requests are governed by the workload's `allowedHosts` policy. See
-[`scripts/smoke.sh`](scripts/smoke.sh) for a full `tools/list` +
+See [`scripts/smoke.sh`](scripts/smoke.sh) for a full `tools/list` +
 allowed-vs-blocked `tools/call` walk-through.
 
 ## Configuration
@@ -96,6 +100,6 @@ allowed-vs-blocked `tools/call` walk-through.
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`web-fetch-mcp.localhost.cosmonic.sh`, `web-fetch-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard: requests whose `Host` header is not on this list are rejected. Must list the workload's `host` (`web-fetch-mcp.localhost.cosmonic.sh`, `web-fetch-mcp.localhost`). |
 | `MCP_OUTBOUND_MAX_BYTES` | Upper bound on the buffered outbound response body before the ~100 KB cap is applied (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Per-fetch outbound deadline (default 30000). |

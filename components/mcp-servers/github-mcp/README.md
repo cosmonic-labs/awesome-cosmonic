@@ -28,7 +28,7 @@ Parameters:
 | Tool | Param | Type | Purpose |
 |---|---|---|---|
 | `search_repositories` | `query` | string | Search query (supports GitHub qualifiers, e.g. `language:rust stars:>100`). |
-| | `per_page` | number (optional) | Max results, 1–10 (default 10). |
+| | `per_page` | number (optional) | Max results, 1 to 10 (default 10). |
 | `get_repository` | `owner` | string | Repository owner (user or org). |
 | | `repo` | string | Repository name. |
 | `list_issues` | `owner`, `repo` | string | Repository coordinates. |
@@ -76,11 +76,11 @@ Unauthenticated is the default and needs no setup. To raise the rate limit
 (5,000 requests/hour) or read private repositories, give the component a GitHub
 [personal access token](https://github.com/settings/tokens) through the
 `GITHUB_TOKEN` environment variable. Never inline the token in a manifest.
-Register it as a **Cosmonic secret** and flatten it into that env var, the same
-mechanism fred-mcp uses for its API key.
+Register it as a **Cosmonic secret** and flatten it into that env var.
 
-1. Register the token as a secret with the `cosmonic_set_secret` MCP tool (the
-   value goes into your OS keychain, never into a manifest):
+1. Register the token as a secret. In Cosmonic Desktop, open
+   **Settings > Secrets**, or call the `cosmonic_secret_set` MCP tool with
+   these fields. The value goes into your OS keychain, never into a manifest:
 
    | Field | Value |
    |---|---|
@@ -116,10 +116,14 @@ WASI p3 component at `target/wasm32-wasip2/release/github_mcp.wasm`.
 
 Deployment is via [Cosmonic Desktop](https://cosmonic.com/docs/desktop): apply
 [`deploy/workload.yaml`](deploy/workload.yaml) for the published image, or
-promote a local build and apply the project's [`.wash/config.yaml`](.wash/config.yaml)
-workload settings. Then call it through the ingress. In the stateless 2026-07-28
-transport, each request stands alone, so `tools/list` and `tools/call` carry the
-`Mcp-Method`/`Mcp-Name` headers and a `_meta` block:
+promote a local build and apply the project's
+[`.wash/config.yaml`](.wash/config.yaml) workload settings. Then call it through
+the Desktop ingress, the local HTTP router on port 8200 that picks a workload by
+the request's `Host` header.
+
+In the stateless 2026-07-28 transport, each request stands alone, so
+`tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
+`_meta` block:
 
 ```console
 $ curl -X POST http://127.0.0.1:8200/ \
@@ -140,6 +144,6 @@ walk-through.
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
 | `GITHUB_TOKEN` | Optional GitHub token; when set, sent as a bearer token to raise the rate limit and reach private repos. Inject it from a Cosmonic secret (above), not inline. |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`github-mcp.localhost.cosmonic.sh`, `github-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard: requests whose `Host` header is not on this list are rejected. Must list the workload's `host` (`github-mcp.localhost.cosmonic.sh`, `github-mcp.localhost`). |
 | `MCP_OUTBOUND_MAX_BYTES` | Upper bound on the buffered outbound response body (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Per-request outbound deadline (default 30000). |

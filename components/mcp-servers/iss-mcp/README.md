@@ -50,10 +50,13 @@ WASI p3 component at `target/wasm32-wasip2/release/iss_mcp.wasm`.
 Deployment is via [Cosmonic Desktop](https://cosmonic.com/docs/desktop): apply
 [`deploy/workload.yaml`](deploy/workload.yaml) for the published image, or
 promote a local build and apply [`workload.yaml`](workload.yaml). Then call it
-through the ingress. In the stateless 2026-07-28 transport, each request stands
-alone, so `tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name`
-headers and a `_meta` block. The host below is the one `deploy/workload.yaml`
-routes on; the local manifest routes on `iss-mcp.localhost` instead:
+through the Desktop ingress, the local HTTP router on port 8200 that picks a
+workload by the request's `Host` header.
+
+In the stateless 2026-07-28 transport, each request stands alone, so
+`tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
+`_meta` block. The host below is the one `deploy/workload.yaml` routes on; the
+local manifest routes on `iss-mcp.localhost` instead:
 
 ```console
 $ curl -X POST http://iss-mcp.localhost.cosmonic.sh:8200/ \
@@ -64,15 +67,15 @@ $ curl -X POST http://iss-mcp.localhost.cosmonic.sh:8200/ \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"who_is_in_space","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-Outbound requests are governed by the workload's `allowedHosts` policy
-(`api.open-notify.org`).
+See [`scripts/smoke.sh`](scripts/smoke.sh) for a walk-through that calls both
+tools.
 
 ## Configuration
 
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host`, which differs between the two manifests. |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard: requests whose `Host` header is not on this list are rejected. Must list the workload's `host`, which differs between the two manifests. |
 | `MCP_OUTBOUND_MAX_BYTES` | Cap on an outbound response body (default 4 MiB). |
 | `MCP_OUTBOUND_TIMEOUT_MS` | Timeout for a single outbound exchange (default 30000). |
 | `OPEN_NOTIFY_BASE_URL` | Override the Open Notify base URL (testing only). |
