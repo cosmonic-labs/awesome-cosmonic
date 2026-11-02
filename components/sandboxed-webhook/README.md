@@ -1,8 +1,8 @@
 # sandboxed-webhook
 
-A webhook (a public HTTP endpoint something calls when an event happens: a git push, a payment, a form submit) receiver that verifies an HMAC-SHA256 signature, then forwards the payload to **exactly one** host. Built as a WebAssembly component (`wasi:http`, `wasm32-wasip2`) for Cosmonic Desktop / wasmCloud.
+A webhook receiver that verifies an HMAC-SHA256 signature, then forwards the payload to **exactly one** host. (A webhook is a public HTTP endpoint that another service calls when something happens: a git push, a payment, a form submit.) It is a Rust component over `wasi:http` (`wasm32-wasip2`) for Cosmonic Desktop and wasmCloud.
 
-The point of the example is the host's egress policy, not the code. The workload's `allowedHosts` names the single forward target and denies every other destination, so even a fully compromised handler physically cannot exfiltrate the payload anywhere you did not name. Least-privilege egress, enforced by the sandbox.
+The point of the example is the host's egress policy, not the code. The workload's `allowedHosts` names the single forward target and denies every other destination, so even a fully compromised handler cannot send the payload anywhere you did not name. That is least-privilege egress, enforced by the sandbox.
 
 - `GET /` renders an info page. Once a secret is configured it prints a ready-to-run `curl` carrying a valid signature; until then it reports what is missing and returns `503`.
 - `POST /` verifies `X-Hub-Signature-256: sha256=<hex>` over the raw body, then forwards the body to `WEBHOOK_FORWARD_URL`. A missing or wrong signature gets `401` and never reaches out. Bodies over 1 MiB get `413`.
@@ -20,10 +20,10 @@ Read from the workload environment:
 
 The webhook verifies its caller with an HMAC signature, so it needs a signing secret you control. Never inline it in a manifest: register it as a **Cosmonic secret**, flattened into the `WEBHOOK_SIGNING_SECRET` environment variable.
 
-1. Register the secret with the `cosmonic_set_secret` MCP tool (the value goes into your OS keychain, never a manifest):
+1. Register the secret in Cosmonic Desktop under **Settings > Secrets**, or with the `cosmonic_secret_set` MCP tool. Either way the value goes into your OS keychain, never a manifest:
 
    | Field | Value |
-   |---|---|
+   | --- | --- |
    | `name` | `webhook-signing-secret`, matches `secretFrom` in the workload |
    | `uri` | `keychain://cosmonic/webhook-signing-secret` |
    | `env` | `WEBHOOK_SIGNING_SECRET`, the variable injected into the component |
@@ -57,10 +57,9 @@ The component is written to `target/wasm32-wasip2/release/sandboxed_webhook.wasm
 wash dev
 ```
 
-`wash dev` runs deny-all, so the forward is denied there by design (proof the gate is real). Set `WEBHOOK_SIGNING_SECRET` in that environment too, or the receiver returns `503` before it gets as far as the egress check. To see a forward succeed, deploy with an allow-list: apply [`manifests/workload.yaml`](manifests/workload.yaml) on Cosmonic Desktop, which sets `allowedHosts: [postman-echo.com]`:
+`wash dev` runs deny-all, so the forward is denied there by design (proof the gate is real). Set `WEBHOOK_SIGNING_SECRET` in that environment too, or the receiver returns `503` before it gets as far as the egress check. To see a forward succeed, deploy with an allow-list: apply [`manifests/workload.yaml`](manifests/workload.yaml) on Cosmonic Desktop, which sets `allowedHosts: [postman-echo.com]`.
 
-Sign with the same secret you registered above. `$WEBHOOK_SECRET` here is that
-value, in your shell rather than in the manifest:
+Then send a signed request. `$WEBHOOK_SECRET` is the same value you registered above, held in your shell rather than in the manifest:
 
 ```shell
 BODY='{"event":"ping","from":"cosmonic"}'
