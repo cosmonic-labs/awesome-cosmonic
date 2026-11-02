@@ -100,6 +100,36 @@ pub(crate) async fn call_tool(
     Called::Done(result)
 }
 
+/// A tool call the run will not make because its time limit passed: no op,
+/// since nothing was dispatched, but a tool step and an error result, so the
+/// person sees why and the stored conversation has a result for every call.
+pub(crate) async fn skip_tool(
+    events: &mut Events,
+    journal: &mut Journal,
+    call: &ToolCall,
+    run: &str,
+) -> Called {
+    let text = "Not called: the run's time limit passed.";
+    let names = [call.name.as_str()];
+    let response = Step {
+        role: "tool",
+        text,
+        blocks: &["toolResponse"],
+        tools: &names,
+        run: Some(run),
+    };
+    let seq = journal.record(vec![entry(STEP_KIND, &response)]).await;
+    let result = ToolResult {
+        call_id: call.id.clone(),
+        output: vec![ToolOutput::Text(text.to_string())],
+        is_error: true,
+    };
+    if !events.tools(vec![result.clone()], seq).await {
+        return Called::Gone;
+    }
+    Called::Done(result)
+}
+
 /// The tool calls in a reply, in order.
 pub(crate) fn tool_calls(message: &AssistantMessage) -> Vec<ToolCall> {
     message
