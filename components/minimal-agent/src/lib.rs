@@ -1,4 +1,4 @@
-//! A minimal sandboxed agent on `cosmonic:agent@0.4.0`.
+//! A minimal sandboxed agent on `cosmonic:agent@0.4.2`.
 //!
 //! A host hands the agent a run through the typed `cosmonic:agent/run`
 //! export: one message from the person. The model the host resolves for the
@@ -29,7 +29,7 @@ mod bindings {
     wit_bindgen::generate!({
         path: "wit",
         world: "minimal-agent",
-        // `run` and its types are unstable in cosmonic:agent@0.4.0.
+        // `run` and its types are unstable (feature `agent-run`).
         features: ["agent-run"],
         generate_all,
     });

@@ -1,4 +1,4 @@
-//! The typed `cosmonic:agent/run@0.4.0` export: check what the driver sent,
+//! The typed `cosmonic:agent/run@0.4.2` export: check what the driver sent,
 //! open the run, then work while the driver reads the events, and resolve
 //! the outcome after the last commit.
 

@@ -1,4 +1,4 @@
-//! A scripted `cosmonic:agent@0.4.0` host for minimal-agent: a model that
+//! A scripted `cosmonic:agent@0.4.2` host for minimal-agent: a model that
 //! answers from the conversation it is sent, an in-memory session that keeps
 //! the conditional commit rules, and two tools. Adapted from the scripted
 //! host of the slim Codex agent in cosmonic-labs/sandboxed-agents.
@@ -15,7 +15,7 @@ wasmtime::component::bindgen!({
     imports: { default: trappable },
     exports: { default: async },
     with: {
-        "cosmonic:agent/inference-types@0.4.0.model": ModelHandle,
+        "cosmonic:agent/inference-types@0.4.2.model": ModelHandle,
         "wasi:clocks": wasmtime_wasi::p3::bindings::clocks,
     },
     require_store_data_send: true,
