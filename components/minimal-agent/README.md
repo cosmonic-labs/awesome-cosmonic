@@ -6,7 +6,7 @@ It holds nothing of its own. It names no model endpoint, carries no API key, has
 
 ## What it imports and exports
 
-[`wit/world.wit`](wit/world.wit) is the full list of what it can call:
+[`wit/world.wit`](wit/world.wit) declares the `cosmonic:agent` imports. The built component also imports a clock and a random source through the `wasip3` crate. The full list of what it can call:
 
 | Import | For |
 | --- | --- |

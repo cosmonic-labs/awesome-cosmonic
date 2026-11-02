@@ -8,6 +8,11 @@ or a tool author can rely on. The `.wit` files are the contract; the
 [docs/migrating-to-0.4.md](docs/migrating-to-0.4.md) lists what changed from
 0.3.0.
 
+To build an agent harness on these interfaces and run it on Cosmonic Desktop or
+Cosmonic Control, start with the
+[Agent SDK docs](https://cosmonic.com/docs/agent-sdk/).
+[`minimal-agent`](../../components/minimal-agent/) is a small working example.
+
 ## Two sides of an agent
 
 An agent has two interfaces, and they stay separate.

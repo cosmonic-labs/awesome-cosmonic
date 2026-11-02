@@ -14,6 +14,7 @@ see [Changes from upstream](#changes-from-upstream).
 | --- | --- |
 | `GET /` | The browser UI, served inline. |
 | `POST /qrcode` | `{"payload": "..."}` in, `image/png` out. |
+| any other method on `/qrcode` | `405`, with a message saying to send a `POST`. |
 | anything else | `404` with a JSON body. |
 
 Every non-2xx answer is JSON of the form `{"error": "..."}`, so the page can show
@@ -37,29 +38,35 @@ Limits, all answered with a specific status rather than a generic failure:
 
 The `Content-Length` header is required because the body is read in full before
 anything can inspect it, so a declared length is the only chance to refuse one
-that is too large. The 2,000-character limit counts Unicode scalars; a payload
-of multi-byte characters will hit the encoder's own capacity well before it,
-and gets a `400` either way.
+that is too large. The 2,000-character limit counts Unicode scalars (roughly,
+characters). A payload of multi-byte characters will hit the encoder's own
+capacity well before that, and gets a `400` either way.
 
 Leading and trailing whitespace is trimmed before encoding, so a pasted URL with
 a stray space still produces the code you expect.
 
 ## Build
 
+Requires [`wash`](https://wasmcloud.com/docs/installation) and Rust 1.85 or
+newer (the crate uses edition 2024) with the `wasm32-wasip2` target.
+
 ```console
 $ wash build
 ```
 
-The component is written to `target/wasm32-wasip2/release/qrcode.wasm`.
+The component is written to `target/wasm32-wasip2/release/qrcode.wasm`. It is a
+WASI 0.2 component that exports `wasi:http/incoming-handler@0.2.9`, using the
+[`wstd`](https://crates.io/crates/wstd) crate for its HTTP types.
 
 ## Run on Cosmonic Desktop
 
 Apply [`manifests/workload.yaml`](manifests/workload.yaml), then open
 `http://qrcode.localhost:8200`.
 
-That manifest runs the published image. To run your own build instead,
-`wash build`, promote it, and swap the `image` reference for the one promote
-gives you.
+That manifest runs the published image,
+`ghcr.io/cosmonic-labs/components/qrcode:0.2.1`, pinned by digest. To run your
+own build instead, run `wash build`, promote the project in Cosmonic Desktop,
+and swap the `image` reference for the one promote gives you.
 
 ## Changes from upstream
 

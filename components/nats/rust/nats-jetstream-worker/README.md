@@ -1,134 +1,154 @@
 # nats-jetstream-worker (Rust)
 
-Pull batches from a JetStream consumer at a pace the guest sets.
+Drain a JetStream stream in batches, at the component's own pace.
 
-See [`../../README.md`](../../README.md) for how this pattern compares with
-the other six.
+See [the NATS templates overview](../../README.md) for how this pattern
+compares with the other six.
 
 ## When to use this
 
-The guest has to control the fetch rate — draining on a schedule,
-batching against a rate-limited downstream, or pulling only when some
-other resource is free.
+The component must control the rate: scheduled drains, a rate-limited
+downstream, or pulling only when something else is free. A core NATS
+message on `demo.worker.run` triggers a drain; the component opens a pull
+consumer (one it fetches from on demand, rather than one the server pushes
+to), fetches batches until the stream is caught up, and acknowledges each
+message.
 
 ## When not to
 
-Ordinary event processing. A push consumer
-([`nats-jetstream-consumer`](../nats-jetstream-consumer)) is simpler and
-is what you want unless you can say why the pace has to be yours.
+Ordinary event processing. The push consumer in
+[`nats-jetstream-consumer`](../nats-jetstream-consumer) is simpler and is
+the right default.
 
 ## Build
 
-Prereqs: Rust 1.88+, `rustup target add wasm32-wasip2`, and `wash` 2.5+.
-Built and tested with `wash 2.5.1` and Rust 1.97.1 against
-`wasmcloud:nats@0.1.0`; CI publishes on Rust 1.97.1, pinned. The manifest
-needs a Desktop newer than 0.5.31 to apply as written: see Deploy.
+Prerequisites: Rust 1.88 or newer with the `wasm32-wasip2` target
+(`rustup target add wasm32-wasip2`), and `wash` 2.5 or newer. Built and
+tested with `wash` 2.5.1 and Rust 1.97.1 against `wasmcloud:nats@0.1.0`. CI
+publishes with Rust 1.97.1, pinned.
 
-```sh
-wash build                   # fetches the WIT, then runs .wash/config.yaml
+```shell
+wash build
 # component: target/wasm32-wasip2/release/nats_jetstream_worker.wasm
 ```
 
-`wasmcloud:nats@0.1.0` is published to a registry `wash` already knows, so
-unlike the Kafka templates next door this one needs no registry mapping.
-`wkg.lock` pins the exact version and `wit/deps/` is gitignored, so the first
-build is what populates it.
+`wash build` fetches the WIT (the interface definitions the component
+compiles against) into `wit/deps/`, then runs the build command named in
+`.wash/config.yaml`. `wkg.lock` pins the WIT version the way
+`package-lock.json` pins npm packages, and `wit/deps/` is gitignored, so a
+fresh clone gets it on the first build. Unlike the Kafka templates next
+door, this needs no registry mapping: `wasmcloud:nats` is published to a
+registry `wash` already knows.
 
 Once `wit/deps/` exists, `cargo build --release --target wasm32-wasip2`
-produces the same component — but it cannot populate it, so a fresh clone has
-to run `wash build` (or `wash wit fetch`) first. `.wash/config.yaml` just names
-that command and where its output lands, which is what lets tooling find the
-artifact without being told.
+produces the same component. Cargo cannot fetch the WIT itself, so on a
+fresh clone run `wash build` (or `wash wit fetch`) first.
 
 ## A local NATS for this template
 
-```sh
+You need [`nats-server`](https://github.com/nats-io/nats-server)
+and the [`nats` CLI](https://github.com/nats-io/natscli). Start the server
+in one terminal and run the rest in another.
+
+```shell
 nats-server -js
 nats stream add DEMO --subjects 'demo.stream.>' --defaults
 nats consumer add DEMO demo-worker --pull --filter 'demo.stream.>' --defaults
 nats stream add RECEIPTS --subjects 'done.>' --defaults
 ```
 
-The stream, consumer, batch size and round ceiling are constants in
-`src/lib.rs`. They are deliberately not read out of the trigger message:
-a drain whose target and size come from whoever can publish to
-`demo.worker.run` would be a denial of service with extra steps.
+Pass `--filter` when you create the consumer. Without it the consumer's
+filter is `>`, which no grant short of `>` contains, so opening it is
+denied.
+
+The stream, consumer, batch size and round ceiling are constants in the
+source. They are deliberately not read out of the trigger message: a drain
+whose target and size come from whoever can publish to `demo.worker.run`
+would be a denial of service with extra steps.
 
 ## Deploy
 
-One manifest, both targets:
+One manifest, `deploy/workload-deployment.yaml`, serves both targets. It
+points at a prebuilt image published from this repository
+(`ghcr.io/cosmonic-labs/nats-templates/nats-jetstream-worker:latest`), so you can
+deploy the pattern and watch it work before building anything. Once you
+change the source, push your own image somewhere your cluster or Desktop can
+pull from, and replace the `image:` reference.
 
-```bash
-kubectl apply -f deploy/workload-deployment.yaml          # Cosmonic Control
+On Cosmonic Control:
+
+```shell
+kubectl apply -f deploy/workload-deployment.yaml
 ```
 
-On **Cosmonic Desktop 0.5.32+**, apply the same file: Workloads → Run (paste
-it), or the `cosmonic_workload_apply` MCP tool. Desktop reads the workload out
-of the `WorkloadDeployment` envelope and reports what a single host cannot
-honour, so `replicas` is recorded rather than obeyed. Desktop reads this kind from the
-release after 0.5.31; until that ships, flatten it first: change `kind:
-WorkloadDeployment` to `kind: Workload`, lift everything under
-`.spec.template.spec` up to `spec`, and drop `replicas`.
+On Cosmonic Desktop 0.5.32 or newer, apply the same file: on the Workloads
+page choose **Start workload** and paste the manifest's raw URL,
 
-Desktop's built-in NATS plugin is configured under Settings → Built-in plugins
-→ NATS and defaults to `nats://127.0.0.1:4222`.
+```text
+https://raw.githubusercontent.com/cosmonic-labs/awesome-cosmonic/main/components/nats/rust/nats-jetstream-worker/deploy/workload-deployment.yaml
+```
 
-The image is published from this repository and is pullable from a cluster and
-from Desktop alike, so the pattern can be deployed and watched before any of it
-is built locally. Once you change the source, push it somewhere both can reach
-and replace that reference.
+or hand the file to the `cosmonic_workload_apply` MCP tool. Desktop takes
+the workload out of the `WorkloadDeployment` envelope and records
+`replicas` without obeying it, since Desktop is a single host.
+
+Desktop 0.5.31 and older answer `unsupported kind`. Flatten the manifest
+first: change `kind: WorkloadDeployment` to `kind: Workload`, move
+everything under `.spec.template.spec` up to `spec`, and drop `replicas`.
+
+Desktop reaches NATS through its built-in NATS plugin, configured under
+Settings → Built-in plugins → NATS. It defaults to `nats://127.0.0.1:4222`,
+where the local `nats-server` above listens.
 
 ## Exercise it
 
-```sh
+```shell
 nats pub demo.stream.orders 'one'
 nats pub demo.worker.run ''
 nats stream get RECEIPTS 1
 ```
 
-## Where the connection is configured
+## Grants
 
-In the workload's own `wasmcloud:nats` entry under `hostInterfaces`. The
-grants (`subject-allow`, `stream-allow`, `bucket-allow`) are deny-by-default
-ceilings and the shipped ones are intentionally minimal — widen only what this
-workload touches.
+The workload's `wasmcloud:nats` entry under `hostInterfaces` says what this
+component may touch. Grants are deny-by-default and checked by
+containment: the grant has to contain the subject or filter being asked
+for. This template ships the minimum it needs:
 
-`subject-allow` covers more than publishing. It gates publish, request, core
-subscriptions, the filter on a JetStream subscription or pull consumer, and
-stored messages, and it is checked by **containment**: the grant string has to
-contain the subject or filter being asked for. So `stream-allow` on its own
-reaches nothing readable — grant the subjects a stream stores alongside the
-stream itself, or the binding refuses to start.
+- `subject-allow: demo.worker.run,demo.stream.>,done.demo.>` admits the
+  trigger subscription, the pull consumer's filter, and the receipt the
+  handler publishes to `done.demo.worker`.
+- `stream-allow: DEMO` admits opening the consumer on the stream.
+- `core-subscriptions: demo.worker.run` is the trigger subject.
+- `max-in-flight: "1"` means one drain at a time.
 
-Connection keys are the host's, not the manifest's: `servers`, credentials and
-TLS material come from the host's NATS plugin configuration, and a workload
-that tries to set them is refused. The component never sees a server address
-in its code.
-
-On Cosmonic Control the plugin defaults to `workloadConfig: deny`, which
-means a workload may only **narrow** the ceiling the operator declares in the
-hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
-grant, or setting a host-owned key, is what gets refused — so the grants stay
-in the manifest rather than being stripped out of it.
+Widen only what your own workload touches. Server addresses and
+credentials are not here: they belong to the host's NATS plugin, and a
+workload that tries to set them is refused. On Cosmonic Control a workload
+can only narrow the ceiling the operator declares, never widen it. The
+[overview](../../README.md#where-the-connection-and-grants-are-configured)
+covers grants in full.
 
 ## Capacity
 
-Batch size is a **byte** budget, not a message count. `fetch(100)` on 5 MB
-messages asks the host to materialize 500 MB in one call, which OOM-killed
-the host and every co-tenant workload's connection with it. Use
-`fetch-with-limits` with a byte bound.
+Size a batch in bytes, not messages: a fetch holds the whole batch in host
+memory. The template calls `fetch` with a batch of 100, which suits small
+messages. On 5 MB messages the same call asks the host for 500 MB at once;
+in the measured run that OOM-killed the host and dropped every co-tenant
+workload's connection with it. For large messages, lower the batch or switch to
+`fetch-with-limits`, which takes a byte bound.
 
 The numbers behind that, the other six patterns, and the host-memory sizing
 rule are in [the measured operational envelope](../../tuning.md#jetstream-pull-worker).
 
 ## Layout
 
-```
+```text
 ├── Cargo.toml                          # wit-bindgen 0.60, async features
 ├── .cargo/config.toml                  # wasm32-wasip2 target
-├── .wash/config.yaml                   # wash v2 / Desktop project config
+├── .wash/config.yaml                   # wash and Cosmonic Desktop project config
 ├── src/lib.rs                          # START HERE
 ├── wit/world.wit                       # + deps/, fetched and gitignored
 ├── wkg.lock                            # pins the WIT version
-└── deploy/workload-deployment.yaml     # Desktop 0.5.32+ and Cosmonic Control
+└── deploy/workload-deployment.yaml     # Cosmonic Control and Desktop 0.5.32+
 ```

@@ -1,9 +1,10 @@
-# Native Host Plugins
+# Native host plugins
 
-Rust implementations of the [`HostPlugin` trait](https://wasmcloud.com/docs/runtime/creating-host-plugins),
-linked into the host binary. The right choice when a capability needs direct
-host resources (filesystem, network, hardware) or has to run with the host's
-privileges.
+Rust implementations of the
+[`HostPlugin` trait](https://wasmcloud.com/docs/runtime/creating-host-plugins),
+compiled into the host binary. Choose this flavor when a capability needs direct
+access to host resources (filesystem, network, hardware) or has to run with the
+host's privileges.
 
-One directory per hosted plugin. See [CONTRIBUTING.md](../../CONTRIBUTING.md)
-for requirements.
+No plugins are hosted here yet. One directory per hosted plugin. See
+[CONTRIBUTING.md](../../CONTRIBUTING.md) for requirements.
