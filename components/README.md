@@ -17,12 +17,15 @@ Components serving a well-known protocol are grouped into a subdirectory:
   messaging pattern, in Rust and Go. Start with the core subscriber when losing
   a message is survivable, and the JetStream consumer when it is not.
 
-Everything else lives directly in this directory.
+Everything else lives directly in this directory, such as
+[`minimal-agent`](minimal-agent/) (an agent harness on `cosmonic:agent`) and
+[`sandboxed-webhook`](sandboxed-webhook/) (a webhook receiver with a single
+allowed outbound host).
 
 ## Using a hosted component
 
-Scaffold a new local project from just one hosted component, without cloning
-the whole repository:
+To start your own project from one hosted component, scaffold just that
+directory instead of cloning the whole repository:
 
 ```console
 wash new https://github.com/cosmonic-labs/awesome-cosmonic --subfolder components/<component>

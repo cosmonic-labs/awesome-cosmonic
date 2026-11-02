@@ -16,7 +16,9 @@ One directory per project, under the category it belongs to:
 
 ```
 components/                     Reusable components implementing a WIT interface
+  kafka/                        Kafka templates on cosmonic:kafka, one per delivery pattern
   mcp-servers/                  Model Context Protocol servers
+  nats/                         NATS templates on wasmcloud:nats, in Rust and Go
 host-plugins/
   native/                       Rust plugins implementing the HostPlugin trait
   component/                    Capabilities built as Wasm components
@@ -24,7 +26,7 @@ workload-examples/              End-to-end applications
 tools/                          CLIs, libraries, editor integrations, tooling
 ```
 
-A component that serves MCP goes in `components/mcp-servers/`. Any other reusable component goes directly in `components/`.
+A component that serves MCP goes in `components/mcp-servers/`. A Kafka or NATS template goes in `components/kafka/` or `components/nats/`. Any other reusable component goes directly in `components/`.
 
 The two host plugin categories are easy to mix up. Sort it out by asking how your plugin is built:
 
