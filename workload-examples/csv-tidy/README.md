@@ -10,15 +10,15 @@ the interesting one.
 
 It declares no outbound network access, which is the point for this particular
 tool. The files people want to tidy are customer lists and bank exports, and the
-host enforces that none of it can leave the sandbox. Its Launchpad card reads
-`OUTBOUND none`.
+host enforces that none of that data can leave the sandbox. Its Launchpad card
+reads `OUTBOUND none`.
 
 ## Routes
 
 | Route | Response |
 | --- | --- |
 | `GET /` | The browser UI, served inline. |
-| `POST /api/tidy` | CSV in the body, JSON out: parsed rows, the issues found, and stats. |
+| `POST /api/tidy` | CSV in the body (up to 4 MiB), JSON out: parsed rows, the issues found, and stats. |
 | `GET /healthz` | `ok` |
 
 ```console
@@ -30,26 +30,32 @@ $ printf 'name, age\n Alice ,30\n\nBob,25\n' \
  "stats":{"columns":2,"rows":2,...}}
 ```
 
-Header whitespace is trimmed, values are trimmed, and blank rows are dropped,
-and each of those is reported in `issues` rather than applied silently. An
-unterminated quote is reported first, because everything after it is read as one
-value and the resulting short row invites exactly the wrong fix.
+Whitespace is trimmed from headers and values, blank rows are dropped, and each
+of those repairs is reported in `issues`. The preview returns at most 2,000
+rows, while `stats` covers the whole file. An unterminated quote is reported
+first, because everything after it is read as one value and the resulting short
+row invites exactly the wrong fix.
 
 ## Build
+
+Requires [`wash`](https://wasmcloud.com/docs/installation) and Rust 1.94 or
+newer with the `wasm32-wasip2` target.
 
 ```console
 $ wash build
 ```
 
-The component is written to `target/wasm32-wasip2/release/csv_tidy.wasm`. It is a
-WASI p3 component: it exports `wasi:http/handler`, not the p2
-`incoming-handler`.
+The component is written to `target/wasm32-wasip2/release/csv_tidy.wasm`. It
+targets WASI 0.3 (also called p3), so it exports `wasi:http/handler` rather
+than the WASI 0.2 `incoming-handler`. The `wasip3` crate carries the WIT, so
+there is no `wit/` directory to fetch.
 
 ## Run on Cosmonic Desktop
 
 Apply [`manifests/workload.yaml`](manifests/workload.yaml), then open
 `http://csv-tidy.localhost:8200`.
 
-That manifest runs the published image. To run your own build instead,
-`wash build`, promote it, and swap the `image` reference for the one promote
-gives you.
+That manifest runs the published image,
+`ghcr.io/cosmonic-labs/components/csv-tidy:0.1.2`, pinned by digest. To run
+your own build instead, run `wash build`, promote the project in Cosmonic
+Desktop, and swap the `image` reference for the one promote gives you.
