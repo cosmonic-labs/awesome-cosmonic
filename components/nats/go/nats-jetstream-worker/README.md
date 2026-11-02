@@ -1,144 +1,164 @@
 # nats-jetstream-worker (Go)
 
-Pull batches from a JetStream consumer at a pace the guest sets.
+Drain a JetStream stream in batches, at the component's own pace.
 
-See [`../../README.md`](../../README.md) for how this pattern compares with
-the other six.
+See [the NATS templates overview](../../README.md) for how this pattern
+compares with the other six.
 
 ## When to use this
 
-The guest has to control the fetch rate — draining on a schedule,
-batching against a rate-limited downstream, or pulling only when some
-other resource is free.
+The component must control the rate: scheduled drains, a rate-limited
+downstream, or pulling only when something else is free. A core NATS
+message on `demo.worker.run` triggers a drain; the component opens a pull
+consumer (one it fetches from on demand, rather than one the server pushes
+to), fetches batches until the stream is caught up, and acknowledges each
+message.
 
 ## When not to
 
-Ordinary event processing. A push consumer
-([`nats-jetstream-consumer`](../nats-jetstream-consumer)) is simpler and
-is what you want unless you can say why the pace has to be yours.
+Ordinary event processing. The push consumer in
+[`nats-jetstream-consumer`](../nats-jetstream-consumer) is simpler and is
+the right default.
 
 ## Build
 
-Prereqs: Go 1.25+, [componentize-go](https://github.com/bytecodealliance/componentize-go)
-v0.4.1, `wasm-tools`, and `wash` 2.5+:
+Prerequisites: Go 1.25 or newer,
+[componentize-go](https://github.com/bytecodealliance/componentize-go)
+v0.4.1, `wasm-tools`, and `wash` 2.5 or newer.
 
-```sh
+```shell
 go install github.com/bytecodealliance/componentize-go@v0.4.1
 cargo install wasm-tools        # or: brew install wasm-tools
 ```
 
-componentize-go fetches the *patched* Go it compiles with (golang/go#76775),
-so that one you do not install. Go itself you do need, for the install above
-and for the `go mod tidy` in the bindings step.
-
-```sh
+```shell
 make build         # fetches the WIT, generates bindings, builds the component
-make verify        # asserts the export is there and the lift is async
+make verify        # checks the export is there and the lift is async
 # component: nats-jetstream-worker.wasm
 ```
 
-`wasmcloud:nats@0.1.0` is async-only WASI p3. componentize-go builds against a
-patched Go (golang/go#76775) because stock Go cannot emit the component-model
-concurrency ABI, which is why `make build` and not `go build` is the entry
-point. `wkg.lock` pins the WIT and `wit/deps/` is gitignored, so the first
-build is what populates it.
+Why `make build` and not `go build`: every function in
+`wasmcloud:nats@0.1.0` is async (WASI P3), and stock Go cannot emit the
+component-model async ABI. componentize-go downloads a patched Go
+(golang/go#76775) and compiles with that, so you do not install it
+yourself. You still need your own Go, for the `go install` above and for
+the `go mod tidy` the bindings step runs. `wkg.lock` pins the WIT version
+the way `go.sum` pins modules, and `wit/deps/` is gitignored, so the first
+build fetches it.
 
-**A handler that parks on a timer traps.** `time.Sleep`, `time.After` in a
-select, `context.WithTimeout`, and any retry or backoff built on them fail the
-delivery with `async-lifted export failed to produce a result`. Duration is
-fine; only *waiting* on a timer breaks. Await
+**A handler that waits on a timer traps.** `time.Sleep`, `time.After` in a
+select, `context.WithTimeout`, and any retry or backoff built on them fail
+the delivery with `async-lifted export failed to produce a result`. Taking
+a duration is fine; only *waiting* on a timer breaks. Await
 `wasi:clocks/monotonic-clock` instead.
 
 ## A local NATS for this template
 
-```sh
+You need [`nats-server`](https://github.com/nats-io/nats-server)
+and the [`nats` CLI](https://github.com/nats-io/natscli). Start the server
+in one terminal and run the rest in another.
+
+```shell
 nats-server -js
 nats stream add DEMO --subjects 'demo.stream.>' --defaults
 nats consumer add DEMO demo-worker --pull --filter 'demo.stream.>' --defaults
 nats stream add RECEIPTS --subjects 'done.>' --defaults
 ```
 
-The stream, consumer, batch size and round ceiling are constants in
-`src/lib.rs`. They are deliberately not read out of the trigger message:
-a drain whose target and size come from whoever can publish to
-`demo.worker.run` would be a denial of service with extra steps.
+Pass `--filter` when you create the consumer. Without it the consumer's
+filter is `>`, which no grant short of `>` contains, so opening it is
+denied.
+
+The stream, consumer, batch size and round ceiling are constants in the
+source. They are deliberately not read out of the trigger message: a drain
+whose target and size come from whoever can publish to `demo.worker.run`
+would be a denial of service with extra steps.
 
 ## Deploy
 
-One manifest, both targets:
+One manifest, `deploy/workload-deployment.yaml`, serves both targets. It
+points at a prebuilt image published from this repository
+(`ghcr.io/cosmonic-labs/nats-templates/nats-jetstream-worker-go:latest`), so you can
+deploy the pattern and watch it work before building anything. Once you
+change the source, push your own image somewhere your cluster or Desktop can
+pull from, and replace the `image:` reference.
 
-```bash
-kubectl apply -f deploy/workload-deployment.yaml          # Cosmonic Control
+On Cosmonic Control:
+
+```shell
+kubectl apply -f deploy/workload-deployment.yaml
 ```
 
-On **Cosmonic Desktop 0.5.32+**, apply the same file: Workloads → Run (paste
-it), or the `cosmonic_workload_apply` MCP tool. Desktop reads the workload out
-of the `WorkloadDeployment` envelope and reports what a single host cannot
-honour, so `replicas` is recorded rather than obeyed. Desktop reads this kind from the
-release after 0.5.31; until that ships, flatten it first: change `kind:
-WorkloadDeployment` to `kind: Workload`, lift everything under
-`.spec.template.spec` up to `spec`, and drop `replicas`.
+On Cosmonic Desktop 0.5.32 or newer, apply the same file: on the Workloads
+page choose **Start workload** and paste the manifest's raw URL,
 
-Desktop's built-in NATS plugin is configured under Settings → Built-in plugins
-→ NATS and defaults to `nats://127.0.0.1:4222`.
+```text
+https://raw.githubusercontent.com/cosmonic-labs/awesome-cosmonic/main/components/nats/go/nats-jetstream-worker/deploy/workload-deployment.yaml
+```
 
-The image is published from this repository once this lands on `main`, and is
-then pullable from a cluster and from Desktop alike, so the pattern can be deployed and watched before any of it
-is built locally. Once you change the source, push it somewhere both can reach
-and replace that reference.
+or hand the file to the `cosmonic_workload_apply` MCP tool. Desktop takes
+the workload out of the `WorkloadDeployment` envelope and records
+`replicas` without obeying it, since Desktop is a single host.
+
+Desktop 0.5.31 and older answer `unsupported kind`. Flatten the manifest
+first: change `kind: WorkloadDeployment` to `kind: Workload`, move
+everything under `.spec.template.spec` up to `spec`, and drop `replicas`.
+
+Desktop reaches NATS through its built-in NATS plugin, configured under
+Settings → Built-in plugins → NATS. It defaults to `nats://127.0.0.1:4222`,
+where the local `nats-server` above listens.
 
 ## Exercise it
 
-```sh
+```shell
 nats pub demo.stream.orders 'one'
 nats pub demo.worker.run ''
 nats stream get RECEIPTS 1
 ```
 
-## Where the connection is configured
+## Grants
 
-In the workload's own `wasmcloud:nats` entry under `hostInterfaces`. The
-grants (`subject-allow`, `stream-allow`, `bucket-allow`) are deny-by-default
-ceilings and the shipped ones are intentionally minimal — widen only what this
-workload touches.
+The workload's `wasmcloud:nats` entry under `hostInterfaces` says what this
+component may touch. Grants are deny-by-default and checked by
+containment: the grant has to contain the subject or filter being asked
+for. This template ships the minimum it needs:
 
-`subject-allow` covers more than publishing. It gates publish, request, core
-subscriptions, the filter on a JetStream subscription or pull consumer, and
-stored messages, and it is checked by **containment**: the grant string has to
-contain the subject or filter being asked for. So `stream-allow` on its own
-reaches nothing readable — grant the subjects a stream stores alongside the
-stream itself, or the binding refuses to start.
+- `subject-allow: demo.worker.run,demo.stream.>,done.demo.>` admits the
+  trigger subscription, the pull consumer's filter, and the receipt the
+  handler publishes to `done.demo.worker`.
+- `stream-allow: DEMO` admits opening the consumer on the stream.
+- `core-subscriptions: demo.worker.run` is the trigger subject.
+- `max-in-flight: "1"` means one drain at a time.
 
-Connection keys are the host's, not the manifest's: `servers`, credentials and
-TLS material come from the host's NATS plugin configuration, and a workload
-that tries to set them is refused. The component never sees a server address
-in its code.
-
-On Cosmonic Control the plugin defaults to `workloadConfig: deny`, which
-means a workload may only **narrow** the ceiling the operator declares in the
-hostgroup's `hostPlugins: [{id: wasmcloud-nats, config: {...}}]`. Widening a
-grant, or setting a host-owned key, is what gets refused — so the grants stay
-in the manifest rather than being stripped out of it.
+Widen only what your own workload touches. Server addresses and
+credentials are not here: they belong to the host's NATS plugin, and a
+workload that tries to set them is refused. On Cosmonic Control a workload
+can only narrow the ceiling the operator declares, never widen it. The
+[overview](../../README.md#where-the-connection-and-grants-are-configured)
+covers grants in full.
 
 ## Capacity
 
-Batch size is a **byte** budget, not a message count. `fetch(100)` on 5 MB
-messages asks the host to materialize 500 MB in one call, which OOM-killed
-the host and every co-tenant workload's connection with it. Use
-`fetch-with-limits` with a byte bound.
+Size a batch in bytes, not messages: a fetch holds the whole batch in host
+memory. The template calls `fetch` with a batch of 100, which suits small
+messages. On 5 MB messages the same call asks the host for 500 MB at once;
+in the measured run that OOM-killed the host and dropped every co-tenant
+workload's connection with it. For large messages, lower the batch or switch to
+`fetch-with-limits`, which takes a byte bound.
 
 The numbers behind that, the other six patterns, and the host-memory sizing
 rule are in [the measured operational envelope](../../tuning.md#jetstream-pull-worker).
 
 ## Layout
 
-```
+```text
 ├── Makefile                            # build, verify, clean
 ├── componentize-go.toml                # the world componentize-go targets
 ├── go.mod / go.sum                     # pinned bindings SDK
+├── .wash/config.yaml                   # wash and Cosmonic Desktop project config
 ├── export_*/handler.go                 # START HERE
 ├── export_*/errors.go                  # NatsError formatting
 ├── wit/world.wit                       # + deps/, fetched and gitignored
 ├── wkg.lock                            # pins the WIT version
-└── deploy/workload-deployment.yaml     # Desktop 0.5.32+ and Cosmonic Control
+└── deploy/workload-deployment.yaml     # Cosmonic Control and Desktop 0.5.32+
 ```
