@@ -478,6 +478,13 @@ async fn conclude(
         }
         Ok(f)
     });
+    // The finished message replaces the deltas shown so far. A driver that
+    // dropped the events before this outcome was recorded cancelled the run,
+    // so it ends cancelled rather than done.
+    let worked = match worked {
+        Ok(f) if !events.assistant(f.reply.clone(), None).await => Err(Failure::Cancelled),
+        worked => worked,
+    };
     let mut finished = match worked {
         Ok(finished) => finished,
         Err(failure) => {
@@ -501,10 +508,6 @@ async fn conclude(
             return Err(failure);
         }
     };
-
-    // The finished message replaces the deltas shown so far. Sent whether or
-    // not the driver is still reading: the outcome is recorded either way.
-    let _ = events.assistant(finished.reply.clone(), None).await;
 
     let mut next = std::mem::take(&mut acc.conversation);
     next.turns.extend(std::mem::take(&mut finished.turns));
