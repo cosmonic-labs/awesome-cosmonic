@@ -21,7 +21,9 @@ pub(crate) enum Answer {
     Refused(RequestError),
     /// Failed after it was accepted.
     Failed(GenerationError),
-    /// The driver dropped the event stream while the reply streamed.
+    /// The run was cancelled: the driver dropped the event stream while the
+    /// reply streamed, or the host cancelled the call, as it does with a
+    /// run's model call when the driver drops the events.
     Gone,
 }
 
@@ -59,6 +61,7 @@ pub(crate) async fn answer(
     });
     let (mut chunks, outcome) = match chat::chat(model, msg_rx, done_rx, options).await {
         Ok(reply) => reply,
+        Err(RequestError::Cancelled) => return Answer::Gone,
         Err(e) => return Answer::Refused(e),
     };
 
@@ -80,6 +83,7 @@ pub(crate) async fn answer(
     // Read the outcome after the last chunk, as the interface asks.
     match outcome.await {
         Ok(completion) => Answer::Done(completion),
+        Err(GenerationError::Cancelled) => Answer::Gone,
         Err(e) => Answer::Failed(e),
     }
 }
