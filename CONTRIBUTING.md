@@ -39,7 +39,7 @@ Use a short, lowercase, hyphenated directory name matching your project. Linked 
 
 **If you host source here, licensing is not optional.** Your code is copied into this repository and redistributed by it:
 
-- **You must own the code, or have the right to contribute it.** Signing off your commits (below) is how you certify this.
+- **You must own the code, or have the right to contribute it.**
 - **Your project directory must contain a `LICENSE` file.** A directory with no license is all-rights-reserved by default, meaning nobody, including this project, can legally use, build, or redistribute it.
 - **Use Apache-2.0 or a compatible permissive license** (MIT, BSD-2/3-Clause). This repository is Apache-2.0. Copyleft licenses create obligations we cannot take on for the repository as a whole, so they cannot be accepted.
 - **Third-party code you vendor into your project** keeps its own license and attribution. Do not strip license headers.
@@ -95,23 +95,6 @@ Too vague:
 2. Add your project directory if you are hosting source, plus your one-line index entry.
 3. Open one pull request per project, titled `Add <project-name>`.
 4. In the description, say what the project does and how you tested it.
-
-### Sign your commits
-
-This repository enforces the [Developer Certificate of Origin](https://developercertificate.org/). Every commit needs a `Signed-off-by` line, which `git` adds for you:
-
-```console
-git commit -s -m "Add audio-summarizer"
-```
-
-If the DCO check fails on an existing commit, amend it:
-
-```console
-git commit --amend -s --no-edit
-git push --force-with-lease
-```
-
-Signing off certifies that you wrote the code or otherwise have the right to submit it under the project's license. If you are hosting source here, please take that seriously.
 
 ## Removing or updating a project
 
