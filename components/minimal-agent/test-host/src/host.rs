@@ -1,7 +1,6 @@
 //! A scripted `cosmonic:agent@0.4.2` host for minimal-agent: a model that
 //! answers from the conversation it is sent, an in-memory session that keeps
-//! the conditional commit rules, and two tools. Adapted from the scripted
-//! host of the slim Codex agent in cosmonic-labs/sandboxed-agents.
+//! the conditional commit rules, and four tools.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
