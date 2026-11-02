@@ -1,5 +1,9 @@
-# Workload for the minimal agent on a host that drives cosmonic:agent@0.4.0
-# runs, such as Cosmonic Desktop.
+# The shape of the workload Cosmonic Desktop runs a minimal-agent session in.
+# Desktop writes this itself when a session starts; it is here to show what
+# the agent is granted.
+#
+# The entries name cosmonic:agent 0.4.0, as Desktop's do. The host links the
+# agent's 0.4.2 imports to them: 0.4.x versions are semver-compatible.
 #
 # The agent component holds no egress (allowedHosts: []) and serves no HTTP.
 # Everything it can do is listed under hostInterfaces: inference by alias, a
@@ -43,10 +47,9 @@ spec:
         components: agent
         # backend: <one of the host's named model sources>
         # model: <a model on that source>
-    # The agent's tools, served by the host. To link a tool component
-    # directly instead, delete this entry and add a component that exports
-    # cosmonic:agent/tools@0.4.0, with the hosts it may reach in its own
-    # allowedHosts.
+    # The agent's tools, served by the host from the tools the session adds.
+    # Each tool runs as its own component with its own allowedHosts; the
+    # agent reaches them only through this interface.
     - namespace: cosmonic
       package: agent
       version: 0.4.0
