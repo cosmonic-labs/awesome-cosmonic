@@ -17,6 +17,7 @@ on:
     tags: ["*-v*"]
     paths:
       - "components/sandboxed-webhook/**"
+      - "components/kserve-iris-adapter/**"
       - "components/minimal-agent/**"
       # The registry map every build's WIT fetch reads (cosmonic:* from ghcr.io).
       - "wit/wkg-registries.toml"
@@ -30,6 +31,7 @@ on:
   pull_request:
     paths:
       - "components/sandboxed-webhook/**"
+      - "components/kserve-iris-adapter/**"
       - "components/minimal-agent/**"
       # The registry map every build's WIT fetch reads (cosmonic:* from ghcr.io).
       - "wit/wkg-registries.toml"
@@ -83,6 +85,10 @@ jobs:
             # the others use, and the Launchpad catalog pins that path.
             image: ghcr.io/cosmonic-labs/first-flight
             expect: "export wasi:http/incoming-handler"
+          - name: kserve-iris-adapter
+            path: components/kserve-iris-adapter
+            image: ghcr.io/cosmonic-labs/components/kserve-iris-adapter
+            expect: "export wasi:http/incoming-handler@0.2.12"
           - name: sandboxed-webhook
             path: components/sandboxed-webhook
             image: ghcr.io/cosmonic-labs/components/sandboxed-webhook
@@ -141,6 +147,10 @@ jobs:
       # and have no `wit/` directory at all, and `wash wit fetch` exits 1 on
       # those rather than no-opping. Guarding is what lets one matrix cover both
       # shapes; the alternative is a second workflow that differs by one step.
+      - name: Test the Iris adapter
+        if: matrix.name == 'kserve-iris-adapter'
+        run: cargo test --locked
+
       - name: Fetch the WIT dependencies
         run: |
           if [ -d wit ]; then
