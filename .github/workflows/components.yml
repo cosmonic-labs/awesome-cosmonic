@@ -65,6 +65,11 @@ env:
   # SHA-256 of the release archive, from the release's checksums file.
   ORAS_VERSION: "1.3.6"
   ORAS_SHA256: "66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0"
+  # wasm-opt, for the size-optimized build (minimal-agent-small). Its passes
+  # decide the published bytes as much as rustc does, so it is pinned by
+  # release and by the SHA-256 of the archive, from the release's .sha256 file.
+  BINARYEN_VERSION: "133"
+  BINARYEN_SHA256: "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489"
 
 jobs:
   build:
@@ -123,6 +128,14 @@ jobs:
             image: ghcr.io/cosmonic-labs/components/minimal-agent
             # A host drives it through the typed run; it serves no HTTP.
             expect: "export cosmonic:agent/run@0.4.2"
+          # The same source as minimal-agent, built for size: see "Build the
+          # size-optimized component" below. A separate package, so that
+          # minimal-agent stays exactly what `wash build` produces.
+          - name: minimal-agent-small
+            path: components/minimal-agent
+            image: ghcr.io/cosmonic-labs/components/minimal-agent-small
+            optimize: size
+            expect: "export cosmonic:agent/run@0.4.2"
 
     defaults:
       run:
@@ -156,19 +169,70 @@ jobs:
             echo "no wit/ directory; bindings come from the crate"
           fi
 
-      - name: Build the component
-        id: build
-        uses: wasmCloud/actions/wash-build@v2.0.0
-        with:
-          working-directory: ${{ matrix.path }}
-
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-tools
 
+      - name: Build the component
+        id: build
+        if: matrix.optimize != 'size'
+        uses: wasmCloud/actions/wash-build@v2.0.0
+        with:
+          working-directory: ${{ matrix.path }}
+
+      - name: Install wasm-opt
+        if: matrix.optimize == 'size'
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive="binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          curl -fsSLO "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/${archive}"
+          echo "${BINARYEN_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}"
+          echo "${RUNNER_TEMP}/binaryen-version_${BINARYEN_VERSION}/bin" >> "$GITHUB_PATH"
+          "binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt" --version
+
+      # The same source and the same pinned stable toolchain as the standard
+      # build (no nightly, no build-std), about 14% smaller:
+      #
+      # 1. Link the core module without making it a component. The linker
+      #    embeds the component type either way; `--skip-wit-component` only
+      #    stops it wrapping the module, so wasm-opt can see all of it.
+      # 2. Shrink it with `wasm-opt -Oz`, allowing only the features the
+      #    wasm32-wasip2 target already emits. Do not swap in
+      #    `--all-features`: wasm-opt then uses proposals Wasmtime does not
+      #    enable by default, and the result fails to load.
+      # 3. Make it a component with `wasm-tools component new`, from the
+      #    embedded type, as the linker would have.
+      #
+      # The standard build is made too, as the reference the next step checks
+      # this one's imports and exports against.
+      - name: Build the size-optimized component
+        id: build-small
+        if: matrix.optimize == 'size'
+        run: |
+          cargo build --target wasm32-wasip2 --release
+          reference="$PWD/target/wasm32-wasip2/release/minimal_agent.wasm"
+
+          RUSTFLAGS="-C link-arg=--skip-wit-component" CARGO_TARGET_DIR=target/small \
+            cargo build --target wasm32-wasip2 --release
+          core=target/small/wasm32-wasip2/release/minimal_agent.wasm
+          wasm-opt -Oz \
+            --mvp-features --enable-bulk-memory --enable-nontrapping-float-to-int \
+            --enable-sign-ext --enable-mutable-globals --enable-multivalue \
+            --enable-reference-types \
+            "$core" -o target/small/optimized.wasm
+          component="$PWD/target/small/minimal_agent_small.wasm"
+          wasm-tools component new target/small/optimized.wasm -o "$component"
+
+          echo "standard: $(stat -c %s "$reference") bytes"
+          echo "small:    $(stat -c %s "$component") bytes"
+          echo "component_path=${component}" >> "$GITHUB_OUTPUT"
+          echo "reference_path=${reference}" >> "$GITHUB_OUTPUT"
+
       - name: Validate the component
         env:
-          COMPONENT: ${{ steps.build.outputs.component_path }}
+          COMPONENT: ${{ steps.build.outputs.component_path || steps.build-small.outputs.component_path }}
+          REFERENCE: ${{ steps.build-small.outputs.reference_path }}
         run: |
           wasm-tools validate --features all "$COMPONENT"
           wit=$(wasm-tools component wit "$COMPONENT")
@@ -177,11 +241,21 @@ jobs:
             echo "::error::component no longer has '${{ matrix.expect }}'"
             exit 1
           }
+          # An optimized build must ask for exactly what the standard build
+          # asks for: an import it adds is a grant an operator never reviewed.
+          if [ -n "$REFERENCE" ]; then
+            world() { wasm-tools component wit "$1" | grep -E '^\s*(import|export) ' | sort; }
+            if ! diff <(world "$REFERENCE") <(world "$COMPONENT"); then
+              echo "::error::imports or exports differ from the standard build"
+              exit 1
+            fi
+            echo "imports and exports match the standard build"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ steps.build.outputs.component_path }}
+          path: ${{ steps.build.outputs.component_path || steps.build-small.outputs.component_path }}
           if-no-files-found: error
 
       - name: Log in to GHCR
@@ -216,7 +290,7 @@ jobs:
           github.repository == 'cosmonic-labs/awesome-cosmonic' &&
           (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         env:
-          COMPONENT: ${{ steps.build.outputs.component_path }}
+          COMPONENT: ${{ steps.build.outputs.component_path || steps.build-small.outputs.component_path }}
           NAME: ${{ matrix.name }}
           IMAGE: ${{ matrix.image }}
         run: |
