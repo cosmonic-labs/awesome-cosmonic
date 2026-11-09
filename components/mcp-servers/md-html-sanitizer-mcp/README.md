@@ -1,17 +1,11 @@
 # md-html-sanitizer-mcp
 
-An MCP server that **turns untrusted markdown or HTML into safe HTML**, built as
+An MCP server that **turns untrusted Markdown or HTML into safe HTML**, built as
 a WebAssembly component for Cosmonic Desktop.
 
 It is **pure-compute and zero-egress**: both tools do all their work on-device
 and the component makes no outbound calls anywhere in its source, so content
-handed to it cannot be exfiltrated.
-
-Sanitizing is delegated to [ammonia](https://docs.rs/ammonia), which parses the
-markup with html5ever and re-serializes from the parsed tree against an
-allowlist. That is the part worth trusting: hand-rolled sanitizers that strip
-tags with string matching lose to markup a browser parses differently than they
-do.
+handed to it cannot be sent anywhere over the network.
 
 No authentication and no configuration are required.
 
@@ -54,19 +48,20 @@ Returns:
 
 ## How it sanitizes
 
-HTML sanitization is done with [`ammonia`](https://docs.rs/ammonia), the standard
-allowlist-based sanitizer (an html5ever tokenizer plus a safe tag/attribute
-allowlist). It strips `<script>`, `<style>`, `<iframe>`/`<object>`/`<embed>`,
+HTML sanitization is delegated to [`ammonia`](https://docs.rs/ammonia), which
+parses the markup with html5ever (the HTML parser from Servo) and re-serializes
+it from the parsed tree against an allowlist of safe tags and attributes. It
+strips `<script>`, `<style>`, `<iframe>`/`<object>`/`<embed>`,
 every event-handler attribute (`onclick`, `onerror`, …), and dangerous URL
 schemes (`javascript:`, and `data:` on `href`/`src`), while keeping a safe subset
-of tags and attributes. Hand-rolled HTML sanitizers leak XSS, so none is used
-here.
+of tags and attributes. That parse-then-rebuild step is the part worth
+trusting: hand-rolled sanitizers that strip tags with string matching lose to
+markup a browser parses differently than they do.
 
 `render_markdown` renders with [`pulldown-cmark`](https://docs.rs/pulldown-cmark)
 (a pure-Rust CommonMark renderer) and then passes the rendered HTML **back
 through ammonia**. CommonMark permits raw inline HTML, so this second pass is
-what neutralizes an embedded `<script>` in the markdown. It is the safe path.
-
+what neutralizes an embedded `<script>` in the markdown. 
 It renders **CommonMark, not GitHub Flavored Markdown**. The parser runs with
 default options, so GFM-only syntax is not recognized and comes through as
 literal text: a pipe table renders as a paragraph of pipes rather than a
@@ -86,12 +81,14 @@ Its work is pure compute, so the workload's outbound allowlist is empty:
 allowedHosts: []
 ```
 
-In a deployed Workload egress is deny-by-default, so an empty list and an
-absent key both mean the component reaches nothing. Note that `wash dev` reads
-the opposite default from `.wash/config.yaml`: once a `workload:` block exists,
-omitting the key means allow-all, so keep it present there. The stronger guarantee is in the code rather than the
-manifest: this component never constructs an outbound request, so there is no
-host to add here and none should be added.
+In a deployed Workload, egress is deny-by-default, so an empty list and an
+absent key both mean the component reaches nothing. `wash dev` reads the
+opposite default from `.wash/config.yaml`: once a `workload:` block exists,
+omitting the key means allow-all, so keep the key present there.
+
+The stronger guarantee is in the code rather than the manifest: this component
+never constructs an outbound request, so there is no host to add here and none
+should be added.
 
 ## Build
 
@@ -108,8 +105,11 @@ Deployment is via [Cosmonic Desktop](https://cosmonic.com/docs/desktop): apply
 [`deploy/workload.yaml`](deploy/workload.yaml) for the published image, or
 promote a local build and apply the project's
 [`.wash/config.yaml`](.wash/config.yaml) workload settings. Then call it through
-the ingress. In the stateless 2026-07-28 transport, each request stands alone,
-so `tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
+the Desktop ingress, the local HTTP router on port 8200 that picks a workload by
+the request's `Host` header.
+
+In the stateless 2026-07-28 transport, each request stands alone, so
+`tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
 `_meta` block:
 
 ```console
@@ -130,4 +130,4 @@ See [`scripts/smoke.sh`](scripts/smoke.sh) for a full `tools/list` +
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`md-html-sanitizer-mcp.localhost.cosmonic.sh`, `md-html-sanitizer-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard: requests whose `Host` header is not on this list are rejected. Must list the workload's `host` (`md-html-sanitizer-mcp.localhost.cosmonic.sh`, `md-html-sanitizer-mcp.localhost`). |

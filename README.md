@@ -9,7 +9,7 @@
 
 # Awesome Cosmonic
 
-**Community-maintained components, host plugins, workload examples, and tools for [Cosmonic Control](https://cosmonic.com/docs/).**
+**Community-maintained components, host plugins, workload examples, and tools for [Cosmonic Control](https://cosmonic.com/docs/) and [Cosmonic Desktop](https://cosmonic.com/desktop/).**
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-655dc6.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-cosmonic.com-655dc6.svg)](https://cosmonic.com/docs/)
@@ -19,15 +19,15 @@
 
 ---
 
-[Cosmonic Control](https://cosmonic.com/docs/) is a Kubernetes-native control plane for running microservices, agentic workflows, MCP servers, and other sensitive or untrusted code inside WebAssembly component sandboxes. Workloads are built with [`wash`](https://wasmcloud.com/docs/wash/developer-guide/) and wired to capabilities at runtime rather than at build time. This repository collects what the community has built on top of it.
+[Cosmonic Control](https://cosmonic.com/docs/) is a Kubernetes-native control plane for running agents, MCP servers, microservices, and other sensitive or untrusted code in sandboxes. [Cosmonic Desktop](https://cosmonic.com/desktop/) runs the same workloads on your own machine. A workload reaches only what its deployment grants (outbound hosts, secrets, storage, messaging), wired in at runtime rather than compiled in. Under the hood each workload is a WebAssembly component, built with [`wash`](https://wasmcloud.com/docs/wash/developer-guide/). This repository collects what the community has built on top of them.
 
 **Source may be hosted here or linked.** A project can live in this repository as a directory with its own README, license, and build instructions, or stay in its own repository and be listed here with a link. Entries are tagged `(hosted)` or `(linked)` so you know which you are getting. See [CONTRIBUTING.md](CONTRIBUTING.md) to add yours.
 
-For a project hosted here, clone and build it directly:
+For a project hosted here, clone and build it directly (each project's README says what it needs installed):
 
 ```console
 git clone https://github.com/cosmonic-labs/awesome-cosmonic.git
-cd awesome-cosmonic/workload-examples/<project>
+cd awesome-cosmonic/<category>/<project>
 wash build
 ```
 
@@ -36,12 +36,12 @@ wash build
 - [Components](#components)
   - [Kafka](#kafka)
   - [NATS](#nats)
-  - [MCP Servers](#mcp-servers)
-- [WIT Packages](#wit-packages)
-- [Host Plugins](#host-plugins)
-  - [Native Host Plugins](#native-host-plugins)
-  - [Host Component Plugins](#host-component-plugins)
-- [Workload Examples](#workload-examples)
+  - [MCP servers](#mcp-servers)
+- [WIT packages](#wit-packages)
+- [Host plugins](#host-plugins)
+  - [Native host plugins](#native-host-plugins)
+  - [Host component plugins](#host-component-plugins)
+- [Workload examples](#workload-examples)
 - [Tools](#tools)
 - [Contributing](#contributing)
 
@@ -50,11 +50,11 @@ wash build
 Reusable WebAssembly components that implement a WIT interface. Hosted projects live in [`components/`](components/).
 
 - [sandboxed-webhook](components/sandboxed-webhook/) (hosted): Receives a webhook, verifies its HMAC-SHA256 signature, then forwards the payload to exactly one host bounded by `allowedHosts`, so a compromised handler cannot exfiltrate anywhere else. The signing secret is required rather than defaulted, so an unconfigured deployment refuses every request instead of trusting a published constant. Rust component over `wasi:http`.
-- [minimal-agent](components/minimal-agent/) (hosted): A sandboxed agent on `cosmonic:agent@0.4.2` that a host drives through the typed `cosmonic:agent/run` export: a streamed tool-calling loop per run against a host-resolved model alias, calling the tools its workload grants, with the conversation kept in the workload's session store and no endpoint, key, egress, or HTTP of its own. Rust component.
+- [minimal-agent](components/minimal-agent/) (hosted): The smallest useful agent harness on `cosmonic:agent@0.4.2`: a tool-calling loop that a host drives through the typed `run` export. The host supplies the model, the granted tools and the session store, so the component holds no endpoint, key or network access of its own. Runs on Cosmonic Desktop and Cosmonic Control; see the [Agent SDK docs](https://cosmonic.com/docs/agent-sdk/). Rust component.
 
 ### Kafka
 
-Starting points for Kafka workloads on `cosmonic:kafka@0.5.0`, one per delivery pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/kafka/`](components/kafka/).
+Starting points for Kafka workloads on `cosmonic:kafka@0.5.0`, one per delivery pattern. Each is a self-contained project with source, a `wkg.lock` pinning the WIT it fetches, and manifests for both Cosmonic Desktop and Kubernetes. The manifests point at prebuilt components, so a pattern can be deployed and watched before any of it is built locally. Hosted projects live in [`components/kafka/`](components/kafka/).
 
 - [kafka-handler-consumer](components/kafka/rust/kafka-handler-consumer/) (hosted, recommended): The serverless default. The host keeps Kafka group membership stable while elastic component instances process partition-ordered batches and can scale back to zero.
 - [http-kafka-producer](components/kafka/rust/http-kafka-producer/) (hosted): HTTP request in, Kafka record out, through a host-owned, binding-scoped `cosmonic:kafka/producer`. The ingest-gateway shape.
@@ -83,51 +83,51 @@ The same seven patterns in Go, built with [componentize-go](https://github.com/b
 - [nats-kv-store (Go)](components/nats/go/nats-kv-store/) (hosted): Messages on a subject become revisioned keys in a JetStream KV bucket.
 - [nats-kv-watcher (Go)](components/nats/go/nats-kv-watcher/) (hosted): Reacts to every change in a KV bucket, branching on the operation rather than on whether bytes are present.
 
-### MCP Servers
+### MCP servers
 
 [Model Context Protocol](https://modelcontextprotocol.io) servers built as WebAssembly components, so the tools an agent calls run inside a sandbox rather than with ambient host access. Hosted projects live in [`components/mcp-servers/`](components/mcp-servers/).
 
 - [iss-mcp](components/mcp-servers/iss-mcp/) (hosted): MCP server in Rust that reports who is currently in space and the International Space Station's live position, calling the Open Notify APIs over `wasi:http`. Exports `wasi:http/handler@0.3.0`, built on the `rmcp` SDK with two no-argument tools.
-- [mcp-server-template-ts](https://github.com/cosmonic-labs/mcp-server-template-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http`, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
+- [mcp-server-template-hono-ts](https://github.com/cosmonic-labs/mcp-server-template-hono-ts) (linked): Template for building an MCP server as a TypeScript component served over `wasi:http` with Hono, scaffolded with `wash new`. The dev loop launches the official MCP inspector, and an `openapi2mcp` script generates tools from an OpenAPI specification.
 - [github-mcp](components/mcp-servers/github-mcp/) (hosted): Search and read GitHub for an agent, through `search_repositories`, `get_repository`, `list_issues`, and `get_file_contents`. Outbound requests are bounded to `api.github.com` by the workload's `allowedHosts`, and an optional GitHub token (injected from a Cosmonic secret) raises the rate limit and enables private repositories. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 - [web-fetch-mcp](components/mcp-servers/web-fetch-mcp/) (hosted): A `fetch_url` tool that retrieves a URL over HTTP or HTTPS and returns its contents as readable text or the raw body. Outbound requests are bounded by the workload's `allowedHosts` egress allowlist, so the tool can reach only the hosts you grant. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
-- [threat-intel-mcp](components/mcp-servers/threat-intel-mcp/) (hosted): Look up known vulnerabilities for open-source software from the [OSV](https://osv.dev) database, through `lookup_package_vulnerabilities` (by ecosystem, package, and optional version) and `get_vulnerability` (by CVE/GHSA/RUSTSEC/PYSEC/GO id). Outbound requests are bounded to `api.osv.dev` by the workload's `allowedHosts`, and no API key is required. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
-- [pii-redactor-mcp](components/mcp-servers/pii-redactor-mcp/) (hosted): Redact six specific patterns of sensitive value from text with a single `redact` tool: emails, US SSNs, North American phone numbers, Luhn-validated payment cards, IPv4 addresses, and AWS access key ids, each replaced by a distinct `[REDACTED_*]` placeholder, with per-category counts. Pure compute with **zero egress**: the component never constructs an outbound request, so the text it sees cannot leave the sandbox. Six regular expressions are not a PII classifier, and the README documents what they miss. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
-- [md-html-sanitizer-mcp](components/mcp-servers/md-html-sanitizer-mcp/) (hosted): Turn untrusted markdown or HTML into safe HTML. `sanitize_html` runs raw HTML through the [ammonia](https://docs.rs/ammonia) allowlist (dropping `<script>`/`<style>`/`<iframe>`, event-handler attributes, and `javascript:`/`data:` URLs), and `render_markdown` renders CommonMark with [pulldown-cmark](https://docs.rs/pulldown-cmark) and passes the result back through ammonia so embedded raw HTML is neutralized. Pure compute with **zero egress**: the component never constructs an outbound request, so the content it sees cannot leave the sandbox. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
+- [threat-intel-mcp](components/mcp-servers/threat-intel-mcp/) (hosted): Looks up known vulnerabilities in open-source packages from the [OSV](https://osv.dev) database, through `lookup_package_vulnerabilities` (by ecosystem, package, and optional version) and `get_vulnerability` (by CVE, GHSA, RUSTSEC, PYSEC or GO id). Outbound requests are bounded to `api.osv.dev` by the workload's `allowedHosts`, and no API key is required. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
+- [pii-redactor-mcp](components/mcp-servers/pii-redactor-mcp/) (hosted): A `redact` tool that replaces six patterns of sensitive value in text (emails, US SSNs, North American phone numbers, Luhn-validated payment cards, IPv4 addresses, and AWS access key ids) with `[REDACTED_*]` placeholders and per-category counts. Pure compute with **zero egress**: the workload grants no outbound hosts and the code never opens a connection. Six regular expressions are not a PII classifier, and the README documents what they miss. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
+- [md-html-sanitizer-mcp](components/mcp-servers/md-html-sanitizer-mcp/) (hosted): Turns untrusted Markdown or HTML into safe HTML. `sanitize_html` runs HTML through the [ammonia](https://docs.rs/ammonia) allowlist, and `render_markdown` renders CommonMark with [pulldown-cmark](https://docs.rs/pulldown-cmark) and passes the result back through ammonia. Pure compute with **zero egress**: the workload grants no outbound hosts and the code never opens a connection. Rust, rmcp, exports `wasi:http/handler@0.3.0`.
 - [gitlab-mcp](components/mcp-servers/gitlab-mcp/) (hosted): Searches and reads GitLab (projects, issues, files) over the GitLab REST API v4, bounded by `allowedHosts` to the single host `gitlab.com`. Runs unauthenticated by default; an optional `GITLAB_TOKEN` secret raises the rate limit and reaches private projects. Rust component exporting `wasi:http/handler@0.3.0`.
 
-## WIT Packages
+## WIT packages
 
-Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/<namespace>/<package>`. Call them from any component; resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Source lives in [`wit/`](wit/).
+Interface packages written in WIT (the WebAssembly interface definition language), so a component can call a capability without bundling a client for it. They are published to GHCR (the GitHub container registry) as `ghcr.io/cosmonic-labs/<namespace>/<package>`; fetch them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Source lives in [`wit/`](wit/).
 
 - [cosmonic:agent](wit/cosmonic-agent/): An API for calling models, tools, and durable sessions without tying a component to one inference provider.
 - [cosmonic:cron](wit/cosmonic-cron/): An API for being called on crontab, interval and one-shot schedules, declared with a workload or registered at run time, with time spelled in `wasi:clocks@0.3.0` types.
 - [cosmonic:kafka](wit/cosmonic-kafka/): An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions.
-- [cosmonic:notifications](wit/cosmonic-notifications/): Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams.
+- [cosmonic:notifications](wit/cosmonic-notifications/): An API for portable user notifications, with caller-scoped response queues, actions, replies, and native futures and streams.
 
-## Host Plugins
+## Host plugins
 
 Cosmonic Control schedules workloads onto [wasmCloud](https://github.com/wasmCloud/wasmCloud) hosts. [Host plugins](https://wasmcloud.com/docs/overview/hosts/plugins) extend a host with an implementation of a WIT world, which is linked to workloads at runtime. They come in two flavors, and a workload cannot tell which one is serving a capability it imports.
 
-### Native Host Plugins
+### Native host plugins
 
 Rust implementations of the [`HostPlugin` trait](https://wasmcloud.com/docs/runtime/creating-host-plugins), linked into the host binary. The right choice when a capability needs direct host resources (filesystem, network, hardware) or has to run with the host's privileges. Hosted projects live in [`host-plugins/native/`](host-plugins/native/).
 
 _Nothing here yet. [Add the first one](CONTRIBUTING.md)._
 
-### Host Component Plugins
+### Host component plugins
 
-Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-host-component-plugins/) and deployed into a host at runtime as trigger services with a capability ingress, so you ship, version, and sandbox them like any other component. Currently opt-in via the `host-component-plugins` feature, so check the docs for the state of play before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
+Capabilities built as [WebAssembly components](https://wasmcloud.com/docs/runtime/creating-host-component-plugins/) and loaded into a host at runtime, so you ship, version, and sandbox them like any other component instead of rebuilding the host. Support is opt-in through the host's `host-component-plugins` feature, so check the docs for the current state before depending on one. Hosted projects live in [`host-plugins/component/`](host-plugins/component/).
 
 - [cron-scheduler](host-plugins/component/cron-scheduler/) (hosted): Implements `cosmonic:cron@0.1.0` by calling a workload's `handler` export on crontab, interval and one-shot schedules, read from the workload's binding or registered through `scheduler`, with per-schedule overlap protection, bounded retry, and operator limits on registration count, interval periods, and one-shot delays. Rust, timed by `wasi:clocks@0.3.0`, dispatching through `wasmcloud:host/workload-call`; registered schedules are held in memory.
 
-## Workload Examples
+## Workload examples
 
 End-to-end applications demonstrating how components compose into a running system. Hosted projects live in [`workload-examples/`](workload-examples/).
 
 For starting points maintained by Cosmonic rather than the community, see the [Template Catalog](https://cosmonic.com/docs/template-catalog/).
 
-- [qrcode](workload-examples/qrcode/) (hosted): Turns text or a URL into a QR-code PNG, with a small self-contained browser UI. Pure compute: no configuration, no storage, and no outbound network, so it runs the same on a machine with egress denied. Adapted from the wasmCloud example with a styled UI, JSON error responses, and size limits. Rust, exports `wasi:http/incoming-handler`.
+- [qrcode](workload-examples/qrcode/) (hosted): Turns text or a URL into a QR-code PNG, with a small self-contained browser UI. Pure compute: no configuration, no storage, and no outbound network, so it runs the same on a machine with egress denied. Adapted from the wasmCloud example with a styled UI, JSON error responses, and size limits. Rust, exports `wasi:http/incoming-handler@0.2.9`.
 - [csv-tidy](workload-examples/csv-tidy/) (hosted): Paste a messy CSV, get clean JSON and a list of what was wrong with it: a BOM, a blank row, duplicate header names, a ragged row with an extra comma. It reports each rather than silently coping. No outbound network, which is the point when the files being tidied are customer lists and bank exports. Rust, exports `wasi:http/handler@0.3.0`.
 - [passphrase](workload-examples/passphrase/) (hosted): A password generator that reads the host's cryptographic RNG and reports the entropy of each password it produces. Declares no outbound network access at all, so "this cannot phone home" is enforced by the host rather than promised by the page. Rust, exports `wasi:http/handler@0.3.0`.
 - [request-bin](workload-examples/request-bin/) (hosted): A disposable endpoint that records the method, path, headers and body of every request sent to it, for when you need to know what a webhook actually sent rather than what it claims to send. Bins persist to the host key-value store and survive scaling to zero. Rust, exports `wasi:http/incoming-handler@0.2.2`.

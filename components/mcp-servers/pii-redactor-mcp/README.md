@@ -7,11 +7,12 @@ key IDs), built as a WebAssembly component for Cosmonic Desktop.
 
 It is **pure-compute and zero-egress**: the single `redact` tool does all its
 work on-device and the component makes no outbound calls anywhere in its source,
-so text handed to it cannot be exfiltrated.
+so text handed to it cannot be sent anywhere over the network.
 
-Those are two different guarantees, and only the first is complete. Containment
-is a property of the sandbox and holds absolutely. Detection is a property of
-six regular expressions and does not. Read [What it does not
+Those are two different guarantees, and they are not equally strong.
+Containment comes from the sandbox: the workload grants no outbound hosts and
+the code never opens a connection. Detection comes from six regular expressions
+and misses a lot. Read [What it does not
 catch](#what-it-does-not-catch) before treating this tool's output as safe to
 share.
 
@@ -42,8 +43,8 @@ Each category has a distinct placeholder:
 | `email` | Email addresses | `[REDACTED_EMAIL]` |
 | `us_ssn` | US Social Security numbers in 3-2-4 form (`123-45-6789`, `123.45.6789`, or `123 45 6789`), or a bare `123456789` next to an "SSN"/"social security" context word | `[REDACTED_SSN]` |
 | `phone` | NANP phone numbers: `(555) 123-4567`, `555-123-4567`, `555.123.4567`, `+1 555 123 4567` | `[REDACTED_PHONE]` |
-| `credit_card` | 13–19 digit card numbers, space/dash separated, **validated with the Luhn checksum** | `[REDACTED_CC]` |
-| `ipv4` | Dotted-quad IPv4 addresses, each octet 0–255 | `[REDACTED_IP]` |
+| `credit_card` | 13 to 19 digit card numbers, space/dash separated, **validated with the Luhn checksum** | `[REDACTED_CC]` |
+| `ipv4` | Dotted-quad IPv4 addresses, each octet 0 to 255 | `[REDACTED_IP]` |
 | `aws_access_key_id` | `AKIA`/`ASIA` + 16 uppercase alphanumerics | `[REDACTED_AWS_KEY]` |
 
 Matching runs in a single left-to-right pass over candidates from all enabled
@@ -108,12 +109,14 @@ Its work is pure compute, so the workload's outbound allowlist is empty:
 allowedHosts: []
 ```
 
-In a deployed Workload egress is deny-by-default, so an empty list and an
-absent key both mean the component reaches nothing. Note that `wash dev` reads
-the opposite default from `.wash/config.yaml`: once a `workload:` block exists,
-omitting the key means allow-all, so keep it present there. The stronger guarantee is in the code rather than the
-manifest: this component never constructs an outbound request, so there is no
-host to add here and none should be added.
+In a deployed Workload, egress is deny-by-default, so an empty list and an
+absent key both mean the component reaches nothing. `wash dev` reads the
+opposite default from `.wash/config.yaml`: once a `workload:` block exists,
+omitting the key means allow-all, so keep the key present there.
+
+The stronger guarantee is in the code rather than the manifest: this component
+never constructs an outbound request, so there is no host to add here and none
+should be added.
 
 ## Build
 
@@ -130,8 +133,11 @@ Deployment is via [Cosmonic Desktop](https://cosmonic.com/docs/desktop): apply
 [`deploy/workload.yaml`](deploy/workload.yaml) for the published image, or
 promote a local build and apply the project's
 [`.wash/config.yaml`](.wash/config.yaml) workload settings. Then call it through
-the ingress. In the stateless 2026-07-28 transport, each request stands alone,
-so `tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
+the Desktop ingress, the local HTTP router on port 8200 that picks a workload by
+the request's `Host` header.
+
+In the stateless 2026-07-28 transport, each request stands alone, so
+`tools/list` and `tools/call` carry the `Mcp-Method`/`Mcp-Name` headers and a
 `_meta` block:
 
 ```console
@@ -152,4 +158,4 @@ walk-through (including a Luhn-invalid negative case and a `types` filter).
 | Env var | Purpose |
 |---|---|
 | `RUST_LOG` | Log level (default `info`). |
-| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard for the ingress Host header; must list the workload's `host` (`pii-redactor-mcp.localhost.cosmonic.sh`, `pii-redactor-mcp.localhost`). |
+| `MCP_ALLOWED_HOSTS` | DNS-rebinding guard: requests whose `Host` header is not on this list are rejected. Must list the workload's `host` (`pii-redactor-mcp.localhost.cosmonic.sh`, `pii-redactor-mcp.localhost`). |

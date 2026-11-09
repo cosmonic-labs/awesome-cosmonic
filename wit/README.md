@@ -1,8 +1,26 @@
 # Interface packages
 
-One directory per WIT package, with one file per interface and a `world.wit`.
-Components use path overrides in `wkg.toml` and ignore generated `wit/deps`.
-These packages target WASI 0.3 and publish to `ghcr.io/cosmonic-labs/<namespace>/<package>`.
+The interfaces Cosmonic hosts serve to components, written in
+[WIT](https://component-model.bytecodealliance.org/design/wit.html) (the
+WebAssembly interface definition language). A WIT package is to a component
+what a type-only npm package is to a library: it names the functions and types
+on both sides of a boundary, with no implementation.
+
+One directory per package, with one file per interface and a `world.wit`.
+The packages target WASI 0.3 and are published to
+`ghcr.io/cosmonic-labs/<namespace>/<package>`. To fetch them from a project, point
+`wkg` or `wash wit fetch` at [`wkg-registries.toml`](wkg-registries.toml):
+
+```sh
+WKG_CONFIG_FILE=path/to/wkg-registries.toml wash wit fetch
+```
+
+Most components in this repository fetch a published version, pinned by digest in
+their `wkg.lock`. [`cron-scheduler`](../host-plugins/component/cron-scheduler/)
+instead reads `cosmonic:cron` from this directory through a path override in its
+`wkg.toml`. Either way the fetched `wit/deps` directory is generated and not
+committed.
+
 All declared operations, including resource metadata methods, use `async func`.
 Continuous feeds use native WIT streams and futures; notification responses
 arrive on a future or stream.
@@ -43,7 +61,9 @@ contract between an agent and whatever drives it. `run`, `compact`, `run-types` 
 the four worlds that use them are marked `@unstable(feature = agent-run)`: a
 consumer enables that feature to see them. The design note for the package,
 including how tools and typed tools work, is
-[`cosmonic-agent/README.md`](cosmonic-agent/README.md).
+[`cosmonic-agent/README.md`](cosmonic-agent/README.md). For guides to building and
+running an agent on these interfaces, see the
+[Agent SDK docs](https://cosmonic.com/docs/agent-sdk/).
 
 `model-admin` exposes the trusted catalog and preparation controls. Preparing a
 model can load local weights or open a remote connection. A remote provider can
@@ -80,26 +100,13 @@ reported adaptation. Providers must not silently discard unsupported features.
 What changed from 0.3.0 and what a consumer updates:
 [`cosmonic-agent/docs/migrating-to-0.4.md`](cosmonic-agent/docs/migrating-to-0.4.md).
 
-## Usage
+## How the inference pieces connect
 
 ```text
 client -> cosmonic:agent inference -> local provider
                                    -> remote provider
 
 agent -> authorized model aliases + chat + tools + session
-```
-
-`cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`, `cosmonic:cron`
-imports those, `wasi:clocks`, and `wasi:random`, while `cosmonic:agent` and
-`cosmonic:notifications` import `wasi:clocks` for `duration`. Each package's
-`wkg.lock` pins them by digest. The build script fetches them and checks the
-lock still reproduces:
-
-```sh
-node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notifications
-node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
-node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
-node .github/scripts/wit/build.mjs wit/cosmonic-cron cosmonic:cron
 ```
 
 ## Scheduling worlds
@@ -128,3 +135,21 @@ For consumer and provider requirements and an example, see the
 `cosmonic:notify@0.2.0` stays published at `ghcr.io/cosmonic-labs/cosmonic/notify`
 for existing consumers; `cosmonic:notifications` supersedes it and `notify` receives
 no further releases.
+
+## Building a package
+
+Each package depends on a few others, pinned by digest in its `wkg.lock`:
+
+- `cosmonic:agent` and `cosmonic:notifications` import `wasi:clocks` (for `duration`).
+- `cosmonic:kafka` imports `wasi:cli` and `wasmcloud:host`.
+- `cosmonic:cron` imports `wasi:cli`, `wasmcloud:host`, `wasi:clocks` and `wasi:random`.
+
+The build script fetches them, checks that the lock still reproduces, and writes
+`dist/<package>.wasm`. Run it from the repository root:
+
+```sh
+node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
+node .github/scripts/wit/build.mjs wit/cosmonic-cron cron
+node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
+node .github/scripts/wit/build.mjs wit/cosmonic-notifications notifications
+```

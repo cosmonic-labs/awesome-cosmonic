@@ -1,6 +1,6 @@
 # cron-scheduler
 
-A host component plugin that implements [`cosmonic:cron@0.1.0`](../../../wit/cosmonic-cron/): it calls a workload's `handler` export on crontab schedules, on fixed intervals, and once at a chosen time. The workload holds no timer and runs no loop, so its components only exist while a firing is being handled.
+A [host component plugin](../) (a capability built as a component and loaded into a wasmCloud host at runtime) that implements [`cosmonic:cron@0.1.0`](../../../wit/cosmonic-cron/). It calls a workload's `handler` export on crontab schedules, on fixed intervals, and once at a chosen time. The workload holds no timer and runs no loop, so its components only exist while a firing is being handled.
 
 The plugin is a WebAssembly component (`wasm32-wasip2`, WASI 0.3 interfaces). All of its timing comes from `wasi:clocks@0.3.0`: it sleeps on `monotonic-clock.wait-for`, measures intervals with `monotonic-clock.now`, and matches crontab expressions against `system-clock.now`.
 
@@ -128,34 +128,35 @@ A backend can translate POSIX day matching into separate triggers and combine si
 
 ## Published component
 
-CI publishes the plugin to `ghcr.io/cosmonic-labs/host-plugins/cron-scheduler`
-after the build and host integration tests pass on `main`. `latest` follows
-`main`; `sha-<first 12 commit characters>` identifies a build. A manual run of
-the `cron-scheduler` workflow on `main` also publishes. Older workflow reruns
-publish their commit tag but leave `latest` unchanged if the plugin, cron WIT,
-registry configuration, or workflow differs from current `main`. Unrelated
-changes on `main` do not block publishing. Pull requests and runs in forks only
-test and build.
-
-**First publication:** GHCR creates new packages as private. After the first
-push, a package administrator must open the organization's Packages page,
-select `host-plugins/cron-scheduler`, and use **Package settings → Change
-visibility → Public**. Then rerun the failed publish job. CI attests the
-published manifests before checking anonymous pulls with an empty Docker
-configuration and comparing the downloaded bytes with the tested component.
-The check fails until the package is public.
-
-Pull a published build to use it with the host commands below:
+You do not have to build the plugin yourself. Pull a published build and load
+it with the host commands under [Run](#run):
 
 ```sh
 wash oci pull ghcr.io/cosmonic-labs/host-plugins/cron-scheduler:latest cron_scheduler.wasm
 wash host --host-plugin id=cron-scheduler,file=cron_scheduler.wasm
 ```
 
-For a pinned deployment, pull by the manifest digest shown in the workflow's
-publish job summary. CI attaches GitHub build provenance to that digest. The
-test ticker workload is included in CI artifacts but is not published to GHCR.
 The host still needs the `host-component-plugins` feature described under [Run](#run).
+
+CI publishes the plugin to `ghcr.io/cosmonic-labs/host-plugins/cron-scheduler`
+after the build and host integration tests pass on `main`. `latest` follows
+`main`, and `sha-<first 12 commit characters>` identifies a single build. For a
+pinned deployment, pull by the manifest digest shown in the workflow's publish
+job summary. CI attaches GitHub build provenance to that digest, and checks
+that an anonymous pull returns the same bytes it tested. The ticker test
+workload is kept in CI artifacts but is not published to GHCR.
+
+A manual run of the `cron-scheduler` workflow on `main` also publishes. A rerun
+of an older workflow publishes its commit tag but leaves `latest` unchanged if
+the plugin, the cron WIT, the registry configuration, or the workflow has
+changed on `main` since. Unrelated changes on `main` do not block publishing.
+Pull requests and runs in forks only test and build.
+
+**For maintainers, if the package is ever recreated:** GHCR creates new packages
+as private, and the anonymous-pull check fails until the package is public. A
+package administrator opens the organization's Packages page, selects
+`host-plugins/cron-scheduler`, uses **Package settings**, then **Change
+visibility**, then **Public**, and reruns the failed publish job.
 
 ## Build
 
@@ -165,7 +166,7 @@ Needs [`wash`](https://wasmcloud.com/docs/installation) and Rust with the `wasm3
 wash build
 ```
 
-The component lands at `target/wasm32-wasip2/release/cron_scheduler.wasm` (about 1.2 MB, most of it the time zone database). `cosmonic:cron` is read from [`wit/cosmonic-cron`](../../../wit/cosmonic-cron/) in this repository through [`wkg.toml`](wkg.toml); `wasi:clocks`, `wasi:cli` and `wasmcloud:host` are fetched from their registries and pinned in [`wkg.lock`](wkg.lock).
+The component lands at `target/wasm32-wasip2/release/cron_scheduler.wasm` (about 1.2 MB, most of it the time zone database). `cosmonic:cron` is read from [`wit/cosmonic-cron`](../../../wit/cosmonic-cron/) in this repository through [`wkg.toml`](wkg.toml); `wasi:clocks`, `wasi:cli`, `wasi:random` and `wasmcloud:host` are fetched from their registries and pinned in [`wkg.lock`](wkg.lock).
 
 ## Run
 

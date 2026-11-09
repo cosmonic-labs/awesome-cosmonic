@@ -1,7 +1,9 @@
 # cosmonic:notifications 0.3.0
 
-Portable user notifications. A host or a component provides them, on Windows,
-macOS, Linux, the web, or as a virtual provider.
+Portable user notifications: a component asks a person a question or tells
+them something, and gets their answer back. A host or a component provides
+them, on Windows, macOS, Linux, the web, or as a virtual provider. The `.wit`
+files are the contract; this page explains how to use it.
 
 ## Worlds
 
@@ -131,13 +133,11 @@ are trimmed and blank tags are invalid.
 ## Errors
 
 While the service is unavailable, `get-features`, `send`, and `subscribe` return
-`unavailable`.
-`close` still settles a pending id as `closed`, and the provider withdraws the
-native notification once it can. Declined platform authorization is
-`unavailable`; caller revocation is `access-denied`. `error-code.other` requires
-a nonblank description,
-using a generic explanation if the service provides none. Error strings are
-diagnostic; don't parse them.
+`unavailable`. `close` still settles a pending id as `closed`, and the provider
+withdraws the native notification once it can. Declined platform authorization
+is `unavailable`; caller revocation is `access-denied`. `error-code.other`
+requires a nonblank description, using a generic explanation if the service
+provides none. Error strings are diagnostic; don't parse them.
 
 ## Publishing
 
@@ -145,17 +145,12 @@ The build script fetches the digest-pinned clocks dependency and verifies that
 fetching preserves the committed lockfile:
 
 ```sh
-node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notifications
+node .github/scripts/wit/build.mjs wit/cosmonic-notifications notifications
 ```
 
 The artifact is `dist/notifications.wasm`, published at
 `ghcr.io/cosmonic-labs/cosmonic/notifications:0.3.0` through
 [`../wkg-registries.toml`](../wkg-registries.toml).
-
-After the first publish, make the GHCR package public like the other packages.
-Pull-request builds check the registry anonymously and skip the contents
-comparison for a package they cannot see, so a private package never fails a
-changed-contents-without-bump drift check.
 
 `cosmonic:notify@0.2.0` remains published at
 `ghcr.io/cosmonic-labs/cosmonic/notify` and receives no further releases; this
