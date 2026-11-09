@@ -87,7 +87,7 @@ By default the model comes from a local [Ollama](https://ollama.com). Tool calli
 
 ## Run it in Cosmonic Control
 
-Agent support in Cosmonic Control is experimental and not in a release yet. It drives the same `run` export over HTTP or NATS, with the session, model and tools served by Control's agent plugins.
+Cosmonic Control runs the same component on Kubernetes, unchanged. Control's agent plugins serve the session, the model and the tools, and a run starts from an HTTP request in the OpenAI Responses API format (`POST /v1/responses`) or from a NATS message. Turn on agent support in the hostgroup chart (`agents.enabled`), then follow [Run an agent on Cosmonic Control](https://cosmonic.com/docs/agent-sdk/run-on-control).
 
 ## License
 
