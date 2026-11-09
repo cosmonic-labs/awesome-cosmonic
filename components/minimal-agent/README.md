@@ -40,6 +40,21 @@ wash build
 
 `wash build` fetches `cosmonic:agent@0.4.2` from `ghcr.io` (pinned by digest in [`wkg.lock`](wkg.lock)) into `wit/deps`, then writes the component to `target/wasm32-wasip2/release/minimal_agent.wasm`. The variable tells it where the `cosmonic` packages are published.
 
+### A smaller build
+
+CI also publishes `ghcr.io/cosmonic-labs/components/minimal-agent-small`: the same source on the same stable toolchain, about 283 KB. It links the core module without making it a component, shrinks it with [`wasm-opt`](https://github.com/WebAssembly/binaryen), then makes the component. Its imports and exports are identical, and CI fails the build if they are not.
+
+```shell
+RUSTFLAGS="-C link-arg=--skip-wit-component" CARGO_TARGET_DIR=target/small \
+  cargo build --target wasm32-wasip2 --release
+wasm-opt -Oz --mvp-features --enable-bulk-memory --enable-nontrapping-float-to-int \
+  --enable-sign-ext --enable-mutable-globals --enable-multivalue --enable-reference-types \
+  target/small/wasm32-wasip2/release/minimal_agent.wasm -o target/small/optimized.wasm
+wasm-tools component new target/small/optimized.wasm -o target/small/minimal_agent_small.wasm
+```
+
+Keep the feature list as it is. With `--all-features`, `wasm-opt` uses proposals Wasmtime does not enable by default, and the component fails to load.
+
 ## Test
 
 ```shell
