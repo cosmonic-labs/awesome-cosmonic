@@ -59,7 +59,7 @@ spec:
         components: agent
   components:
     - name: agent
-      image: ghcr.io/cosmonic-labs/components/minimal-agent:0.3.0
+      image: ghcr.io/cosmonic-labs/components/minimal-agent:0.3.1
       poolSize: 1
       localResources:
         allowedHosts: []
