@@ -9,7 +9,7 @@ arrive on a future or stream.
 
 | Package | Contract |
 | --- | --- |
-| [`cosmonic:agent`](cosmonic-agent/world.wit) 0.4.2 | An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
+| [`cosmonic:agent`](https://github.com/cosmonic-labs/agent-sdk/tree/main/wit/cosmonic-agent) 0.4.2 | Developed in [cosmonic-labs/agent-sdk](https://github.com/cosmonic-labs/agent-sdk). An API for calling models, tools, and durable sessions without tying a component to one inference provider. |
 | [`cosmonic:cron`](cosmonic-cron/world.wit) 0.1.0 | An API for being called on crontab, interval and one-shot schedules, declared with a workload or registered at run time, with time spelled in `wasi:clocks@0.3.0` types. |
 | [`cosmonic:kafka`](cosmonic-kafka/world.wit) 0.5.1 | An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions. |
 | [`cosmonic:notifications`](cosmonic-notifications/world.wit) 0.3.0 | Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams. |
@@ -43,7 +43,7 @@ contract between an agent and whatever drives it. `run`, `compact`, `run-types` 
 the four worlds that use them are marked `@unstable(feature = agent-run)`: a
 consumer enables that feature to see them. The design note for the package,
 including how tools and typed tools work, is
-[`cosmonic-agent/README.md`](cosmonic-agent/README.md).
+[`cosmonic-agent/README.md`](https://github.com/cosmonic-labs/agent-sdk/blob/main/wit/cosmonic-agent/README.md).
 
 `model-admin` exposes the trusted catalog and preparation controls. Preparing a
 model can load local weights or open a remote connection. A remote provider can
@@ -78,7 +78,7 @@ reported adaptation. Providers must not silently discard unsupported features.
 ## Agent 0.4 migration
 
 What changed from 0.3.0 and what a consumer updates:
-[`cosmonic-agent/docs/migrating-to-0.4.md`](cosmonic-agent/docs/migrating-to-0.4.md).
+[`cosmonic-agent/docs/migrating-to-0.4.md`](https://github.com/cosmonic-labs/agent-sdk/blob/main/wit/cosmonic-agent/docs/migrating-to-0.4.md).
 
 ## Usage
 
@@ -98,7 +98,6 @@ lock still reproduces:
 ```sh
 node .github/scripts/wit/build.mjs wit/cosmonic-notifications cosmonic:notifications
 node .github/scripts/wit/build.mjs wit/cosmonic-kafka kafka
-node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
 node .github/scripts/wit/build.mjs wit/cosmonic-cron cosmonic:cron
 ```
 

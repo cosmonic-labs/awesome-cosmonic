@@ -50,7 +50,7 @@ wash build
 Reusable WebAssembly components that implement a WIT interface. Hosted projects live in [`components/`](components/).
 
 - [sandboxed-webhook](components/sandboxed-webhook/) (hosted): Receives a webhook, verifies its HMAC-SHA256 signature, then forwards the payload to exactly one host bounded by `allowedHosts`, so a compromised handler cannot exfiltrate anywhere else. The signing secret is required rather than defaulted, so an unconfigured deployment refuses every request instead of trusting a published constant. Rust component over `wasi:http`.
-- [minimal-agent](components/minimal-agent/) (hosted): A sandboxed agent on `cosmonic:agent@0.4.2` that a host drives through the typed `cosmonic:agent/run` export: a streamed tool-calling loop per run against a host-resolved model alias, calling the tools its workload grants, with the conversation kept in the workload's session store and no endpoint, key, egress, or HTTP of its own. Rust component.
+- [minimal-agent](https://github.com/cosmonic-labs/agent-sdk/tree/main/components/minimal-agent): A sandboxed agent harness on `cosmonic:agent`. It now lives in [cosmonic-labs/agent-sdk](https://github.com/cosmonic-labs/agent-sdk), with the rest of the Cosmonic Agent SDK.
 
 ### Kafka
 
@@ -100,7 +100,7 @@ The same seven patterns in Go, built with [componentize-go](https://github.com/b
 
 Interface packages published to GHCR, laid out as `ghcr.io/cosmonic-labs/<namespace>/<package>`. Call them from any component; resolve them with [`wit/wkg-registries.toml`](wit/wkg-registries.toml). Source lives in [`wit/`](wit/).
 
-- [cosmonic:agent](wit/cosmonic-agent/): An API for calling models, tools, and durable sessions without tying a component to one inference provider.
+- [cosmonic:agent](https://github.com/cosmonic-labs/agent-sdk/tree/main/wit/cosmonic-agent): An API for calling models, tools, and durable sessions without tying a component to one inference provider. Developed in [cosmonic-labs/agent-sdk](https://github.com/cosmonic-labs/agent-sdk).
 - [cosmonic:cron](wit/cosmonic-cron/): An API for being called on crontab, interval and one-shot schedules, declared with a workload or registered at run time, with time spelled in `wasi:clocks@0.3.0` types.
 - [cosmonic:kafka](wit/cosmonic-kafka/): An API for publishing, consuming, and handling Kafka records through host-owned, binding-scoped clients, with optional transactions.
 - [cosmonic:notifications](wit/cosmonic-notifications/): Portable user notifications with caller-scoped response queues, actions, replies, and native futures and streams.

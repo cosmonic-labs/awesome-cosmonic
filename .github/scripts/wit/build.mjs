@@ -1,6 +1,6 @@
 // Validates a WIT package directory and builds it into dist/<package>.wasm.
 //
-//   node .github/scripts/wit/build.mjs wit/cosmonic-agent agent
+//   node .github/scripts/wit/build.mjs wit/cosmonic-cron cosmonic:cron
 //
 // Imported packages are pinned by wkg.lock; fetching must preserve the lock.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
