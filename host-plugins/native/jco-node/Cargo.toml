@@ -29,6 +29,7 @@ scrypt = { version = "0.11", default-features = false }
 sha1 = "0.10"
 sha2 = "0.10"
 sha3 = "0.10"
+socket2 = { version = "0.6", features = ["all"] }
 sysinfo = "0.32"
 wasmtime-wasi = { version = "48", default-features = false }
 serde_json = "1"
@@ -41,6 +42,8 @@ wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "3903d076
 libz-rs-sys = "0.6"
 brotli = "8"
 zstd-safe = "7"
+# `session` and `column_metadata` regenerate the bindings at build time, which needs libclang.
+libsqlite3-sys = { version = "0.35", features = ["bundled", "session", "column_metadata"] }
 
 # The runner compiles each component with Cranelift when it starts. Unoptimized, Cranelift takes
 # minutes over a StarlingMonkey-based component; optimized, seconds. These are the crates on that

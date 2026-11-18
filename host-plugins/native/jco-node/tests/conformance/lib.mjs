@@ -8,7 +8,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -67,6 +67,8 @@ const building = new Map();
  * @param {string} [options.world] - WIT world to build
  * @param {string} [options.variant] - distinguishes builds of one fixture with different arguments
  * @param {string} [options.source] - build from this directory instead of a Jco fixture
+ * @param {string[][]} [options.prepare] - commands to run in the copy first, as
+ *   `[program, ...args]` with `program` relative to the copy (or `node`)
  */
 export function component(fixture, options = {}) {
     const { args = [], entry = "component.js", wit = "wit", world, variant, source } = options;
@@ -86,7 +88,22 @@ export function component(fixture, options = {}) {
                 const scratch = await mkdtemp(join(tmpdir(), `jco-node-${name}-`));
                 try {
                     const app = join(scratch, "app");
-                    await cp(source ?? join(FIXTURES, fixture), app, { recursive: true });
+                    const from = source ?? join(FIXTURES, fixture);
+                    // An example's dependencies are linked rather than copied: the bundler only
+                    // reads them.
+                    const modules = join(from, "node_modules");
+                    await cp(from, app, { recursive: true, filter: (path) => path !== modules });
+                    if (existsSync(modules)) {
+                        await symlink(modules, join(app, "node_modules"), "dir");
+                    }
+                    // Steps the example's own build runs before componentizing, such as an app
+                    // build, run in the copy.
+                    for (const [command, ...rest] of options.prepare ?? []) {
+                        const step = await run(command === "node" ? process.execPath : join(app, command), rest, { cwd: app });
+                        if (step.status !== 0) {
+                            throw new Error(`preparing ${name} failed (${command} ${rest.join(" ")}):\n${step.stdout}\n${step.stderr}`);
+                        }
+                    }
                     const built = join(scratch, "component.wasm");
                     const result = await run(process.execPath, [
                         JCO,
@@ -99,7 +116,7 @@ export function component(fixture, options = {}) {
                         "-o",
                         built,
                         ...args,
-                    ]);
+                    ], { cwd: app });
                     if (result.status !== 0) {
                         throw new Error(`componentizing ${name} failed:\n${result.stdout}\n${result.stderr}`);
                     }

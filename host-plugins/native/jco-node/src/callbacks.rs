@@ -55,6 +55,28 @@ mod http_guest {
 
 use http_guest::exports::jco::node::http_callbacks as http_callbacks;
 
+mod dgram_guest {
+    wash_runtime::wasmtime::component::bindgen!({
+        path: "wit",
+        world: "dgram-guest",
+        wasmtime_crate: wash_runtime::wasmtime,
+        exports: { default: async },
+        with: { "jco:node/dgram": crate::bindings::jco::node::dgram },
+    });
+}
+
+use dgram_guest::exports::jco::node::dgram_callbacks;
+
+type DgramError = crate::bindings::jco::node::dgram::Error;
+
+/// What a UDP socket reports to its guest listener.
+pub enum DgramEvent {
+    Message { data: Vec<u8>, remote: std::net::SocketAddr },
+    Error(DgramError),
+    Resolved { id: u32, result: Result<String, DgramError> },
+    Sent { id: u32, result: Result<u32, DgramError> },
+}
+
 /// How long to wait before asking the guest again about an answer it has not finished.
 const REPOLL: Duration = Duration::from_millis(1);
 
@@ -70,6 +92,10 @@ pub enum Job {
     HttpBody { token: u64 },
     /// A server closed: release the listener it redeemed.
     HttpRetire { listener: u32 },
+    /// Something happened on a UDP socket.
+    Dgram { listener: u32, event: DgramEvent },
+    /// A UDP socket closed: release its listener once its earlier events are delivered.
+    DgramRetire { listener: u32 },
 }
 
 struct PendingResponse {
@@ -89,7 +115,11 @@ pub struct Pump {
     instance: Instance,
     timers: Option<timers_guest::TimersGuest>,
     http: Option<Arc<http_guest::HttpGuest>>,
+    dgram: Option<Arc<dgram_guest::DgramGuest>>,
     listeners: HashMap<u32, ResourceAny>,
+    socket_listeners: HashMap<u32, ResourceAny>,
+    /// Sockets whose listener the guest no longer has: their events are dropped.
+    retired_sockets: std::collections::HashSet<u32>,
     responses: HashMap<u64, PendingResponse>,
     bodies: HashMap<u64, PendingBody>,
     next_token: u64,
@@ -114,7 +144,10 @@ impl Pump {
             instance: *instance,
             timers: None,
             http: None,
+            dgram: None,
             listeners: HashMap::new(),
+            socket_listeners: HashMap::new(),
+            retired_sockets: std::collections::HashSet::new(),
             responses: HashMap::new(),
             bodies: HashMap::new(),
             next_token: 0,
@@ -186,7 +219,53 @@ impl Pump {
                     listener.resource_drop_async(&mut *store).await?;
                 }
             }
+            Job::Dgram { listener, event } => self.dgram_event(store, listener, event).await?,
+            Job::DgramRetire { listener } => {
+                self.retired_sockets.insert(listener);
+                if let Some(listener) = self.socket_listeners.remove(&listener) {
+                    listener.resource_drop_async(&mut *store).await?;
+                }
+            }
         }
+        Ok(())
+    }
+
+    async fn dgram_event(&mut self, store: &mut Store<SharedCtx>, id: u32, event: DgramEvent) -> anyhow::Result<()> {
+        if self.retired_sockets.contains(&id) {
+            return Ok(());
+        }
+        if self.dgram.is_none() {
+            self.dgram = Some(Arc::new(dgram_guest::DgramGuest::new(&mut *store, &self.instance)?));
+        }
+        let guest = self.dgram.clone().expect("set above");
+        let callbacks = guest.jco_node_dgram_callbacks();
+        let listener = match self.socket_listeners.get(&id) {
+            Some(listener) => *listener,
+            None => match callbacks.call_take_socket_listener(&mut *store, id).await? {
+                Some(listener) => {
+                    self.socket_listeners.insert(id, listener);
+                    listener
+                }
+                // Nobody to tell: the guest dropped the socket's registration.
+                None => return Ok(()),
+            },
+        };
+        let event = match event {
+            DgramEvent::Message { data, remote } => dgram_callbacks::SocketEvent::Message(dgram_callbacks::Message {
+                data,
+                remote: crate::bindings::jco::node::dgram::AddressInfo {
+                    address: remote.ip().to_string(),
+                    family: if remote.is_ipv4() { "IPv4" } else { "IPv6" }.into(),
+                    port: remote.port(),
+                },
+            }),
+            DgramEvent::Error(error) => dgram_callbacks::SocketEvent::Error(error),
+            DgramEvent::Resolved { id, result } => {
+                dgram_callbacks::SocketEvent::Resolved(dgram_callbacks::Resolved { id, result })
+            }
+            DgramEvent::Sent { id, result } => dgram_callbacks::SocketEvent::Sent(dgram_callbacks::Sent { id, result }),
+        };
+        callbacks.socket_listener().call_event(&mut *store, listener, &event).await?;
         Ok(())
     }
 

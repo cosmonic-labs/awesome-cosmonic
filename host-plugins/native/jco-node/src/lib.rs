@@ -24,7 +24,16 @@ pub mod bindings {
         with: {
             "jco:node/http.client-request": crate::hosts::http::ClientRequest,
             "jco:node/http.connection": crate::hosts::http::HttpConnection,
+            "jco:node/dgram.socket": crate::hosts::dgram::DgramSocket,
             "jco:node/http.server": crate::hosts::http::HttpServer,
+            "jco:node/sqlite.cursor": crate::hosts::sqlite::SqliteCursor,
+            "jco:node/sqlite.database": crate::hosts::sqlite::SqliteDatabase,
+            "jco:node/sqlite.session": crate::hosts::sqlite::SqliteSession,
+            "jco:node/sqlite.statement": crate::hosts::sqlite::SqliteStatement,
+            "jco:node/sqlite.tag-store": crate::hosts::sqlite::SqliteTagStore,
+            "jco:node/v8.profile": crate::hosts::v8::Profile,
+            "jco:node/v8.reader": crate::hosts::v8::Reader,
+            "jco:node/v8.writer": crate::hosts::v8::Writer,
             "jco:node/zlib.engine": crate::hosts::zlib::ZlibEngine,
         },
     });

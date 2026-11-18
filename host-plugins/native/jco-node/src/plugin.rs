@@ -119,13 +119,17 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
     node::child_process::add_to_linker::<_, NodeData>(linker, view)?;
     node::console::add_to_linker::<_, NodeData>(linker, view)?;
     node::crypto_kdf::add_to_linker::<_, NodeData>(linker, view)?;
+    node::dgram::add_to_linker::<_, NodeData>(linker, view)?;
+    node::dns::add_to_linker::<_, NodeData>(linker, view)?;
     node::fs::add_to_linker::<_, NodeData>(linker, view)?;
     node::http::add_to_linker::<_, NodeData>(linker, view)?;
     node::os::add_to_linker::<_, NodeData>(linker, view)?;
     node::process::add_to_linker::<_, NodeData>(linker, view)?;
+    node::sqlite::add_to_linker::<_, NodeData>(linker, view)?;
     node::timers::add_to_linker::<_, NodeData>(linker, view)?;
     node::trace_events::add_to_linker::<_, NodeData>(linker, view)?;
     node::tty::add_to_linker::<_, NodeData>(linker, view)?;
+    node::v8::add_to_linker::<_, NodeData>(linker, view)?;
     node::wasi::add_to_linker::<_, NodeData>(linker, view)?;
     node::zlib::add_to_linker::<_, NodeData>(linker, view)?;
     Ok(())

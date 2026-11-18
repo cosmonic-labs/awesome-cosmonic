@@ -3,13 +3,17 @@
 pub mod child_process;
 pub mod console;
 pub mod crypto_kdf;
+pub mod dgram;
+pub mod dns;
 pub mod fs;
 pub mod http;
 pub mod os;
 pub mod process;
+pub mod sqlite;
 pub mod timers;
 pub mod trace_events;
 pub mod tty;
+pub mod v8;
 pub mod wasi;
 pub mod zlib;
 
