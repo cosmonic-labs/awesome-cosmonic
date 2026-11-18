@@ -71,6 +71,8 @@ const building = new Map();
  *   `[program, ...args]` with `program` relative to the copy (or `node`)
  * @param {string[]} [options.keep] - paths in the copy the component reads at run time, such as
  *   an app build's static files; kept in {@link componentFiles}
+ * @param {string} [options.scratchRoot] - where to make the temporary copy, for fixtures whose
+ *   imports resolve from an enclosing package's `node_modules` (default: the OS temp directory)
  */
 export function component(fixture, options = {}) {
     const { args = [], entry = "component.js", wit = "wit", world, variant, source, keep = [] } = options;
@@ -88,7 +90,7 @@ export function component(fixture, options = {}) {
                 await mkdir(CACHE, { recursive: true });
                 // Componentizing rewrites the fixture's WIT to add the jco:node imports, so it
                 // works on a copy.
-                const scratch = await mkdtemp(join(tmpdir(), `jco-node-${name}-`));
+                const scratch = await mkdtemp(join(options.scratchRoot ?? tmpdir(), `.jco-node-${name}-`));
                 try {
                     const app = join(scratch, "app");
                     const from = source ?? join(FIXTURES, fixture);
@@ -101,8 +103,10 @@ export function component(fixture, options = {}) {
                     }
                     // Steps the example's own build runs before componentizing, such as an app
                     // build, run in the copy.
+                    // With the package's binaries on PATH, as `pnpm run` puts them.
+                    const env = { ...process.env, PATH: `${join(app, "node_modules/.bin")}:${process.env.PATH}` };
                     for (const [command, ...rest] of options.prepare ?? []) {
-                        const step = await run(command === "node" ? process.execPath : join(app, command), rest, { cwd: app });
+                        const step = await run(command === "node" ? process.execPath : join(app, command), rest, { cwd: app, env });
                         if (step.status !== 0) {
                             throw new Error(`preparing ${name} failed (${command} ${rest.join(" ")}):\n${step.stdout}\n${step.stderr}`);
                         }

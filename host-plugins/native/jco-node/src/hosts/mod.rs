@@ -16,6 +16,7 @@ pub mod process;
 pub mod sqlite;
 pub mod timers;
 pub mod tls;
+pub(crate) mod tls_config;
 pub mod trace_events;
 pub mod tty;
 pub mod v8;

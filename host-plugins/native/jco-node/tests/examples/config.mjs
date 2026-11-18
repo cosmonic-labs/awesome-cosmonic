@@ -39,6 +39,8 @@ export const EXAMPLE_CONFIG = {
     "node-grpc-server": {
         build: {
             source: join(EXAMPLES, "node-grpc-server"),
+            // `pnpm build` generates the protobuf code first (local protoc-gen-es, see buf.gen.yaml).
+            prepare: [["node_modules/.bin/buf", "generate"]],
             entry: "src/server.js",
             wit: "wit",
             args: ["--with-nodejs-http2-via", "direct"],

@@ -34,6 +34,7 @@ use crate::{
     },
     callbacks::Job,
     errno,
+    hosts::{tls::SecureContext, tls_config},
     plugin::NodeView,
     state::{Capability, lock},
 };
@@ -188,6 +189,43 @@ pub(crate) async fn connect(addresses: &[SocketAddr], timeout: Option<u32>) -> R
     Err(last.unwrap_or_else(|| plain("Error", "ENOTFOUND", "no address to connect to")))
 }
 
+/// A connection `exchange` speaks HTTP/1.1 over: plain TCP or TLS.
+trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<S: AsyncRead + AsyncWrite + Unpin + Send> Stream for S {}
+
+fn tls_required() -> Error {
+    plain(
+        "Error",
+        "ERR_JCO_TLS_ADAPTER_REQUIRED",
+        "HTTPS requires the same jco:node/tls provider passed to createHttpHost(callbacks, tls)",
+    )
+}
+
+/// A failed client handshake, with the code Node's `tls` gives the same failure.
+fn handshake_error(error: &io::Error, servername: &str) -> Error {
+    use rustls::{CertificateError, Error as Tls};
+    let tls = error.get_ref().and_then(|inner| inner.downcast_ref::<Tls>());
+    let (code, message) = match tls {
+        Some(Tls::InvalidCertificate(CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. })) => (
+            "ERR_TLS_CERT_ALTNAME_INVALID",
+            format!("Hostname/IP does not match certificate's altnames: Host: {servername}. is not in the cert's altnames"),
+        ),
+        Some(Tls::InvalidCertificate(CertificateError::UnknownIssuer)) => {
+            ("UNABLE_TO_VERIFY_LEAF_SIGNATURE", "unable to verify the first certificate".to_owned())
+        }
+        // webpki's view of a self-signed certificate nobody trusts.
+        Some(Tls::InvalidCertificate(CertificateError::Other(other))) if format!("{other:?}").contains("CaUsedAsEndEntity") => {
+            ("DEPTH_ZERO_SELF_SIGNED_CERT", "self-signed certificate".to_owned())
+        }
+        Some(Tls::InvalidCertificate(CertificateError::Expired | CertificateError::ExpiredContext { .. })) => {
+            ("CERT_HAS_EXPIRED", "certificate has expired".to_owned())
+        }
+        Some(other) => ("ERR_SSL_HANDSHAKE_FAILURE", other.to_string()),
+        None => return socket_error(error, "connect", None),
+    };
+    plain("Error", code, message)
+}
+
 async fn with_timeout<T>(limit: Option<u32>, syscall: &str, work: impl Future<Output = io::Result<T>>) -> io::Result<T> {
     match limit {
         Some(limit) => {
@@ -198,20 +236,33 @@ async fn with_timeout<T>(limit: Option<u32>, syscall: &str, work: impl Future<Ou
 }
 
 /// One buffered client exchange: what `http.request` does once the guest ends the request.
-async fn exchange(options: RequestOptions, connection: Arc<ConnectionShared>) -> Result<Response, Error> {
-    if options.scheme != "http" {
-        return Err(plain(
-            "Error",
-            "ERR_JCO_TLS_ADAPTER_REQUIRED",
-            "HTTPS requires the same jco:node/tls provider passed to createHttpHost(callbacks, tls)",
-        ));
+async fn exchange(
+    options: RequestOptions,
+    connection: Arc<ConnectionShared>,
+    context: Option<Arc<SecureContext>>,
+) -> Result<Response, Error> {
+    let secure = options.scheme == "https";
+    if secure && context.is_none() {
+        return Err(tls_required());
     }
-    let (host, port) = split_authority(&options.authority, 80);
+    let (host, port) = split_authority(&options.authority, if secure { 443 } else { 80 });
     let addresses = resolve(&host, port).await?;
-    let stream = connect(&addresses, options.connect_timeout_ms).await?;
-    let peer = stream.peer_addr().ok();
-    let _ = stream.set_nodelay(true);
-    let (read, mut write) = stream.into_split();
+    let tcp = connect(&addresses, options.connect_timeout_ms).await?;
+    let peer = tcp.peer_addr().ok();
+    let _ = tcp.set_nodelay(true);
+    let stream: Box<dyn Stream> = match context {
+        None => Box::new(tcp),
+        Some(context) => {
+            let connector = tls_config::client(Some(&context), &[b"http/1.1"])
+                .map_err(|error| plain("Error", error.code, error.message))?;
+            let name = context.servername.clone().unwrap_or_else(|| host.clone());
+            let server_name = rustls::pki_types::ServerName::try_from(name.clone())
+                .map_err(|_| plain("TypeError", "ERR_INVALID_ARG_VALUE", format!("invalid servername {name}")))?;
+            let handshake = with_timeout(options.connect_timeout_ms, "connect", connector.connect(server_name, tcp));
+            Box::new(handshake.await.map_err(|error| handshake_error(&error, &name))?)
+        }
+    };
+    let (read, mut write) = tokio::io::split(stream);
     connection.connected.store(true, Ordering::SeqCst);
     let mut headers = fields(&options.headers);
     if wire::header(&headers, "connection").is_none() {
@@ -340,6 +391,8 @@ pub struct IncomingRequest {
 struct ServerShared {
     listener: u32,
     jobs: mpsc::UnboundedSender<Job>,
+    /// For a `node:https` server, the secure context it terminates TLS with.
+    context: Option<Arc<SecureContext>>,
     options: ServerOptions,
     accept: Mutex<Option<JoinHandle<()>>>,
     address: Mutex<Option<ServerAddress>>,
@@ -627,10 +680,12 @@ impl HostClientRequest for NodeView<'_> {
         options.body = body;
         let result = request.result.clone();
         let connection = request.connection.clone();
-        request.task = Some(tokio::spawn(async move {
-            let outcome = exchange(options, connection).await;
+        let context = options.tls.as_ref().and_then(|tls| self.secure_context(tls.context_id));
+        let task = tokio::spawn(async move {
+            let outcome = exchange(options, connection, context).await;
             *lock(&result) = Some(outcome);
-        }));
+        });
+        self.table.get_mut(&self_)?.task = Some(task);
         Ok(Ok(true))
     }
 
@@ -725,9 +780,12 @@ impl HostConnection for NodeView<'_> {
 impl HostServer for NodeView<'_> {
     async fn new(&mut self, options: ServerOptions, listener: u32) -> wasmtime::Result<Resource<HttpServer>> {
         self.http_trap()?;
+        // Jco releases the secure context once the server is constructed.
+        let context = options.tls.as_ref().and_then(|tls| self.secure_context(tls.context_id));
         let shared = Arc::new(ServerShared {
             listener,
             jobs: self.node.jobs.clone(),
+            context,
             options,
             accept: Mutex::new(None),
             address: Mutex::new(None),
@@ -741,13 +799,14 @@ impl HostServer for NodeView<'_> {
 
     async fn listen(&mut self, self_: Resource<HttpServer>, options: ListenOptions) -> HttpResult<ServerAddress> {
         let shared = self.table.get(&self_)?.shared.clone();
-        if shared.options.tls.is_some() {
-            return Ok(Err(plain(
-                "Error",
-                "ERR_JCO_TLS_ADAPTER_REQUIRED",
-                "HTTPS requires the same jco:node/tls provider passed to createHttpHost(callbacks, tls)",
-            )));
-        }
+        let acceptor = match (&shared.options.tls, &shared.context) {
+            (None, _) => None,
+            (Some(_), None) => return Ok(Err(tls_required())),
+            (Some(_), Some(context)) => match tls_config::server(context, &[b"http/1.1"]) {
+                Ok(acceptor) => Some(acceptor),
+                Err(error) => return Ok(Err(plain("Error", error.code, error.message))),
+            },
+        };
         if lock(&shared.accept).is_some() {
             return Ok(Err(plain(
                 "Error",
@@ -781,8 +840,18 @@ impl HostServer for NodeView<'_> {
                 let idle = Arc::new(AtomicBool::new(true));
                 let server = accept_shared.clone();
                 let task_idle = idle.clone();
+                let acceptor = acceptor.clone();
                 let task = tokio::spawn(async move {
-                    serve(server.clone(), stream, Some(remote), task_idle).await;
+                    match acceptor {
+                        None => serve(server.clone(), stream, Some(remote), task_idle).await,
+                        // A failed handshake is the client's problem; Node reports it as a
+                        // `tlsClientError` the guest's server does not see here.
+                        Some(acceptor) => {
+                            if let Ok(stream) = acceptor.accept(stream).await {
+                                serve(server.clone(), stream, Some(remote), task_idle).await;
+                            }
+                        }
+                    }
                     lock(&server.connections).remove(&id);
                 });
                 lock(&accept_shared.connections).insert(id, Tracked { task: task.abort_handle(), idle });
@@ -842,7 +911,9 @@ impl Host for NodeView<'_> {
             return Ok(Err(error));
         }
         let (connection, _) = ConnectionShared::new();
-        Ok(exchange(options, connection).await)
+        // The guest releases the context when this call returns, so it is resolved now.
+        let context = options.tls.as_ref().and_then(|tls| self.secure_context(tls.context_id));
+        Ok(exchange(options, connection, context).await)
     }
 }
 

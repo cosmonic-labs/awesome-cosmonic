@@ -46,6 +46,9 @@ pub(crate) struct SecureContext {
     pub(crate) cert: Option<Vec<u8>>,
     pub(crate) ca: Vec<Vec<u8>>,
     pub(crate) reject_unauthorized: Option<bool>,
+    /// The name a client verifies the server's certificate against (and sends as SNI), when it
+    /// is not the host connected to.
+    pub(crate) servername: Option<String>,
 }
 
 #[derive(Default)]
@@ -240,6 +243,10 @@ impl Host for NodeView<'_> {
             ca: options.get("ca").map(Value::materials).unwrap_or_default(),
             reject_unauthorized: match options.get("rejectUnauthorized") {
                 Some(Value::Bool(value)) => Some(*value),
+                _ => None,
+            },
+            servername: match options.get("servername") {
+                Some(Value::Text(name)) if !name.is_empty() => Some(name.clone()),
                 _ => None,
             },
         };

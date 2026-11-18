@@ -154,12 +154,22 @@ impl Pump {
     /// Take the job queue of the instance running in `store`. An instance has one queue, so a
     /// second pump for the same store is an error.
     pub fn attach(store: &mut Store<SharedCtx>, instance: &Instance) -> anyhow::Result<Self> {
-        let plugin = store.data().active_ctx.try_get_plugin::<JcoNode>(PLUGIN_ID)?;
+        Self::attach_if_bound(store, instance)?
+            .ok_or_else(|| anyhow::anyhow!("plugin {PLUGIN_ID} is not bound to this component"))
+    }
+
+    /// As [`attach`](Self::attach), or `None` when the component imports no `jco:node`
+    /// interface: a host binds the plugin only to components that use it, and such a component
+    /// has no callbacks to deliver.
+    pub fn attach_if_bound(store: &mut Store<SharedCtx>, instance: &Instance) -> anyhow::Result<Option<Self>> {
+        let Some(plugin) = store.data().active_ctx.try_get_plugin::<JcoNode>(PLUGIN_ID).ok() else {
+            return Ok(None);
+        };
         let node = plugin.attach(store.data_mut());
         let queue = lock(&node.job_queue)
             .take()
             .ok_or_else(|| anyhow::anyhow!("this instance's callbacks are already being delivered"))?;
-        Ok(Self {
+        Ok(Some(Self {
             node,
             queue,
             instance: *instance,
@@ -175,7 +185,7 @@ impl Pump {
             responses: HashMap::new(),
             bodies: HashMap::new(),
             next_token: 0,
-        })
+        }))
     }
 
     /// The instance state this pump serves.

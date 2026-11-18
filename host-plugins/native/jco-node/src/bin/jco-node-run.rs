@@ -196,7 +196,8 @@ fn parse_options() -> anyhow::Result<Options> {
 struct Session {
     store: Store<SharedCtx>,
     instance: Instance,
-    pump: Pump,
+    /// `None` for a component that imports no `jco:node` interface: it has no callbacks.
+    pump: Option<Pump>,
 }
 
 /// How a call into the guest ended, other than by returning.
@@ -286,10 +287,14 @@ impl Session {
         let environment: Vec<(&str, &str)> =
             options.environment.iter().map(|(key, value)| (key.as_str(), value.as_str())).collect();
         cli.envs(&environment).args(&options.identity.argv).inherit_stdio();
+        // As Jco's WASI shim does, the guest starts where its process.cwd() says it is.
+        if let Some(cwd) = options.identity.cwd.to_str() {
+            cli.initial_cwd(cwd);
+        }
         *store.data_mut().active_ctx.ctx.cli() = std::mem::take(cli.build().cli());
 
         let instance = pre.instantiate_async(&mut store).await?;
-        let pump = Pump::attach(&mut store, &instance)?;
+        let pump = Pump::attach_if_bound(&mut store, &instance)?;
         Ok(Self { store, instance, pump })
     }
 
@@ -342,14 +347,24 @@ impl Session {
 
     /// Deliver callbacks that are already due, so a call sees their effects.
     async fn drain(&mut self) -> Result<(), Stop> {
-        while let Some(job) = self.pump.try_next() {
+        while let Some(job) = self.pump.as_mut().and_then(Pump::try_next) {
             self.deliver(job).await?;
         }
         Ok(())
     }
 
+    /// The next callback to deliver; pending forever for a component without any.
+    async fn next_job(&mut self) -> Option<jco_node_host::callbacks::Job> {
+        match self.pump.as_mut() {
+            Some(pump) => pump.next().await,
+            None => std::future::pending().await,
+        }
+    }
+
     async fn deliver(&mut self, job: jco_node_host::callbacks::Job) -> Result<(), Stop> {
-        self.pump.deliver(&mut self.store, job).await.map_err(|error| {
+        // Jobs come only from the pump, so there is one whenever this is reached.
+        let Some(pump) = self.pump.as_mut() else { return Ok(()) };
+        pump.deliver(&mut self.store, job).await.map_err(|error| {
             match error.downcast_ref::<wasmtime_wasi::I32Exit>() {
                 Some(exit) => Stop::Exit(exit.0),
                 None => Stop::Trap(error),
@@ -421,7 +436,7 @@ async fn run() -> anyhow::Result<ExitCode> {
                     }
                 }
             }
-            job = session.pump.next() => {
+            job = session.next_job() => {
                 let Some(job) = job else { continue };
                 match session.deliver(job).await {
                     Ok(()) => {}
@@ -458,7 +473,7 @@ async fn run_worker(options: &Options, cluster: Arc<Cluster>) -> anyhow::Result<
     loop {
         tokio::select! {
             () = cluster.disconnected() => return Ok(ExitCode::SUCCESS),
-            job = session.pump.next() => {
+            job = session.next_job() => {
                 let Some(job) = job else { continue };
                 match session.deliver(job).await {
                     Ok(()) => {}

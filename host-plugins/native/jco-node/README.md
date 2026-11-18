@@ -93,6 +93,10 @@ JCO_DIR=/path/to/jco node --test --test-concurrency=1 tests/examples/examples.te
 
 Fixtures are componentized from the Jco checkout on first use
 and cached in `target/conformance/` (about half a minute each).
+Each suite names the Jco test it ports;
+expectations are Jco's.
+`guest.test.mjs` covers fixtures whose builtins live entirely in the component,
+which must run here with nothing granted.
 
 ## Status
 
@@ -113,3 +117,33 @@ Where the host can't match Node, it says so in the same terms Jco's providers us
 - `ffi`: native calls take at most eight integer and eight floating-point arguments,
   on x86-64 and AArch64 System V.
 - Imports block, so a guest can't be a client of a server in its own instance.
+
+### Coverage
+
+Run here, all passing:
+every `jco:node` interface's fixture granted and refused
+(child-process, cluster, console, dgram, dns, ffi, fs, http, http2, https, inspector, os, process, sqlite,
+trace-events, tty, v8, wasi, worker-threads, zlib),
+Express, the VFS in direct and WASI modes,
+the guest-side builtins (assert, buffer, errors, events, globals, module, path, querystring, readline,
+repl, stream, string_decoder, url's cwd case, vm),
+and the examples node-mcp-server, node-grpc-server, node-sveltekit-server and nodejs-platform
+through their own e2e tests.
+
+Marked todo, by design:
+inspector `eval` (no protocol backend),
+real worker threads (JavaScript bodies),
+and http over `wasi:sockets` alone (see below).
+Not ported:
+`node:tls` sockets (unsupported, above);
+https-wasi-tls (asserts on Jco's JS resource counters);
+url's comparison against native Node 24;
+and fixtures Jco builds with bespoke bundling and no `jco:node` imports
+(net, path-p3, perf-hooks, stream-classic, test, timers, util).
+
+Jco's WASI WIT differs from upstream in two places the plugin papers over
+for components that import `jco:node`:
+`wasi:tls/types@0.2.0-draft` gains `is-available`,
+and `wasi:sockets/network@0.2.10` gains `network.noop`.
+A component that imports neither `jco:node` nor a plugin-bound interface
+needs its host's WASI to provide them.

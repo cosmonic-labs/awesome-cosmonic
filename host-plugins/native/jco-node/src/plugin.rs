@@ -149,6 +149,7 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
     wasmtime_wasi_tls::p2::add_to_linker(linker, &tls)?;
     // Jco's copy of the draft adds an availability query; TLS is available wherever this links.
     linker.instance("wasi:tls/types@0.2.0-draft")?.func_wrap("is-available", |_, (): ()| Ok((true,)))?;
+    link_jco_sockets_network(linker)?;
     node::trace_events::add_to_linker::<_, NodeData>(linker, view)?;
     node::tty::add_to_linker::<_, NodeData>(linker, view)?;
     node::v8::add_to_linker::<_, NodeData>(linker, view)?;
@@ -168,6 +169,32 @@ pub const DENY_KEY: &str = "deny";
 /// host only links what a workload lists, so a component importing an unlisted interface does
 /// not start. To start it anyway with that interface refusing every call, as Jco's default
 /// providers do, list the interface and name it in the entry's `deny` config.
+/// Jco's `wasi:sockets/network@0.2.10` adds `network.noop`, a method ComponentizeJS needs
+/// declared and never calls (Jco's lib/wit/builtin/0.2.10); components that bundle node:net
+/// import it. An instance under that exact name takes precedence over WASI's semver-matched one,
+/// so it is the whole interface, on WASI's own resource type and implementation.
+fn link_jco_sockets_network(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
+    use wash_runtime::wasmtime::component::{Resource, ResourceType};
+    use wasmtime_wasi::{
+        WasiView as _,
+        p2::{Network, bindings::sockets::network::{ErrorCode, Host as _}},
+        sockets::WasiSocketsView as _,
+    };
+    use wasmtime_wasi::p2::bindings::sockets::network::Error as IoError;
+
+    let mut network = linker.instance("wasi:sockets/network@0.2.10")?;
+    network.resource("network", ResourceType::host::<Network>(), |mut store, rep| {
+        store.data_mut().ctx().table.delete(Resource::<Network>::new_own(rep))?;
+        Ok(())
+    })?;
+    network.func_wrap("[method]network.noop", |_, (_network,): (Resource<Network>,)| Ok(()))?;
+    network.func_wrap("network-error-code", |mut store, (error,): (Resource<IoError>,)| {
+        let code: Option<ErrorCode> = store.data_mut().sockets().network_error_code(error)?;
+        Ok((code,))
+    })?;
+    Ok(())
+}
+
 pub fn grants_from(interfaces: &WitInterfaces<'_>) -> Grants {
     let mut grants = Grants::none();
     let mut denied = Vec::new();
