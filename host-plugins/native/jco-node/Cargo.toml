@@ -19,7 +19,14 @@ path = "src/bin/jco-node-run.rs"
 anyhow = "1"
 async-trait = "0.1"
 bytes = "1"
+hkdf = "0.12"
+hmac = "0.12"
 libc = "0.2"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+scrypt = { version = "0.11", default-features = false }
+sha1 = "0.10"
+sha2 = "0.10"
+sha3 = "0.10"
 sysinfo = "0.32"
 wasmtime-wasi = { version = "48", default-features = false }
 serde_json = "1"
@@ -29,3 +36,37 @@ tracing = "0.1"
 # git at a fixed rev. wasmtime is taken from its re-export rather than declared
 # here, which keeps the store and linker types identical to the host's.
 wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "3903d076d656ff4abea412b6f0fae139b535e7ed", default-features = false }
+
+# The runner compiles each component with Cranelift when it starts. Unoptimized, Cranelift takes
+# minutes over a StarlingMonkey-based component; optimized, seconds. These are the crates on that
+# path, so a dev build stays quick to produce and is still usable.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.cranelift-bitset]
+opt-level = 3
+[profile.dev.package.cranelift-control]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.wasmparser]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+[profile.dev.package.gimli]
+opt-level = 3
+[profile.dev.package.object]
+opt-level = 3
+[profile.dev.package.hashbrown]
+opt-level = 3
+[profile.dev.package.smallvec]
+opt-level = 3
+[profile.dev.package.rustc-hash]
+opt-level = 3

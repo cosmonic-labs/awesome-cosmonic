@@ -382,13 +382,23 @@ async fn run() -> anyhow::Result<ExitCode> {
     }
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
-    match run().await {
+fn main() -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("jco-node-run: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let code = match runtime.block_on(run()) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("jco-node-run: {error:?}");
             ExitCode::from(2)
         }
-    }
+    };
+    // A guest that exits mid-session leaves the stdin reader parked in a blocking read, and
+    // waiting for that thread would hold the process open until the caller closed stdin.
+    runtime.shutdown_background();
+    code
 }

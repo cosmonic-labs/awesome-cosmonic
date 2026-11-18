@@ -1,9 +1,15 @@
 //! One module per `jco:node` interface.
 
+pub mod child_process;
 pub mod console;
+pub mod crypto_kdf;
+pub mod fs;
 pub mod os;
 pub mod process;
 pub mod timers;
+pub mod trace_events;
+pub mod tty;
+pub mod wasi;
 
 use wash_runtime::wasmtime;
 

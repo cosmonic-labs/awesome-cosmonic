@@ -286,7 +286,34 @@ impl Host for NodeView<'_> {
 
     async fn set_exit_code(&mut self, value: Option<ExitCode>) -> ProcessResult<()> {
         granted!(self);
-        self.node.process().exit_code = value.map(from_wit_exit);
+        // Node keeps an integer, coercing a string that spells one, and rejects anything else.
+        let number = match value {
+            None => {
+                self.node.process().exit_code = None;
+                return Ok(Ok(()));
+            }
+            Some(ExitCode::Number(number)) => number,
+            Some(ExitCode::Text(text)) => match text.trim().parse::<f64>() {
+                Ok(number) if !text.is_empty() && number.fract() == 0.0 => number,
+                _ => {
+                    return Ok(Err(plain(
+                        "TypeError",
+                        format!(
+                            "The \"code\" argument must be of type number. Received type string ('{text}')"
+                        ),
+                        "ERR_INVALID_ARG_TYPE",
+                    )));
+                }
+            },
+        };
+        if number.fract() != 0.0 || !number.is_finite() {
+            return Ok(Err(plain(
+                "RangeError",
+                format!("The value of \"code\" is out of range. It must be an integer. Received {number}"),
+                "ERR_OUT_OF_RANGE",
+            )));
+        }
+        self.node.process().exit_code = Some(state::ExitCode::Number(number));
         Ok(Ok(()))
     }
 

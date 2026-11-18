@@ -321,6 +321,8 @@ pub struct NodeInstance {
     pub(crate) job_queue: Mutex<Option<mpsc::UnboundedReceiver<Job>>>,
     /// Per-interface state that only its own module understands.
     pub(crate) timers: Mutex<crate::hosts::timers::Timers>,
+    pub(crate) terminals: Mutex<crate::hosts::tty::Terminals>,
+    pub(crate) tracing: Mutex<crate::hosts::trace_events::Tracing>,
 }
 
 impl NodeInstance {
@@ -345,6 +347,8 @@ impl NodeInstance {
             jobs,
             job_queue: Mutex::new(Some(queue)),
             timers: Mutex::default(),
+            terminals: Mutex::default(),
+            tracing: Mutex::default(),
         })
     }
 

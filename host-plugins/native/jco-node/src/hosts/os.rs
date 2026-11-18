@@ -182,13 +182,6 @@ pub(crate) fn passwd() -> Result<Passwd, UvError> {
     }
 }
 
-fn prefix_length(netmask: std::net::IpAddr) -> u32 {
-    match netmask {
-        std::net::IpAddr::V4(mask) => u32::from(mask).count_ones(),
-        std::net::IpAddr::V6(mask) => u128::from(mask).count_ones(),
-    }
-}
-
 fn netmask(family_bits: u32, prefix: u8, v6: bool) -> String {
     if v6 {
         let mask = if prefix == 0 { 0 } else { u128::MAX << (family_bits - u32::from(prefix)) };
@@ -461,7 +454,6 @@ mod tests {
     fn netmasks_come_from_prefix_lengths() {
         assert_eq!(netmask(32, 24, false), "255.255.255.0");
         assert_eq!(netmask(128, 64, true), "ffff:ffff:ffff:ffff::");
-        assert_eq!(prefix_length("255.255.0.0".parse().unwrap()), 16);
     }
 
     #[test]
