@@ -17,6 +17,7 @@ world imports {
     import jco:node/process@0.1.0;
     import jco:node/sqlite@0.1.0;
     import jco:node/timers@0.1.0;
+    import jco:node/tls@0.1.0;
     import jco:node/trace-events@0.1.0;
     import jco:node/tty@0.1.0;
     import jco:node/v8@0.1.0;

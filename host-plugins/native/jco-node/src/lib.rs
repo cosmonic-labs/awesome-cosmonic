@@ -26,6 +26,9 @@ pub mod bindings {
             "jco:node/http.connection": crate::hosts::http::HttpConnection,
             "jco:node/dgram.socket": crate::hosts::dgram::DgramSocket,
             "jco:node/http.server": crate::hosts::http::HttpServer,
+            "jco:node/http2.client-session": crate::hosts::http2::ClientSession,
+            "jco:node/http2.client-stream": crate::hosts::http2::ClientStream,
+            "jco:node/http2.server": crate::hosts::http2::Http2Server,
             "jco:node/sqlite.cursor": crate::hosts::sqlite::SqliteCursor,
             "jco:node/sqlite.database": crate::hosts::sqlite::SqliteDatabase,
             "jco:node/sqlite.session": crate::hosts::sqlite::SqliteSession,
@@ -35,6 +38,8 @@ pub mod bindings {
             "jco:node/v8.reader": crate::hosts::v8::Reader,
             "jco:node/v8.writer": crate::hosts::v8::Writer,
             "jco:node/zlib.engine": crate::hosts::zlib::ZlibEngine,
+            "wasi:io": wasmtime_wasi::p2::bindings::io,
+            "wasi:tls/types": wasmtime_wasi_tls::p2::bindings::types,
         },
     });
 }

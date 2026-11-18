@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 
-import { EXAMPLES } from "../conformance/lib.mjs";
+import { EXAMPLES, componentFiles } from "../conformance/lib.mjs";
 
 const RUNTIME = "jco-node host plugin";
 
@@ -36,11 +36,27 @@ export const EXAMPLE_CONFIG = {
         listening: (port) => `MCP server listening at http://127.0.0.1:${port}/mcp`,
         retarget: runtimeList,
     },
+    "node-grpc-server": {
+        build: {
+            source: join(EXAMPLES, "node-grpc-server"),
+            entry: "src/server.js",
+            wit: "wit",
+            args: ["--with-nodejs-http2-via", "direct"],
+        },
+        // run-transpiled.js maps node:http2 to the direct Node provider and jco:node/tls (with
+        // wasi:tls) to its Node providers.
+        session: { grant: ["http2", "tls"] },
+        startArgs: (port) => [port],
+        listening: (port) => `gRPC server listening at http://127.0.0.1:${port}`,
+        retarget: runtimeList,
+    },
     "node-sveltekit-server": {
         build: {
             source: join(EXAMPLES, "node-sveltekit-server"),
             // `pnpm build`: the app build, then scripts/build.mjs's componentize command.
             prepare: [["node_modules/.bin/vite", "build"]],
+            // The adapter serves `build/` from the working directory at run time.
+            keep: ["build"],
             entry: "src/component.ts",
             wit: "wit",
             world: "component",
@@ -61,6 +77,8 @@ export const EXAMPLE_CONFIG = {
         // the adapter's environment defaults.
         session: {
             grant: ["fs", "http", "process", "tty"],
+            // run-transpiled.ts runs from the example directory, where `build/` is.
+            cwd: componentFiles("node-sveltekit-server"),
             inheritEnv: true,
             env: {
                 ADDRESS_HEADER: "",

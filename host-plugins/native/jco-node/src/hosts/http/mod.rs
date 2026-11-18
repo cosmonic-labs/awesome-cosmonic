@@ -64,7 +64,7 @@ pub(crate) fn plain(name: &str, code: &str, message: impl Into<String>) -> Error
 }
 
 /// A libuv failure on a socket call, worded as Node words it: `connect ECONNREFUSED 1.2.3.4:5`.
-fn socket_error(error: &io::Error, syscall: &str, address: Option<SocketAddr>) -> Error {
+pub(crate) fn socket_error(error: &io::Error, syscall: &str, address: Option<SocketAddr>) -> Error {
     if error.kind() == io::ErrorKind::TimedOut && error.raw_os_error().is_none() {
         return Error {
             message: error.to_string(),
@@ -97,6 +97,40 @@ fn socket_error(error: &io::Error, syscall: &str, address: Option<SocketAddr>) -
     }
 }
 
+/// Listen on `host` (or, as Node does without one, the unspecified IPv6 address, which also takes
+/// IPv4, falling back to IPv4 alone) and `port`, failing as Node's `listen` does.
+pub(crate) async fn bind_tcp(host: Option<&str>, port: u16) -> Result<TcpListener, Error> {
+    let hosts = match host {
+        Some(host) => vec![host.to_owned()],
+        None => vec!["::".to_owned(), "0.0.0.0".to_owned()],
+    };
+    let mut failure = None;
+    for host in hosts {
+        let addresses = match resolve(&host, port).await {
+            Ok(addresses) => addresses,
+            Err(error) => {
+                failure = Some(error);
+                continue;
+            }
+        };
+        for address in addresses {
+            match TcpListener::bind(address).await {
+                Ok(listener) => return Ok(listener),
+                Err(error) => {
+                    let mut error = socket_error(&error, "listen", Some(address));
+                    // Node words a listen failure `listen EADDRINUSE: address already in use ::1:80`.
+                    if let Some(uv) = error.code.as_deref().and_then(errno::from_code) {
+                        error.message =
+                            format!("listen {}: {} {}:{}", uv.code, uv.description, address.ip(), address.port());
+                    }
+                    failure = Some(error);
+                }
+            }
+        }
+    }
+    Err(failure.unwrap_or_else(|| plain("Error", "EADDRNOTAVAIL", "listen EADDRNOTAVAIL")))
+}
+
 fn timed_out(syscall: &str) -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, format!("HTTP {syscall} timed out"))
 }
@@ -110,7 +144,7 @@ fn to_fields(headers: Vec<wire::Header>) -> Vec<Header> {
 }
 
 /// `host:port` with Node's defaults, accepting a bracketed IPv6 literal.
-fn split_authority(authority: &str, default_port: u16) -> (String, u16) {
+pub(crate) fn split_authority(authority: &str, default_port: u16) -> (String, u16) {
     if let Some(rest) = authority.strip_prefix('[') {
         let (host, rest) = rest.split_once(']').unwrap_or((rest, ""));
         let port = rest.strip_prefix(':').and_then(|port| port.parse().ok()).unwrap_or(default_port);
@@ -122,7 +156,7 @@ fn split_authority(authority: &str, default_port: u16) -> (String, u16) {
     }
 }
 
-async fn resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, Error> {
+pub(crate) async fn resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, Error> {
     let found = tokio::net::lookup_host((host, port)).await.map(|found| found.collect::<Vec<_>>());
     match found {
         Ok(found) if !found.is_empty() => Ok(found),
@@ -136,7 +170,7 @@ async fn resolve(host: &str, port: u16) -> Result<Vec<SocketAddr>, Error> {
 }
 
 /// Connect to the first address that accepts, as Node's `autoSelectFamily` does.
-async fn connect(addresses: &[SocketAddr], timeout: Option<u32>) -> Result<TcpStream, Error> {
+pub(crate) async fn connect(addresses: &[SocketAddr], timeout: Option<u32>) -> Result<TcpStream, Error> {
     let mut last = None;
     for address in addresses {
         let attempt = TcpStream::connect(address);
@@ -358,7 +392,7 @@ impl Drop for HttpServer {
     }
 }
 
-fn tcp_address(address: SocketAddr) -> ServerAddress {
+pub(crate) fn tcp_address(address: SocketAddr) -> ServerAddress {
     ServerAddress::Tcp(TcpAddress {
         address: address.ip().to_string(),
         family: if address.is_ipv4() { "IPv4" } else { "IPv6" }.into(),
@@ -728,53 +762,9 @@ impl HostServer for NodeView<'_> {
                 format!("listening on the pipe {path} is not supported in a WebAssembly component: use a TCP port"),
             )));
         }
-        let port = options.port.unwrap_or(0);
-        // Node listens on the unspecified IPv6 address, which also takes IPv4, when no host is given.
-        let hosts = match options.host.as_deref() {
-            Some(host) => vec![host.to_owned()],
-            None => vec!["::".to_owned(), "0.0.0.0".to_owned()],
-        };
-        let mut bound = None;
-        let mut failure = None;
-        for host in hosts {
-            let addresses = match resolve(&host, port).await {
-                Ok(addresses) => addresses,
-                Err(error) => {
-                    failure = Some(error);
-                    continue;
-                }
-            };
-            for address in addresses {
-                match TcpListener::bind(address).await {
-                    Ok(listener) => {
-                        bound = Some(listener);
-                        break;
-                    }
-                    Err(error) => {
-                        let mut error = socket_error(&error, "listen", Some(address));
-                        // Node words a listen failure `listen EADDRINUSE: address already in use ::1:80`.
-                        if let Some(code) = &error.code {
-                            let uv = errno::from_code(code);
-                            if let Some(uv) = uv {
-                                error.message = format!(
-                                    "listen {}: {} {}:{}",
-                                    uv.code,
-                                    uv.description,
-                                    address.ip(),
-                                    address.port()
-                                );
-                            }
-                        }
-                        failure = Some(error);
-                    }
-                }
-            }
-            if bound.is_some() {
-                break;
-            }
-        }
-        let Some(listener) = bound else {
-            return Ok(Err(failure.unwrap_or_else(|| plain("Error", "EADDRNOTAVAIL", "listen EADDRNOTAVAIL"))));
+        let listener = match bind_tcp(options.host.as_deref(), options.port.unwrap_or(0)).await {
+            Ok(listener) => listener,
+            Err(error) => return Ok(Err(error)),
         };
         let address = match listener.local_addr() {
             Ok(address) => tcp_address(address),

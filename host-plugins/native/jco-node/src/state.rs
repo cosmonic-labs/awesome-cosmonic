@@ -209,6 +209,8 @@ pub struct InstanceTemplate {
     pub identity: ProcessIdentity,
     /// The workload's environment; the guest's `process.env` starts as a copy.
     pub environment: BTreeMap<String, String>,
+    /// The process's side of `node:cluster`, shared by its instances.
+    pub cluster: Arc<crate::hosts::cluster::Cluster>,
 }
 
 /// An open file behind a guest-visible descriptor.
@@ -323,6 +325,9 @@ pub struct NodeInstance {
     pub(crate) timers: Mutex<crate::hosts::timers::Timers>,
     pub(crate) terminals: Mutex<crate::hosts::tty::Terminals>,
     pub(crate) tracing: Mutex<crate::hosts::trace_events::Tracing>,
+    pub(crate) libraries: Mutex<crate::hosts::ffi::Libraries>,
+    pub(crate) tls_contexts: Mutex<crate::hosts::tls::Contexts>,
+    pub(crate) cluster: Arc<crate::hosts::cluster::Cluster>,
 }
 
 impl NodeInstance {
@@ -349,6 +354,9 @@ impl NodeInstance {
             timers: Mutex::default(),
             terminals: Mutex::default(),
             tracing: Mutex::default(),
+            libraries: Mutex::default(),
+            tls_contexts: Mutex::default(),
+            cluster: template.cluster.clone(),
         })
     }
 

@@ -69,12 +69,15 @@ const building = new Map();
  * @param {string} [options.source] - build from this directory instead of a Jco fixture
  * @param {string[][]} [options.prepare] - commands to run in the copy first, as
  *   `[program, ...args]` with `program` relative to the copy (or `node`)
+ * @param {string[]} [options.keep] - paths in the copy the component reads at run time, such as
+ *   an app build's static files; kept in {@link componentFiles}
  */
 export function component(fixture, options = {}) {
-    const { args = [], entry = "component.js", wit = "wit", world, variant, source } = options;
+    const { args = [], entry = "component.js", wit = "wit", world, variant, source, keep = [] } = options;
     const name = variant ? `${fixture}.${variant}` : fixture;
     const output = join(CACHE, `${name}.wasm`);
-    if (existsSync(output)) {
+    const files = componentFiles(name);
+    if (existsSync(output) && (keep.length === 0 || existsSync(files))) {
         return Promise.resolve(output);
     }
     if (!building.has(output)) {
@@ -123,6 +126,10 @@ export function component(fixture, options = {}) {
                     await rename(built, output).catch(async () => {
                         await cp(built, output);
                     });
+                    await rm(files, { recursive: true, force: true });
+                    for (const path of keep) {
+                        await cp(join(app, path), join(files, path), { recursive: true });
+                    }
                 } finally {
                     await rm(scratch, { recursive: true, force: true });
                 }
@@ -131,6 +138,11 @@ export function component(fixture, options = {}) {
         );
     }
     return building.get(output);
+}
+
+/** Where a built component's `keep` paths are, by build name (`fixture` or `fixture.variant`). */
+export function componentFiles(name) {
+    return join(CACHE, `${name}.files`);
 }
 
 function runnerArgs(wasm, options) {
@@ -158,6 +170,9 @@ function runnerArgs(wasm, options) {
     }
     if (options.allowNet) {
         args.push("--allow-net");
+    }
+    if (options.clusterWorkerInvoke) {
+        args.push("--cluster-worker-invoke", options.clusterWorkerInvoke);
     }
     return args;
 }

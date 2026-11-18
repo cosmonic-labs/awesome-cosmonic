@@ -67,6 +67,17 @@ mod dgram_guest {
 
 use dgram_guest::exports::jco::node::dgram_callbacks;
 
+mod http2_guest {
+    wash_runtime::wasmtime::component::bindgen!({
+        path: "wit",
+        world: "http2-guest",
+        wasmtime_crate: wash_runtime::wasmtime,
+        exports: { default: async },
+    });
+}
+
+use http2_guest::exports::jco::node::http2_callbacks;
+
 type DgramError = crate::bindings::jco::node::dgram::Error;
 
 /// What a UDP socket reports to its guest listener.
@@ -96,6 +107,12 @@ pub enum Job {
     Dgram { listener: u32, event: DgramEvent },
     /// A UDP socket closed: release its listener once its earlier events are delivered.
     DgramRetire { listener: u32 },
+    /// A request stream for an HTTP/2 server's listener.
+    Http2Stream(Box<crate::hosts::http2::IncomingStream>),
+    /// An HTTP/2 server's session failed.
+    Http2ServerError { listener: u32, error: crate::bindings::jco::node::http2::Error },
+    /// An HTTP/2 server closed: release both its listeners.
+    Http2Retire { listener: u32, error_listener: u32 },
 }
 
 struct PendingResponse {
@@ -116,6 +133,10 @@ pub struct Pump {
     timers: Option<timers_guest::TimersGuest>,
     http: Option<Arc<http_guest::HttpGuest>>,
     dgram: Option<Arc<dgram_guest::DgramGuest>>,
+    http2: Option<Arc<http2_guest::Http2Guest>>,
+    /// Redeemed HTTP/2 stream and server-error listeners, by registration id.
+    http2_listeners: HashMap<u32, ResourceAny>,
+    http2_error_listeners: HashMap<u32, ResourceAny>,
     listeners: HashMap<u32, ResourceAny>,
     socket_listeners: HashMap<u32, ResourceAny>,
     /// Sockets whose listener the guest no longer has: their events are dropped.
@@ -145,6 +166,9 @@ impl Pump {
             timers: None,
             http: None,
             dgram: None,
+            http2: None,
+            http2_listeners: HashMap::new(),
+            http2_error_listeners: HashMap::new(),
             listeners: HashMap::new(),
             socket_listeners: HashMap::new(),
             retired_sockets: std::collections::HashSet::new(),
@@ -226,7 +250,108 @@ impl Pump {
                     listener.resource_drop_async(&mut *store).await?;
                 }
             }
+            Job::Http2Stream(stream) => self.http2_stream(store, *stream).await?,
+            Job::Http2ServerError { listener, error } => self.http2_server_error(store, listener, error).await?,
+            Job::Http2Retire { listener, error_listener } => {
+                if let Some(listener) = self.http2_listeners.remove(&listener) {
+                    listener.resource_drop_async(&mut *store).await?;
+                }
+                if let Some(listener) = self.http2_error_listeners.remove(&error_listener) {
+                    listener.resource_drop_async(&mut *store).await?;
+                }
+            }
         }
+        Ok(())
+    }
+
+    fn http2_guest(&mut self, store: &mut Store<SharedCtx>) -> anyhow::Result<Arc<http2_guest::Http2Guest>> {
+        if self.http2.is_none() {
+            self.http2 = Some(Arc::new(http2_guest::Http2Guest::new(&mut *store, &self.instance)?));
+        }
+        Ok(self.http2.clone().expect("set above"))
+    }
+
+    async fn http2_stream(
+        &mut self,
+        store: &mut Store<SharedCtx>,
+        stream: crate::hosts::http2::IncomingStream,
+    ) -> anyhow::Result<()> {
+        let guest = self.http2_guest(store)?;
+        let callbacks = guest.jco_node_http2_callbacks();
+        let listener = match self.http2_listeners.get(&stream.listener) {
+            Some(listener) => *listener,
+            None => match callbacks.call_take_stream_listener(&mut *store, stream.listener).await? {
+                Some(listener) => {
+                    self.http2_listeners.insert(stream.listener, listener);
+                    listener
+                }
+                None => {
+                    let _ = stream.reply.send(Err("Callback registration is not active".into()));
+                    return Ok(());
+                }
+            },
+        };
+        let input = http2_callbacks::IncomingStream {
+            session_id: stream.session_id,
+            id: stream.id,
+            headers: stream
+                .headers
+                .into_iter()
+                .map(|header| http2_callbacks::Header { name: header.name, value: header.value })
+                .collect(),
+            body: stream.body,
+            remote_address: stream.remote.map(|remote| remote.ip().to_string()),
+            remote_port: stream.remote.map(|remote| remote.port()),
+        };
+        let answer = callbacks.stream_listener().call_handle(&mut *store, listener, &input).await?;
+        let header = |header: http2_callbacks::Header| crate::bindings::jco::node::http2::Header {
+            name: header.name,
+            value: header.value,
+        };
+        let _ = stream.reply.send(match answer {
+            Ok(response) => Ok((
+                response.headers.into_iter().map(header).collect(),
+                response.trailers.into_iter().map(header).collect(),
+                response.body,
+            )),
+            Err(error) => Err(error.message),
+        });
+        Ok(())
+    }
+
+    async fn http2_server_error(
+        &mut self,
+        store: &mut Store<SharedCtx>,
+        id: u32,
+        error: crate::bindings::jco::node::http2::Error,
+    ) -> anyhow::Result<()> {
+        use crate::bindings::jco::node::http2::Errno;
+        let guest = self.http2_guest(store)?;
+        let callbacks = guest.jco_node_http2_callbacks();
+        let listener = match self.http2_error_listeners.get(&id) {
+            Some(listener) => *listener,
+            None => match callbacks.call_take_server_error_listener(&mut *store, id).await? {
+                Some(listener) => {
+                    self.http2_error_listeners.insert(id, listener);
+                    listener
+                }
+                None => return Ok(()),
+            },
+        };
+        let reason = http2_callbacks::Error {
+            name: error.name,
+            message: error.message,
+            code: error.code,
+            errno: error.errno.map(|errno| match errno {
+                Errno::Number(number) => http2_callbacks::Errno::Number(number),
+                Errno::Symbolic(symbol) => http2_callbacks::Errno::Symbolic(symbol),
+            }),
+            syscall: error.syscall,
+            hostname: error.hostname,
+            address: error.address,
+            port: error.port,
+        };
+        callbacks.server_error_listener().call_handle(&mut *store, listener, &reason).await?;
         Ok(())
     }
 

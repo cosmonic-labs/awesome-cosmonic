@@ -34,6 +34,9 @@ type Instances = Mutex<HashMap<Arc<str>, Arc<NodeInstance>>>;
 #[derive(Default)]
 pub struct JcoNode {
     identity: ProcessIdentity,
+    /// This process's side of `node:cluster`: a primary that cannot fork unless the embedder
+    /// supplies a launcher.
+    cluster: Arc<crate::hosts::cluster::Cluster>,
     /// What to build a component's instances from, by component context id.
     templates: Mutex<HashMap<String, Arc<InstanceTemplate>>>,
     /// Which components each workload bound, so unbinding can forget them.
@@ -51,6 +54,14 @@ impl JcoNode {
     /// Describe the process guests see: `argv`, `execPath`, starting directory, Node version.
     pub fn with_identity(mut self, identity: ProcessIdentity) -> Self {
         self.identity = identity;
+        self
+    }
+
+    /// Take part in a `node:cluster`: as a primary that forks workers through a launcher
+    /// ([`Cluster::primary`](crate::hosts::cluster::Cluster::primary)), or as a worker
+    /// ([`Cluster::from_environment`](crate::hosts::cluster::Cluster::from_environment)).
+    pub fn with_cluster(mut self, cluster: Arc<crate::hosts::cluster::Cluster>) -> Self {
+        self.cluster = cluster;
         self
     }
 
@@ -117,20 +128,32 @@ fn view(shared: &mut SharedCtx) -> NodeView<'_> {
 /// Add every `jco:node` interface to `linker`.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
     node::child_process::add_to_linker::<_, NodeData>(linker, view)?;
+    node::cluster::add_to_linker::<_, NodeData>(linker, view)?;
     node::console::add_to_linker::<_, NodeData>(linker, view)?;
     node::crypto_kdf::add_to_linker::<_, NodeData>(linker, view)?;
     node::dgram::add_to_linker::<_, NodeData>(linker, view)?;
     node::dns::add_to_linker::<_, NodeData>(linker, view)?;
+    node::ffi::add_to_linker::<_, NodeData>(linker, view)?;
     node::fs::add_to_linker::<_, NodeData>(linker, view)?;
     node::http::add_to_linker::<_, NodeData>(linker, view)?;
+    node::http2::add_to_linker::<_, NodeData>(linker, view)?;
+    node::inspector::add_to_linker::<_, NodeData>(linker, view)?;
     node::os::add_to_linker::<_, NodeData>(linker, view)?;
     node::process::add_to_linker::<_, NodeData>(linker, view)?;
     node::sqlite::add_to_linker::<_, NodeData>(linker, view)?;
     node::timers::add_to_linker::<_, NodeData>(linker, view)?;
+    node::tls::add_to_linker::<_, NodeData>(linker, view)?;
+    // `jco:node/tls` hands out `wasi:tls@0.2.0-draft` connections, so the plugin serves that too.
+    let mut tls = wasmtime_wasi_tls::p2::LinkOptions::default();
+    tls.tls(true);
+    wasmtime_wasi_tls::p2::add_to_linker(linker, &tls)?;
+    // Jco's copy of the draft adds an availability query; TLS is available wherever this links.
+    linker.instance("wasi:tls/types@0.2.0-draft")?.func_wrap("is-available", |_, (): ()| Ok((true,)))?;
     node::trace_events::add_to_linker::<_, NodeData>(linker, view)?;
     node::tty::add_to_linker::<_, NodeData>(linker, view)?;
     node::v8::add_to_linker::<_, NodeData>(linker, view)?;
     node::wasi::add_to_linker::<_, NodeData>(linker, view)?;
+    node::worker_threads::add_to_linker::<_, NodeData>(linker, view)?;
     node::zlib::add_to_linker::<_, NodeData>(linker, view)?;
     Ok(())
 }
@@ -191,6 +214,7 @@ impl HostPlugin for JcoNode {
             grants: grants_from(&interfaces),
             identity: self.identity.clone(),
             environment: item.local_resources().environment.clone().into_iter().collect(),
+            cluster: self.cluster.clone(),
         };
         lock(&self.templates).insert(item.id().to_owned(), Arc::new(template));
         lock(&self.workloads).entry(item.workload_id().to_owned()).or_default().push(item.id().to_owned());

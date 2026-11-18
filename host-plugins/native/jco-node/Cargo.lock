@@ -1640,6 +1640,7 @@ dependencies = [
  "async-trait",
  "brotli",
  "bytes",
+ "h2",
  "hkdf",
  "hmac",
  "http",
@@ -1648,6 +1649,7 @@ dependencies = [
  "libsqlite3-sys",
  "libz-rs-sys",
  "pbkdf2",
+ "rustls",
  "scrypt",
  "serde_json",
  "sha1",
@@ -1656,9 +1658,12 @@ dependencies = [
  "socket2",
  "sysinfo",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "wash-runtime",
  "wasmtime-wasi",
+ "wasmtime-wasi-tls",
+ "webpki-roots 1.0.12",
  "zstd-safe",
 ]
 
@@ -3574,6 +3579,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wasmtime-wasi-io",
+ "wasmtime-wasi-tls",
  "webpki-roots 1.0.12",
  "x509-parser",
  "zeroize",
@@ -3950,6 +3956,22 @@ dependencies = [
  "futures",
  "tracing",
  "wasmtime",
+]
+
+[[package]]
+name = "wasmtime-wasi-tls"
+version = "48.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1b1fd66332341a84f60fd9256dffa3bfe39ac945102d463fb838b79a384282d"
+dependencies = [
+ "bytes",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "wasmtime",
+ "wasmtime-wasi",
+ "webpki-roots 1.0.12",
 ]
 
 [[package]]

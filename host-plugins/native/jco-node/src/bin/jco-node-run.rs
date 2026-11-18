@@ -33,6 +33,7 @@ use anyhow::{Context as _, anyhow, bail};
 use jco_node_host::{
     Capability, JcoNode, PLUGIN_ID, ProcessIdentity,
     callbacks::Pump,
+    hosts::cluster::{Cluster, WorkerLauncher},
     json::{from_json, to_json},
 };
 use serde_json::{Value, json};
@@ -66,7 +67,53 @@ Options:
   --node-version <v>    the Node.js version the guest is told it runs on
   --dir <host[::guest]> mount a host directory for the guest's WASI filesystem (repeatable)
   --allow-net           allow outbound connections and name lookups through WASI
+  --cluster-worker-invoke <export>
+                        what a node:cluster worker forked from this process calls once
+                        it is up (a worker re-runs this command on the same component,
+                        as Node re-runs its entry, then serves callbacks until it is
+                        disconnected)
 ";
+
+/// In a forked worker's environment: the export it calls once it is up.
+const CLUSTER_INVOKE_ENV: &str = "JCO_NODE_CLUSTER_INVOKE";
+
+/// Forks `node:cluster` workers by running this program again on the same component, with the
+/// options that shape the guest (grants, environment, directories) but not the ones that drive it.
+struct RerunLauncher {
+    program: PathBuf,
+    arguments: Vec<String>,
+    invoke: Option<String>,
+}
+
+impl RerunLauncher {
+    fn new(invoke: Option<String>) -> anyhow::Result<Self> {
+        let mut arguments = Vec::new();
+        let mut given = std::env::args().skip(1);
+        while let Some(argument) = given.next() {
+            if matches!(argument.as_str(), "--reply-fd" | "--invoke" | "--args" | "--cluster-worker-invoke") {
+                given.next();
+                continue;
+            }
+            arguments.push(argument);
+        }
+        Ok(Self { program: std::env::current_exe()?, arguments, invoke })
+    }
+}
+
+impl WorkerLauncher for RerunLauncher {
+    fn command(&self, _id: u32, env: &[(String, String)]) -> std::process::Command {
+        let mut command = std::process::Command::new(&self.program);
+        command.args(&self.arguments);
+        for (key, value) in env {
+            command.arg("--env").arg(format!("{key}={value}"));
+        }
+        match &self.invoke {
+            Some(invoke) => command.env(CLUSTER_INVOKE_ENV, invoke),
+            None => command.env_remove(CLUSTER_INVOKE_ENV),
+        };
+        command
+    }
+}
 
 #[derive(Default)]
 struct Options {
@@ -79,6 +126,7 @@ struct Options {
     identity: ProcessIdentity,
     dirs: Vec<(String, String)>,
     allow_net: bool,
+    cluster_invoke: Option<String>,
 }
 
 fn parse_options() -> anyhow::Result<Options> {
@@ -125,6 +173,7 @@ fn parse_options() -> anyhow::Result<Options> {
                 options.dirs.push((host.to_owned(), guest.to_owned()));
             }
             "--allow-net" => options.allow_net = true,
+            "--cluster-worker-invoke" => options.cluster_invoke = Some(value("--cluster-worker-invoke")?),
             "-h" | "--help" => {
                 print!("{USAGE}");
                 std::process::exit(0);
@@ -159,7 +208,7 @@ enum Stop {
 }
 
 impl Session {
-    async fn start(options: &Options) -> anyhow::Result<Self> {
+    async fn start(options: &Options, cluster: Arc<Cluster>) -> anyhow::Result<Self> {
         let path = options.component.as_deref().context("no component given")?;
         let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
 
@@ -197,7 +246,8 @@ impl Session {
             .with_pooling_allocator(false)
             .with_allowed_host_paths(options.dirs.iter().map(|(host, _)| PathBuf::from(host)))
             .build()?;
-        let plugin: Arc<dyn HostPlugin> = Arc::new(JcoNode::new().with_identity(options.identity.clone()));
+        let plugin: Arc<dyn HostPlugin> =
+            Arc::new(JcoNode::new().with_identity(options.identity.clone()).with_cluster(cluster));
         let plugins = HashMap::from([(PLUGIN_ID, plugin)]);
         let resolved = engine
             .initialize_workload(
@@ -314,7 +364,11 @@ fn status(code: i32) -> ExitCode {
 
 async fn run() -> anyhow::Result<ExitCode> {
     let options = parse_options()?;
-    let mut session = Session::start(&options).await?;
+    if let Some(cluster) = Cluster::from_environment()? {
+        return run_worker(&options, cluster).await;
+    }
+    let launcher = Arc::new(RerunLauncher::new(options.cluster_invoke.clone())?);
+    let mut session = Session::start(&options, Cluster::primary(launcher)).await?;
 
     if let Some(export) = &options.invoke {
         return Ok(match session.call(export, &options.args).await {
@@ -367,6 +421,43 @@ async fn run() -> anyhow::Result<ExitCode> {
                     }
                 }
             }
+            job = session.pump.next() => {
+                let Some(job) = job else { continue };
+                match session.deliver(job).await {
+                    Ok(()) => {}
+                    Err(Stop::Exit(code)) => return Ok(status(code)),
+                    Err(Stop::Trap(error)) => {
+                        eprintln!("{error:?}");
+                        return Ok(ExitCode::from(70));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A forked `node:cluster` worker: up, the configured call, then callbacks until disconnected.
+async fn run_worker(options: &Options, cluster: Arc<Cluster>) -> anyhow::Result<ExitCode> {
+    let mut session = Session::start(options, cluster.clone()).await?;
+    cluster.announce_online();
+    let invoke = std::env::var(CLUSTER_INVOKE_ENV).ok().filter(|invoke| !invoke.is_empty());
+    if let Some(export) = invoke {
+        let outcome = match session.drain().await {
+            Ok(()) => session.call(&export, &[]).await.map(|_| ()),
+            Err(stop) => Err(stop),
+        };
+        match outcome {
+            Ok(()) => {}
+            Err(Stop::Exit(code)) => return Ok(status(code)),
+            Err(Stop::Trap(error)) => {
+                eprintln!("{error:?}");
+                return Ok(ExitCode::from(70));
+            }
+        }
+    }
+    loop {
+        tokio::select! {
+            () = cluster.disconnected() => return Ok(ExitCode::SUCCESS),
             job = session.pump.next() => {
                 let Some(job) = job else { continue };
                 match session.deliver(job).await {
