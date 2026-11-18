@@ -21,5 +21,11 @@ pub mod bindings {
         world: "imports",
         wasmtime_crate: wash_runtime::wasmtime,
         imports: { default: async | trappable },
+        with: {
+            "jco:node/http.client-request": crate::hosts::http::ClientRequest,
+            "jco:node/http.connection": crate::hosts::http::HttpConnection,
+            "jco:node/http.server": crate::hosts::http::HttpServer,
+            "jco:node/zlib.engine": crate::hosts::zlib::ZlibEngine,
+        },
     });
 }

@@ -63,12 +63,13 @@ const building = new Map();
  * @param {object} [options]
  * @param {string[]} [options.args] - extra `jco componentize` arguments
  * @param {string} [options.entry] - entry module within the fixture
+ * @param {string} [options.wit] - WIT file or directory within the fixture
  * @param {string} [options.world] - WIT world to build
  * @param {string} [options.variant] - distinguishes builds of one fixture with different arguments
  * @param {string} [options.source] - build from this directory instead of a Jco fixture
  */
 export function component(fixture, options = {}) {
-    const { args = [], entry = "component.js", world, variant, source } = options;
+    const { args = [], entry = "component.js", wit = "wit", world, variant, source } = options;
     const name = variant ? `${fixture}.${variant}` : fixture;
     const output = join(CACHE, `${name}.wasm`);
     if (existsSync(output)) {
@@ -93,7 +94,7 @@ export function component(fixture, options = {}) {
                         join(app, entry),
                         "--bundle",
                         "-w",
-                        join(app, "wit"),
+                        join(app, wit),
                         ...(world ? ["-n", world] : []),
                         "-o",
                         built,

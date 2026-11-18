@@ -43,6 +43,25 @@ fn is_terminal(fd: u32) -> bool {
     fd <= 2 && unsafe { libc::isatty(fd as i32) } == 1
 }
 
+/// Whether `uv_tty_init` accepts the descriptor. libuv refuses only what `uv_guess_handle` calls
+/// a file or cannot name, so a pipe or socket on standard output is accepted, as in Node.
+fn tty_initializable(fd: u32) -> bool {
+    if fd > 2 {
+        return false;
+    }
+    // SAFETY: `stat` is plain data, valid when zeroed, and `fstat` fills it in.
+    let mut status: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `status` is a valid, writable `stat`.
+    if unsafe { libc::fstat(fd as i32, &mut status) } != 0 {
+        return false;
+    }
+    match status.st_mode & libc::S_IFMT {
+        libc::S_IFCHR => is_terminal(fd),
+        libc::S_IFIFO | libc::S_IFSOCK => true,
+        _ => false,
+    }
+}
+
 fn uv(error: UvError, syscall: &str) -> Error {
     Error {
         name: "Error".into(),
@@ -122,7 +141,7 @@ impl Host for NodeView<'_> {
 
     async fn open(&mut self, fd: u32, direction: Direction) -> TtyResult<()> {
         granted!(self);
-        if !is_terminal(fd) {
+        if !tty_initializable(fd) {
             return Ok(Err(init_failed()));
         }
         *lock(&self.node.terminals).handles.entry((fd, matches!(direction, Direction::Read))).or_insert(0) += 1;

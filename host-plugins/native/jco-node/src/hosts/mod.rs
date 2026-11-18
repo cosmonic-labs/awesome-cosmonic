@@ -4,12 +4,14 @@ pub mod child_process;
 pub mod console;
 pub mod crypto_kdf;
 pub mod fs;
+pub mod http;
 pub mod os;
 pub mod process;
 pub mod timers;
 pub mod trace_events;
 pub mod tty;
 pub mod wasi;
+pub mod zlib;
 
 use wash_runtime::wasmtime;
 

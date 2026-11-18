@@ -20,6 +20,8 @@ anyhow = "1"
 async-trait = "0.1"
 bytes = "1"
 hkdf = "0.12"
+http = "1"
+httparse = "1"
 hmac = "0.12"
 libc = "0.2"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
@@ -36,6 +38,9 @@ tracing = "0.1"
 # git at a fixed rev. wasmtime is taken from its re-export rather than declared
 # here, which keeps the store and linker types identical to the host's.
 wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "3903d076d656ff4abea412b6f0fae139b535e7ed", default-features = false }
+libz-rs-sys = "0.6"
+brotli = "8"
+zstd-safe = "7"
 
 # The runner compiles each component with Cranelift when it starts. Unoptimized, Cranelift takes
 # minutes over a StarlingMonkey-based component; optimized, seconds. These are the crates on that

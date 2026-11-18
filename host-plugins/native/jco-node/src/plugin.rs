@@ -120,12 +120,14 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
     node::console::add_to_linker::<_, NodeData>(linker, view)?;
     node::crypto_kdf::add_to_linker::<_, NodeData>(linker, view)?;
     node::fs::add_to_linker::<_, NodeData>(linker, view)?;
+    node::http::add_to_linker::<_, NodeData>(linker, view)?;
     node::os::add_to_linker::<_, NodeData>(linker, view)?;
     node::process::add_to_linker::<_, NodeData>(linker, view)?;
     node::timers::add_to_linker::<_, NodeData>(linker, view)?;
     node::trace_events::add_to_linker::<_, NodeData>(linker, view)?;
     node::tty::add_to_linker::<_, NodeData>(linker, view)?;
     node::wasi::add_to_linker::<_, NodeData>(linker, view)?;
+    node::zlib::add_to_linker::<_, NodeData>(linker, view)?;
     Ok(())
 }
 
