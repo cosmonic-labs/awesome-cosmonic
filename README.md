@@ -113,7 +113,7 @@ Cosmonic Control schedules workloads onto [wasmCloud](https://github.com/wasmClo
 
 Rust implementations of the [`HostPlugin` trait](https://wasmcloud.com/docs/runtime/creating-host-plugins), linked into the host binary. The right choice when a capability needs direct host resources (filesystem, network, hardware) or has to run with the host's privileges. Hosted projects live in [`host-plugins/native/`](host-plugins/native/).
 
-_Nothing here yet. [Add the first one](CONTRIBUTING.md)._
+- [jco-node](host-plugins/native/jco-node/) (hosted): Implements `jco:node@0.1.0`, the contract [Jco](https://github.com/bytecodealliance/jco) components use for Node.js builtins (`fs`, `http`, `http2`, `cluster`, `child_process`, `dns`, `dgram`, `zlib`, `sqlite`, `ffi`, and the rest), so JavaScript components that use Node APIs run on a Rust host. Per-interface grants, with ungranted interfaces refusing the way Jco's denial providers do. Includes `jco-node-run`, a minimal embedder, and suites that run Jco's own fixtures and example components against it. Work in progress.
 
 ### Host Component Plugins
 

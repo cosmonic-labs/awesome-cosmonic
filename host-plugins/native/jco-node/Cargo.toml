@@ -1,0 +1,92 @@
+[package]
+name = "jco-node-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "The host side of jco:node@0.1.0 as a native wasmCloud host plugin, so components built with Jco's Node.js builtin support run on a Rust host."
+license = "Apache-2.0"
+repository = "https://github.com/cosmonic-labs/awesome-cosmonic"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "jco-node-run"
+path = "src/bin/jco-node-run.rs"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+bytes = "1"
+h2 = "0.4"
+hkdf = "0.12"
+http = "1"
+httparse = "1"
+hmac = "0.12"
+libc = "0.2"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+scrypt = { version = "0.11", default-features = false }
+sha1 = "0.10"
+sha2 = "0.10"
+sha3 = "0.10"
+socket2 = { version = "0.6", features = ["all"] }
+sysinfo = "0.32"
+wasmtime-wasi = { version = "48", default-features = false }
+# The p2 `wasi:tls@0.2.0-draft` that `jco:node/tls` hands its connections out as; the same crate
+# wash-runtime's `wasi-tls` feature uses for p3.
+wasmtime-wasi-tls = { version = "48", default-features = false, features = ["p2", "rustls"] }
+rustls = "0.23"
+tokio-rustls = "0.26"
+webpki-roots = "1"
+# Node-shaped certificates (`getPeerCertificate`), PEM output, and the system store for
+# `tls.getCACertificates`.
+x509-parser = "0.18"
+base64 = "0.22"
+rustls-native-certs = "0.8"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "sync", "process", "fs"] }
+tracing = "0.1"
+# crates.io carries only a placeholder wash-runtime, so the runtime comes from
+# git at a fixed rev. wasmtime is taken from its re-export rather than declared
+# here, which keeps the store and linker types identical to the host's.
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "3903d076d656ff4abea412b6f0fae139b535e7ed", default-features = false, features = ["wasi-tls"] }
+libz-rs-sys = "0.6"
+brotli = "8"
+zstd-safe = "7"
+# `session` and `column_metadata` regenerate the bindings at build time, which needs libclang.
+libsqlite3-sys = { version = "0.35", features = ["bundled", "session", "column_metadata"] }
+
+# The runner compiles each component with Cranelift when it starts. Unoptimized, Cranelift takes
+# minutes over a StarlingMonkey-based component; optimized, seconds. These are the crates on that
+# path, so a dev build stays quick to produce and is still usable.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.cranelift-bitset]
+opt-level = 3
+[profile.dev.package.cranelift-control]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.wasmparser]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+[profile.dev.package.gimli]
+opt-level = 3
+[profile.dev.package.object]
+opt-level = 3
+[profile.dev.package.hashbrown]
+opt-level = 3
+[profile.dev.package.smallvec]
+opt-level = 3
+[profile.dev.package.rustc-hash]
+opt-level = 3

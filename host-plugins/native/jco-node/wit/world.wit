@@ -1,0 +1,38 @@
+package cosmonic:jco-node-host@0.1.0;
+
+/// Everything the plugin serves: the host side of `jco:node@0.1.0`.
+world imports {
+    import jco:node/child-process@0.1.0;
+    import jco:node/cluster@0.1.0;
+    import jco:node/console@0.1.0;
+    import jco:node/crypto-kdf@0.1.0;
+    import jco:node/dgram@0.1.0;
+    import jco:node/dns@0.1.0;
+    import jco:node/ffi@0.1.0;
+    import jco:node/fs@0.1.0;
+    import jco:node/http@0.1.0;
+    import jco:node/http2@0.1.0;
+    import jco:node/inspector@0.1.0;
+    import jco:node/os@0.1.0;
+    import jco:node/process@0.1.0;
+    import jco:node/sqlite@0.1.0;
+    import jco:node/timers@0.1.0;
+    import jco:node/tls@0.1.0;
+    import jco:node/trace-events@0.1.0;
+    import jco:node/tty@0.1.0;
+    import jco:node/v8@0.1.0;
+    import jco:node/wasi@0.1.0;
+    import jco:node/worker-threads@0.1.0;
+    import jco:node/zlib@0.1.0;
+}
+
+/// The guest exports the plugin calls back into. A component exports only the
+/// ones its `node:` modules need, so each is its own world and is looked up on
+/// the instance separately.
+world timers-guest { export jco:node/timers-callbacks@0.1.0; }
+world dgram-guest { export jco:node/dgram-callbacks@0.1.0; }
+world http-guest { import jco:node/http@0.1.0; export jco:node/http-callbacks@0.1.0; }
+world http2-guest { export jco:node/http2-callbacks@0.1.0; }
+world tls-guest { export jco:node/tls-callbacks@0.1.0; }
+world inspector-guest { export jco:node/inspector-callbacks@0.1.0; }
+world worker-threads-guest { export jco:node/worker-threads-callbacks@0.1.0; }
