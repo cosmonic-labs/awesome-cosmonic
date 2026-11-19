@@ -33,6 +33,7 @@ use anyhow::{Context as _, anyhow, bail};
 use jco_node_host::{
     Capability, JcoNode, PLUGIN_ID, ProcessIdentity,
     callbacks::Pump,
+    wasi_tls::NodeTlsProvider,
     hosts::cluster::{Cluster, WorkerLauncher},
     json::{from_json, to_json},
 };
@@ -40,8 +41,9 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use wash_runtime::{
     engine::{Engine, ctx::SharedCtx},
-    host::{HostRef, allowed_hosts::AllowedHost, allowed_ip_name::AllowedIpName},
+    host::{HostRef, allowed_hosts::AllowedHost, allowed_ip_name::AllowedIpName, allowed_loopback::AllowedLoopbackPort},
     plugin::HostPlugin,
+    sockets::policy::SocketPolicy,
     types::{Component, HostPathVolume, LocalResources, Volume, VolumeMount, VolumeType, Workload},
     wasmtime::{
         Store,
@@ -67,6 +69,14 @@ Options:
   --node-version <v>    the Node.js version the guest is told it runs on
   --dir <host[::guest]> mount a host directory for the guest's WASI filesystem (repeatable)
   --allow-net           allow outbound connections and name lookups through WASI
+  --allow-host-loopback <ports>
+                        let the guest reach these TCP ports on this machine's loopback
+                        through wasi:sockets, as host.wasmcloud.internal (comma separated;
+                        the guest's own 127.0.0.1 is its virtual network)
+  --tls-ca <file>       trust the PEM certificates in <file> for wasi:tls client
+                        connections instead of the public web roots (repeatable)
+  --tls-handshake-timeout <ms>
+                        give up on a wasi:tls handshake after this long (default: 10000)
   --cluster-worker-invoke <export>
                         what a node:cluster worker forked from this process calls once
                         it is up (a worker re-runs this command on the same component,
@@ -126,6 +136,9 @@ struct Options {
     identity: ProcessIdentity,
     dirs: Vec<(String, String)>,
     allow_net: bool,
+    host_loopback: Vec<u16>,
+    tls_ca: Vec<PathBuf>,
+    tls_handshake_timeout: Option<u64>,
     cluster_invoke: Option<String>,
 }
 
@@ -173,6 +186,15 @@ fn parse_options() -> anyhow::Result<Options> {
                 options.dirs.push((host.to_owned(), guest.to_owned()));
             }
             "--allow-net" => options.allow_net = true,
+            "--allow-host-loopback" => {
+                for port in value("--allow-host-loopback")?.split(',').filter(|port| !port.is_empty()) {
+                    options.host_loopback.push(port.trim().parse()?);
+                }
+            }
+            "--tls-ca" => options.tls_ca.push(PathBuf::from(value("--tls-ca")?)),
+            "--tls-handshake-timeout" => {
+                options.tls_handshake_timeout = Some(value("--tls-handshake-timeout")?.parse()?);
+            }
             "--cluster-worker-invoke" => options.cluster_invoke = Some(value("--cluster-worker-invoke")?),
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -243,10 +265,22 @@ impl Session {
         }
 
         wash_runtime::init_crypto();
-        let engine = Engine::builder()
+        // wasi:tls (and jco:node/tls's start-tls) as Jco's Node provider behaves.
+        let ca = options.tls_ca.iter().map(std::fs::read).collect::<Result<Vec<_>, _>>()?;
+        let timeout = std::time::Duration::from_millis(options.tls_handshake_timeout.unwrap_or(10_000));
+        let tls = wash_runtime::engine::ctx::SharedTlsProvider::new(NodeTlsProvider::new(&ca, timeout)?);
+        let mut engine = Engine::builder()
+            .with_tls_provider(tls)
             .with_pooling_allocator(false)
-            .with_allowed_host_paths(options.dirs.iter().map(|(host, _)| PathBuf::from(host)))
-            .build()?;
+            .with_allowed_host_paths(options.dirs.iter().map(|(host, _)| PathBuf::from(host)));
+        // Reaching this machine's loopback takes both halves: the host opening the door, and the
+        // workload naming the ports.
+        if !options.host_loopback.is_empty() {
+            engine = engine.with_socket_policy(Arc::new(SocketPolicy { host_loopback_enabled: true, ..SocketPolicy::default() }));
+            local_resources.allowed_host_loopback_ports =
+                options.host_loopback.iter().copied().map(AllowedLoopbackPort::tcp).collect();
+        }
+        let engine = engine.build()?;
         let plugin: Arc<dyn HostPlugin> =
             Arc::new(JcoNode::new().with_identity(options.identity.clone()).with_cluster(cluster));
         let plugins = HashMap::from([(PLUGIN_ID, plugin)]);

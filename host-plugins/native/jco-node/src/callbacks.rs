@@ -78,6 +78,17 @@ mod http2_guest {
 
 use http2_guest::exports::jco::node::http2_callbacks;
 
+mod tls_guest {
+    wash_runtime::wasmtime::component::bindgen!({
+        path: "wit",
+        world: "tls-guest",
+        wasmtime_crate: wash_runtime::wasmtime,
+        exports: { default: async },
+    });
+}
+
+use tls_guest::exports::jco::node::tls_callbacks;
+
 type DgramError = crate::bindings::jco::node::dgram::Error;
 
 /// What a UDP socket reports to its guest listener.
@@ -113,6 +124,16 @@ pub enum Job {
     Http2ServerError { listener: u32, error: crate::bindings::jco::node::http2::Error },
     /// An HTTP/2 server closed: release both its listeners.
     Http2Retire { listener: u32, error_listener: u32 },
+    /// Something happened on a `node:tls` socket or server.
+    Tls(TlsEvent),
+}
+
+/// A `jco:node/tls-callbacks` event: `value` is Jco's wire graph, `data` a socket's bytes.
+pub struct TlsEvent {
+    pub target: u32,
+    pub name: String,
+    pub value: String,
+    pub data: Vec<u8>,
 }
 
 struct PendingResponse {
@@ -134,6 +155,7 @@ pub struct Pump {
     http: Option<Arc<http_guest::HttpGuest>>,
     dgram: Option<Arc<dgram_guest::DgramGuest>>,
     http2: Option<Arc<http2_guest::Http2Guest>>,
+    tls: Option<Arc<tls_guest::TlsGuest>>,
     /// Redeemed HTTP/2 stream and server-error listeners, by registration id.
     http2_listeners: HashMap<u32, ResourceAny>,
     http2_error_listeners: HashMap<u32, ResourceAny>,
@@ -177,6 +199,7 @@ impl Pump {
             http: None,
             dgram: None,
             http2: None,
+            tls: None,
             http2_listeners: HashMap::new(),
             http2_error_listeners: HashMap::new(),
             listeners: HashMap::new(),
@@ -269,6 +292,14 @@ impl Pump {
                 if let Some(listener) = self.http2_error_listeners.remove(&error_listener) {
                     listener.resource_drop_async(&mut *store).await?;
                 }
+            }
+            Job::Tls(event) => {
+                if self.tls.is_none() {
+                    self.tls = Some(Arc::new(tls_guest::TlsGuest::new(&mut *store, &self.instance)?));
+                }
+                let guest = self.tls.clone().expect("set above");
+                let event = tls_callbacks::Event { target: event.target, name: event.name, value: event.value, data: event.data };
+                guest.jco_node_tls_callbacks().call_dispatch(&mut *store, &event).await?;
             }
         }
         Ok(())

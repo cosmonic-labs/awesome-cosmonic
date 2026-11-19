@@ -25,21 +25,44 @@ pub(crate) struct SetupError {
     pub message: String,
 }
 
+/// A rustls failure as the OpenSSL verification code and message Node reports for it.
+pub(crate) fn describe(error: &rustls::Error, servername: &str) -> (&'static str, String) {
+    use rustls::{CertificateError, Error as Tls};
+    match error {
+        Tls::InvalidCertificate(CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. }) => (
+            "ERR_TLS_CERT_ALTNAME_INVALID",
+            format!("Hostname/IP does not match certificate's altnames: Host: {servername}. is not in the cert's altnames"),
+        ),
+        Tls::InvalidCertificate(CertificateError::UnknownIssuer) => {
+            ("UNABLE_TO_VERIFY_LEAF_SIGNATURE", "unable to verify the first certificate".to_owned())
+        }
+        // webpki's view of a self-signed certificate nobody trusts.
+        Tls::InvalidCertificate(CertificateError::Other(other)) if format!("{other:?}").contains("CaUsedAsEndEntity") => {
+            ("DEPTH_ZERO_SELF_SIGNED_CERT", "self-signed certificate".to_owned())
+        }
+        Tls::InvalidCertificate(CertificateError::Expired | CertificateError::ExpiredContext { .. }) => {
+            ("CERT_HAS_EXPIRED", "certificate has expired".to_owned())
+        }
+        Tls::NoCertificatesPresented => ("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE", "peer did not return a certificate".to_owned()),
+        other => ("ERR_SSL_HANDSHAKE_FAILURE", other.to_string()),
+    }
+}
+
 fn failure(error: impl std::fmt::Display) -> SetupError {
     SetupError { code: "ERR_SSL_INVALID_CONTEXT", message: error.to_string() }
 }
 
 /// Certificates given as PEM, or as one DER certificate.
-fn certificates(material: &[u8]) -> Vec<CertificateDer<'static>> {
+pub(crate) fn certificates(material: &[u8]) -> Vec<CertificateDer<'static>> {
     let parsed: Vec<_> = CertificateDer::pem_slice_iter(material).filter_map(Result::ok).collect();
     if parsed.is_empty() { vec![CertificateDer::from(material.to_vec())] } else { parsed }
 }
 
-fn private_key(material: &[u8]) -> Option<PrivateKeyDer<'static>> {
+pub(crate) fn private_key(material: &[u8]) -> Option<PrivateKeyDer<'static>> {
     PrivateKeyDer::from_pem_slice(material).ok().or_else(|| PrivateKeyDer::try_from(material.to_vec()).ok())
 }
 
-fn crypto() -> Arc<CryptoProvider> {
+pub(crate) fn crypto() -> Arc<CryptoProvider> {
     CryptoProvider::get_default().cloned().unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
 }
 
@@ -62,7 +85,7 @@ pub(crate) fn server(context: &SecureContext, alpn: &[&[u8]]) -> Result<TlsAccep
 
 /// Accepts any server certificate, for `rejectUnauthorized: false`; signatures are still checked.
 #[derive(Debug)]
-struct AcceptAnyCertificate(Arc<CryptoProvider>);
+pub(crate) struct AcceptAnyCertificate(Arc<CryptoProvider>);
 
 impl ServerCertVerifier for AcceptAnyCertificate {
     fn verify_server_cert(
@@ -103,9 +126,9 @@ impl ServerCertVerifier for AcceptAnyCertificate {
 /// certificates itself (a self-signed certificate given as its own CA) is trusted, its name still
 /// checked; anything else goes through webpki against the CAs as roots.
 #[derive(Debug)]
-struct TrustedOrWebPki {
-    pinned: Vec<CertificateDer<'static>>,
-    webpki: Arc<WebPkiServerVerifier>,
+pub(crate) struct TrustedOrWebPki {
+    pub(crate) pinned: Vec<CertificateDer<'static>>,
+    pub(crate) webpki: Arc<WebPkiServerVerifier>,
 }
 
 impl ServerCertVerifier for TrustedOrWebPki {
@@ -156,19 +179,23 @@ pub(crate) fn client(context: Option<&SecureContext>, alpn: &[&[u8]]) -> Result<
     let mut config = if context.and_then(|context| context.reject_unauthorized) == Some(false) {
         builder.dangerous().with_custom_certificate_verifier(Arc::new(AcceptAnyCertificate(provider))).with_no_client_auth()
     } else {
-        let mut roots = RootCertStore::empty();
-        let authorities: Vec<_> =
-            context.map(|context| context.ca.iter().flat_map(|ca| certificates(ca)).collect()).unwrap_or_default();
-        for authority in &authorities {
-            let _ = roots.add(authority.clone());
-        }
-        if roots.is_empty() {
-            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        }
-        let webpki = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider).build().map_err(failure)?;
-        let verifier = TrustedOrWebPki { pinned: authorities, webpki };
+        let verifier = trust(context.map(|context| context.ca.as_slice()).unwrap_or_default(), provider)?;
         builder.dangerous().with_custom_certificate_verifier(Arc::new(verifier)).with_no_client_auth()
     };
     config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
     Ok(TlsConnector::from(Arc::new(config)))
+}
+
+/// A verifier for servers from a context's CAs, or the public web roots when it names none.
+pub(crate) fn trust(ca: &[Vec<u8>], provider: Arc<CryptoProvider>) -> Result<TrustedOrWebPki, SetupError> {
+    let mut roots = RootCertStore::empty();
+    let authorities: Vec<_> = ca.iter().flat_map(|ca| certificates(ca)).collect();
+    for authority in &authorities {
+        let _ = roots.add(authority.clone());
+    }
+    if roots.is_empty() {
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+    let webpki = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider).build().map_err(failure)?;
+    Ok(TrustedOrWebPki { pinned: authorities, webpki })
 }

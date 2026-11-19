@@ -172,24 +172,26 @@ pub const DENY_KEY: &str = "deny";
 /// Jco's `wasi:sockets/network@0.2.10` adds `network.noop`, a method ComponentizeJS needs
 /// declared and never calls (Jco's lib/wit/builtin/0.2.10); components that bundle node:net
 /// import it. An instance under that exact name takes precedence over WASI's semver-matched one,
-/// so it is the whole interface, on WASI's own resource type and implementation.
+/// so it is the whole interface, on the host's own resource type and sockets implementation.
 fn link_jco_sockets_network(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
-    use wash_runtime::wasmtime::component::{Resource, ResourceType};
-    use wasmtime_wasi::{
-        WasiView as _,
-        p2::{Network, bindings::sockets::network::{ErrorCode, Host as _}},
-        sockets::WasiSocketsView as _,
+    use wash_runtime::{
+        engine::ctx::extract_sockets,
+        wasmtime::component::{Resource, ResourceType},
     };
-    use wasmtime_wasi::p2::bindings::sockets::network::Error as IoError;
+    use wasmtime_wasi::p2::{
+        Network,
+        bindings::sockets::network::{Error as IoError, ErrorCode, Host as _, HostNetwork as _},
+    };
 
     let mut network = linker.instance("wasi:sockets/network@0.2.10")?;
+    // The host's `instance-network` keeps its own network type under WASI's resource type, so
+    // only its sockets implementation can drop one.
     network.resource("network", ResourceType::host::<Network>(), |mut store, rep| {
-        store.data_mut().ctx().table.delete(Resource::<Network>::new_own(rep))?;
-        Ok(())
+        extract_sockets(store.data_mut()).drop(Resource::<Network>::new_own(rep))
     })?;
     network.func_wrap("[method]network.noop", |_, (_network,): (Resource<Network>,)| Ok(()))?;
     network.func_wrap("network-error-code", |mut store, (error,): (Resource<IoError>,)| {
-        let code: Option<ErrorCode> = store.data_mut().sockets().network_error_code(error)?;
+        let code: Option<ErrorCode> = extract_sockets(store.data_mut()).network_error_code(error)?;
         Ok((code,))
     })?;
     Ok(())

@@ -33,5 +33,6 @@ world timers-guest { export jco:node/timers-callbacks@0.1.0; }
 world dgram-guest { export jco:node/dgram-callbacks@0.1.0; }
 world http-guest { import jco:node/http@0.1.0; export jco:node/http-callbacks@0.1.0; }
 world http2-guest { export jco:node/http2-callbacks@0.1.0; }
+world tls-guest { export jco:node/tls-callbacks@0.1.0; }
 world inspector-guest { export jco:node/inspector-callbacks@0.1.0; }
 world worker-threads-guest { export jco:node/worker-threads-callbacks@0.1.0; }

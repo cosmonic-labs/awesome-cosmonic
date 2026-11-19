@@ -7,6 +7,7 @@ pub mod hosts;
 pub mod json;
 pub mod plugin;
 pub mod state;
+pub mod wasi_tls;
 
 pub use plugin::{JcoNode, PLUGIN_ID};
 pub use state::{Capability, Grants, ProcessIdentity};

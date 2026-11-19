@@ -19,8 +19,8 @@ const project = resolve(here, "../..");
 
 /** A bytecodealliance/jco checkout with `packages/jco` built (`pnpm build` in that repo). */
 export const JCO_DIR = resolve(process.env.JCO_DIR ?? join(project, "../../../../jco"));
-const JCO = join(JCO_DIR, "packages/jco/dist/jco.js");
-const FIXTURES = join(JCO_DIR, "packages/jco/test/fixtures/componentize");
+export const JCO = join(JCO_DIR, "packages/jco/dist/jco.js");
+export const FIXTURES = join(JCO_DIR, "packages/jco/test/fixtures/componentize");
 /** Where a Jco example lives, for the suites that run those. */
 export const EXAMPLES = join(JCO_DIR, "examples/components");
 
@@ -41,7 +41,7 @@ export function requireToolchain() {
     }
 }
 
-function run(command, args, options = {}) {
+export function run(command, args, options = {}) {
     return new Promise((resolvePromise, reject) => {
         const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], ...options });
         let stdout = "";
@@ -174,6 +174,15 @@ function runnerArgs(wasm, options) {
     }
     if (options.allowNet) {
         args.push("--allow-net");
+    }
+    if (options.hostLoopback?.length) {
+        args.push("--allow-host-loopback", options.hostLoopback.join(","));
+    }
+    for (const ca of options.tlsCa ?? []) {
+        args.push("--tls-ca", ca);
+    }
+    if (options.tlsHandshakeTimeout) {
+        args.push("--tls-handshake-timeout", String(options.tlsHandshakeTimeout));
     }
     if (options.clusterWorkerInvoke) {
         args.push("--cluster-worker-invoke", options.clusterWorkerInvoke);

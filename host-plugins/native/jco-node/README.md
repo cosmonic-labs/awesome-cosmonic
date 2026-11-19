@@ -16,8 +16,10 @@ Work in progress: see [Status](#status).
 
 - `src/plugin.rs`: `JcoNode`, the `HostPlugin`, and `add_to_linker` for embedders that link by hand.
 - `src/hosts/`: one module per `jco:node` interface.
-- `src/callbacks.rs`: `Pump`, which delivers host events (timers, HTTP requests, datagrams, cluster events)
+- `src/callbacks.rs`: `Pump`, which delivers host events (timers, HTTP requests, datagrams, TLS socket events)
   into the guest's callback exports between calls.
+- `src/wasi_tls.rs`: `NodeTlsProvider`, a `wasi:tls` provider that behaves as Jco's Node one,
+  for components whose `node:https` runs over `wasi:sockets`.
 - `src/bin/jco-node-run.rs`: a minimal embedder that runs one component and calls its exports.
   The test suites drive it.
 - `wit/`: the plugin's world; vendored WIT under `wit/deps/` (provenance in [`wit/deps/README.md`](wit/deps/README.md)).
@@ -70,9 +72,20 @@ the way Jco's denial providers do:
 an `ERR_JCO_<NAME>_ADAPTER_REQUIRED` error, or a trap where the interface has no error channel.
 To list an interface but refuse it, name it in `deny`, comma separated.
 
-Callbacks (timer fires, incoming HTTP requests, datagrams, cluster events) are queued by the host
+Callbacks (timer fires, incoming HTTP requests, datagrams, TLS socket events, cluster events) are queued by the host
 and must be delivered between guest calls with `callbacks::Pump`;
 see `jco-node-run` for the loop.
+
+`wasi:tls`, and `jco:node/tls`'s `start-tls` that `node:https` over `wasi:sockets` uses,
+run on the engine's `wasi:tls` provider.
+To have them behave as under Jco's Node provider
+(ALPN `http/1.1`, chosen CAs, a handshake timeout, Node's error messages),
+install `wasi_tls::NodeTlsProvider`:
+
+```rust
+let provider = NodeTlsProvider::new(&[ca_pem], Duration::from_secs(10))?;
+let engine = Engine::builder().with_tls_provider(SharedTlsProvider::new(provider));
+```
 
 ### From the command line
 
@@ -107,9 +120,18 @@ Where the host can't match Node, it says so in the same terms Jco's providers us
   `open` and `session.connect` are refused as unavailable.
 - `worker-threads`: a worker's body is JavaScript, and this host has no engine outside the component,
   so `new Worker()` fails with `ERR_JCO_UNSUPPORTED_NODE_API`.
-- `tls`: secure contexts and `startTLS` upgrades over `wasi:tls` work;
-  Node-style TLS sockets and servers (`tls.connect`, `tls.createServer`) are unsupported.
-  `http2` serves and connects over TLS itself.
+- `tls`: TLS sockets and servers run on rustls.
+  This covers client certificates, ALPN, SNI contexts, `checkServerIdentity`,
+  peer certificates (with the self-signed `issuerCertificate` cycle) and keying-material export.
+  So do secure contexts and `startTLS` upgrades over `wasi:tls`.
+  Unsupported, as rustls has no equivalent:
+  - session export and resumption (`getSession` and `getTLSTicket` return `undefined`, and `setSession` is refused)
+  - renegotiation (it fails)
+  - `enableTrace`, and `setKeyCert` on a live socket
+  - `getFinished` and `getPeerFinished` (they return `undefined`)
+
+  `getCACertificates("bundled")` lists the system store.
+  `https` and `http2` serve and connect over TLS themselves.
 - `cluster`: forking needs an embedder-supplied `WorkerLauncher`.
   `jco-node-run` re-runs itself on the same component, as Node re-runs its entry,
   and talks to the worker over a socket pair.
@@ -123,7 +145,8 @@ Where the host can't match Node, it says so in the same terms Jco's providers us
 Run here, all passing:
 every `jco:node` interface's fixture granted and refused
 (child-process, cluster, console, dgram, dns, ffi, fs, http, http2, https, inspector, os, process, sqlite,
-trace-events, tty, v8, wasi, worker-threads, zlib),
+tls, trace-events, tty, v8, wasi, worker-threads, zlib),
+`node:https` over `wasi:sockets` with `wasi:tls` (https-wasi-tls),
 Express, the VFS in direct and WASI modes,
 the guest-side builtins (assert, buffer, errors, events, globals, module, path, querystring, readline,
 repl, stream, string_decoder, url's cwd case, vm),
@@ -134,9 +157,15 @@ Marked todo, by design:
 inspector `eval` (no protocol backend),
 real worker threads (JavaScript bodies),
 and http over `wasi:sockets` alone (see below).
+https-wasi-tls's public-network case runs only with `JCO_NODE_PUBLIC_NETWORK=1`.
+Its resource-counter assertions read internals of Jco's JS provider.
+They're replaced by what they stand for, observed from outside:
+the peer server's handshakes and connections, and the host exiting cleanly.
+Under wash-runtime, a guest's `127.0.0.1` is its own virtual network,
+so the guest reaches the test's servers as `host.wasmcloud.internal`
+on ports granted with `jco-node-run --allow-host-loopback`.
+
 Not ported:
-`node:tls` sockets (unsupported, above);
-https-wasi-tls (asserts on Jco's JS resource counters);
 url's comparison against native Node 24;
 and fixtures Jco builds with bespoke bundling and no `jco:node` imports
 (net, path-p3, perf-hooks, stream-classic, test, timers, util).

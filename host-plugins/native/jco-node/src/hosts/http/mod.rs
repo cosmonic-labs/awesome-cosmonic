@@ -203,27 +203,13 @@ fn tls_required() -> Error {
 
 /// A failed client handshake, with the code Node's `tls` gives the same failure.
 fn handshake_error(error: &io::Error, servername: &str) -> Error {
-    use rustls::{CertificateError, Error as Tls};
-    let tls = error.get_ref().and_then(|inner| inner.downcast_ref::<Tls>());
-    let (code, message) = match tls {
-        Some(Tls::InvalidCertificate(CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. })) => (
-            "ERR_TLS_CERT_ALTNAME_INVALID",
-            format!("Hostname/IP does not match certificate's altnames: Host: {servername}. is not in the cert's altnames"),
-        ),
-        Some(Tls::InvalidCertificate(CertificateError::UnknownIssuer)) => {
-            ("UNABLE_TO_VERIFY_LEAF_SIGNATURE", "unable to verify the first certificate".to_owned())
+    match error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
+        Some(tls) => {
+            let (code, message) = crate::hosts::tls_config::describe(tls, servername);
+            plain("Error", code, message)
         }
-        // webpki's view of a self-signed certificate nobody trusts.
-        Some(Tls::InvalidCertificate(CertificateError::Other(other))) if format!("{other:?}").contains("CaUsedAsEndEntity") => {
-            ("DEPTH_ZERO_SELF_SIGNED_CERT", "self-signed certificate".to_owned())
-        }
-        Some(Tls::InvalidCertificate(CertificateError::Expired | CertificateError::ExpiredContext { .. })) => {
-            ("CERT_HAS_EXPIRED", "certificate has expired".to_owned())
-        }
-        Some(other) => ("ERR_SSL_HANDSHAKE_FAILURE", other.to_string()),
-        None => return socket_error(error, "connect", None),
-    };
-    plain("Error", code, message)
+        None => socket_error(error, "connect", None),
+    }
 }
 
 async fn with_timeout<T>(limit: Option<u32>, syscall: &str, work: impl Future<Output = io::Result<T>>) -> io::Result<T> {

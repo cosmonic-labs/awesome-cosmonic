@@ -1638,6 +1638,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
  "brotli",
  "bytes",
  "h2",
@@ -1650,6 +1651,7 @@ dependencies = [
  "libz-rs-sys",
  "pbkdf2",
  "rustls",
+ "rustls-native-certs",
  "scrypt",
  "serde_json",
  "sha1",
@@ -1664,6 +1666,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-tls",
  "webpki-roots 1.0.12",
+ "x509-parser",
  "zstd-safe",
 ]
 
