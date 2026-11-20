@@ -1,0 +1,78 @@
+# Cosmonic Desktop deployment manifest.
+#
+# This is the project's only Workload manifest. For local iteration you do not
+# need it: `.wash/config.yaml` carries the labels, environment and outbound
+# allow-list, and Desktop's project mode (dev -> promote) builds a
+# digest-pinned Workload draft from them. Use this file to deploy a published
+# image, or as the reference for what a full Workload looks like.
+#
+# Note `poolSize` below — it is a component-level field, so it lives here and
+# NOT in .wash/config.yaml, which mirrors only components[].localResources.
+#
+# Deploy docs: https://cosmonic.com/docs/desktop
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: Workload
+metadata:
+  name: "illustrator-mcp"
+  namespace: default
+  # Cosmonic Desktop detects the mcp.ai/* labels (with the
+  # desktop.cosmonic.com/source annotation below) to catalog this workload
+  # as an MCP server and drive MCP-specific behavior.
+  labels:
+    app.kubernetes.io/name: "illustrator-mcp"
+    app.kubernetes.io/version: "0.2.0"
+    "mcp.ai/auth-type": none
+    mcp.ai/domain: "adobe-illustrator"
+    "mcp.ai/function-type": tools
+    # Skills over MCP: this server publishes SKILL.md playbooks as resources
+    # under skill:// URIs. Required of every server built from this template.
+    "mcp.ai/skills": "true"
+    "mcp.ai/spec-version": "2026-07-28"
+    mcp.ai/statefulness: stateless
+    mcp.ai/transport: "streamable-http"
+  annotations:
+    desktop.cosmonic.com/source: mcp
+spec:
+  hostInterfaces:
+    - namespace: wasi
+      package: http
+      # wasi:http@0.3.0 (WASI p3): the single `handler` interface is this
+      # component's ingress export — not the p2 `incoming-handler`.
+      interfaces:
+        - "handler"
+      config:
+        host: "illustrator-mcp.localhost"
+    # The bridge command queue; the component will not instantiate without it.
+    - namespace: wasi
+      package: keyvalue
+      interfaces:
+        - "store"
+  components:
+    - name: "illustrator-mcp"
+      # Point at your published image; Desktop pins the tag to a digest at
+      # apply time. To deploy a locally promoted build instead, use the
+      # digest-pinned oci.localhost:8200 reference promote returns.
+      image: "ghcr.io/<org>/illustrator-mcp:0.2.0"
+      poolSize: 4
+      maxInvocations: 0
+      localResources:
+        environment:
+          config:
+            RUST_LOG: info
+            # DNS-rebinding guard: must list the ingress host(s) above.
+            MCP_ALLOWED_HOSTS: "illustrator-mcp.localhost"
+            MCP_BRIDGE_KEY_PREFIX: "illustrator-mcp"
+            # The run_jsx escape hatch (arbitrary ExtendScript inside
+            # Illustrator) is DELIBERATELY NOT SET, which leaves it off.
+            #
+            # Everything else this server sends the bridge is data — a command
+            # name checked against an enum in the sandbox and again against the
+            # command library's dispatch table in Illustrator. run_jsx is the
+            # one tool that turns that back into a code payload, which is the
+            # thing the Wasm sandbox exists to prevent. The schema-checked
+            # tools cover the same ground.
+            #
+            # Set MCP_ALLOW_RAW_JSX: "true" only if you genuinely need a DOM
+            # corner no tool reaches, and prefer turning it off again after.
+        # Outbound allow-list — empty means deny-all (fail-closed).
+        allowedHosts: []

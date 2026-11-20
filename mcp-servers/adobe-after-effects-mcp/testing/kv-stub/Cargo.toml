@@ -1,0 +1,21 @@
+[package]
+name = "kv-stub"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Test-only in-memory wasi:keyvalue provider for the e2e harness"
+
+# Standalone crate: it is deliberately not part of the server's build.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { version = "0.57.1", default-features = false, features = [
+    "macros",
+] }
+
+[profile.release]
+opt-level = "s"
+strip = true
