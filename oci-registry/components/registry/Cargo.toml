@@ -1,0 +1,27 @@
+[package]
+name = "oci-registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "An OCI Distribution Spec v1.1 registry as a single wasmCloud v2 component. Stores content on a local disk volume; scales to zero (stateless reactor)."
+
+[lib]
+name = "oci_registry"
+# cdylib for the wasm component; rlib so the pure storage/dispatch logic
+# compiles and is unit-tested on the host target (`cargo test`).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Host-served HTTP server abstraction over wasi:http (the canonical Cosmonic
+# Desktop component pattern). Only linked on wasm32.
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasmcloud-component = "0.2.0"
+
+[dev-dependencies]
+tempfile = "3"
