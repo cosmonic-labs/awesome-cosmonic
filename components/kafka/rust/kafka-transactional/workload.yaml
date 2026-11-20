@@ -8,35 +8,32 @@ spec:
     - namespace: cosmonic
       package: kafka
       version: 0.5.0
-      interfaces: [consumer]
-      config:
-        bootstrap.servers: 127.0.0.1:9092
-        broker.address.family: v4
-        topics: "demo.events"
-        consumer.group.id: "demo-txn-g1"
-        auto.offset.reset: earliest
-        enable.auto.commit: "false"
-    - name: transaction
-      namespace: cosmonic
-      package: kafka
-      version: 0.5.0
-      interfaces: [transaction]
+      interfaces: [consumer, transaction]
       config:
         bootstrap.servers: 127.0.0.1:9092
         broker.address.family: v4
         topics: "demo.events,demo.enriched"
+        consumer.group.id: "demo-txn-g1"
+        auto.offset.reset: earliest
+        enable.auto.commit: "false"
         # Each live replica needs a distinct stable ID.
         transactional.id: "demo-pipeline-txn-1"
         transaction.group.id: "demo-txn-g1"
+  service:
+    image: ghcr.io/cosmonic-labs/kafka-templates/kafka-transactional:latest
+    maxRestarts: 100
+    localResources:
+      environment:
+        config:
+          IN_TOPIC: demo.events
+          OUT_TOPIC: demo.enriched
+          BATCH_SIZE: "1"
+      allowedHosts: []
+  # Desktop currently requires one pooled component even for a service-only
+  # workload. This copy is never invoked; only `service` drives wasi:cli/run.
   components:
-    - name: pipeline
-      # Prebuilt from this template on every push to main. Swap it for your
-      # own registry once you change the source.
+    - name: desktop-validator-placeholder
       image: ghcr.io/cosmonic-labs/kafka-templates/kafka-transactional:latest
+      poolSize: 0
       localResources:
-        environment:
-          config:
-            IN_TOPIC: demo.events
-            OUT_TOPIC: demo.enriched
-            BATCH_SIZE: "1"
         allowedHosts: []
